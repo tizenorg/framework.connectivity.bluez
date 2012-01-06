@@ -1,0 +1,27 @@
+bluez (4.90-slp2+18-2) unstable; urgency=low
+
+  * Change "SAMSUNG_PATCH" -> "TIZEN_PATCH"
+  * Git: pkgs/b/bluez
+  * Tag: bluez_4.90-slp2+18-2
+
+ -- Hocheol Seo <hocheol.seo@samsung.com>  Fri, 23 Dec 2011 11:26:09 +0900
+
+bluez (4.90-slp2+18-1) unstable; urgency=low
+
+  * Change "com.samsung" -> "org.tizen"
+  * Git: pkgs/b/bluez
+  * Tag: bluez_4.90-slp2+18-1
+
+ -- DoHyun Pyun <dh79.pyun@samsung.com>  Thu, 22 Dec 2011 18:03:02 +0900
+
+bluez (4.90-slp2+18) unstable; urgency=low
+
+  * Update Version for build
+
+ -- Chanyeol Park <chanyeol.park@samsung.com>  Thu, 15 Dec 2011 12:56:21 +0900
+
+bluez (4.90-slp2+1) unstable; urgency=low
+
+  * Initial Release
+
+ -- Chanyeol Park <chanyeol.park@samsung.com>  Wed, 07 Dec 2011 12:53:10 +0900
