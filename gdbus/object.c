@@ -33,7 +33,7 @@
 
 #include "gdbus.h"
 
-#ifdef __TIZEN_PATCH__
+#ifdef __SAMSUNG_PATCH__
 #include "log.h"
 #else
 #define info(fmt...)
@@ -80,7 +80,7 @@ static void print_arguments(GString *gstr, const char *sig,
 
 		/* Gather enough data to have a single complete type */
 		for (len = 0; len < (sizeof(type) - 1) && sig[i]; len++, i++) {
-			switch (sig[i]){
+			switch (sig[i]) {
 			case '(':
 				struct_level++;
 				break;
@@ -259,14 +259,13 @@ void g_dbus_pending_success(DBusConnection *connection,
 
         for (list = pending_security; list; list = list->next) {
 		struct security_data *secdata = list->data;
-		DBusHandlerResult result;
 
 		if (secdata->pending != pending)
 			continue;
 
 		pending_security = g_slist_remove(pending_security, secdata);
 
-		result = process_message(connection, secdata->message,
+		process_message(connection, secdata->message,
 				secdata->method, secdata->iface_user_data);
 
 		dbus_message_unref(secdata->message);
@@ -449,7 +448,7 @@ static DBusHandlerResult generic_message(DBusConnection *connection,
 						iface->user_data) == TRUE)
 			return DBUS_HANDLER_RESULT_HANDLED;
 
-#ifdef __TIZEN_PATCH__
+#ifdef __SAMSUNG_PATCH__
 		DBG("%s: %s.%s()",dbus_message_get_path(message),
 									iface->name,method->name);
 #endif

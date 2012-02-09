@@ -462,6 +462,42 @@ char *bt_compidtostr(int compid)
 		return "RDA Microelectronics";
 	case 98:
 		return "Gibson Guitars";
+	case 99:
+		return "MiCommand Inc.";
+	case 100:
+		return "Band XI International, LLC";
+	case 101:
+		return "Hewlett-Packard Company";
+	case 102:
+		return "9Solutions Oy";
+	case 103:
+		return "GN Netcom A/S";
+	case 104:
+		return "General Motors";
+	case 105:
+		return "A&D Engineering, Inc.";
+	case 106:
+		return "MindTree Ltd.";
+	case 107:
+		return "Polar Electro OY";
+	case 108:
+		return "Beautiful Enterprise Co., Ltd.";
+	case 109:
+		return "BriarTek, Inc.";
+	case 110:
+		return "Summit Data Communications, Inc.";
+	case 111:
+		return "Sound ID";
+	case 112:
+		return "Monster, LLC";
+	case 113:
+		return "connectBlue AB";
+	case 114:
+		return "ShangHai Super Smart Electronics Co. Ltd.";
+	case 115:
+		return "Group Sense Ltd.";
+	case 116:
+		return "Zomm, LLC";
 	case 65535:
 		return "internal use";
 	default:

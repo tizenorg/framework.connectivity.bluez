@@ -53,7 +53,8 @@
 #include "error.h"
 #include "telephony.h"
 #include "headset.h"
-#include "glib-helper.h"
+#include "glib-compat.h"
+#include "sdp-client.h"
 #include "btio.h"
 #include "dbus-common.h"
 #include "../src/adapter.h"
@@ -165,7 +166,7 @@ struct headset {
 
 	guint dc_timer;
 
-#ifdef __TIZEN_PATCH__
+#ifdef __SAMSUNG_PATCH__
 	guint rfcomm_io_id;
 #endif
 	gboolean hfp_active;
@@ -1203,13 +1204,14 @@ static int voice_dial(struct audio_device *device, const char *buf)
 	return 0;
 }
 
+#ifdef __SAMSUNG_PATCH__
 int telephony_list_phonebook_store_rsp(void *telephony_device, const char *buf, cme_error_t err)
 {
 	struct audio_device *device = telephony_device;
 	struct headset *hs = device->headset;
 	struct headset_slc *slc = hs->slc;
 
-	if ( (err != CME_ERROR_NONE) || (NULL == buf) ) {
+	if ((err != CME_ERROR_NONE) || (NULL == buf)) {
 		if (slc->cme_enabled)
 			return headset_send(hs, "\r\n+CME ERROR: %d\r\n", err);
 		else
@@ -1221,7 +1223,7 @@ int telephony_list_phonebook_store_rsp(void *telephony_device, const char *buf, 
 			return -ENODEV;
 
 		send_foreach_headset(active_devices, hfp_cmp,
-					"\r\n+CPBS: %s\r\n",buf);
+					"\r\n+CPBS: %s\r\n", buf);
 
 	}
 	return headset_send(hs, "\r\nOK\r\n");
@@ -1233,19 +1235,20 @@ int telephony_read_phonebook_store_rsp(void *telephony_device, char* pb_store, u
 	struct headset *hs = device->headset;
 	struct headset_slc *slc = hs->slc;
 
-	if (err != CME_ERROR_NONE){
+	if (err != CME_ERROR_NONE) {
 		if (slc->cme_enabled)
 			return headset_send(hs, "\r\n+CME ERROR: %d\r\n", err);
 		else
 			return headset_send(hs, "\r\nERROR\r\n");
 	}
 
-	if( 0 != total && 0 != used) {
+	if (0 != total && 0 != used) {
 		if (!active_devices)
 			return -ENODEV;
 
 		send_foreach_headset(active_devices, hfp_cmp,
-					"\r\n+CPBS: \"%s\",%d,%d\r\n",pb_store,used,total);
+					"\r\n+CPBS: \"%s\",%d,%d\r\n",
+					pb_store, used, total);
 	}
 	return headset_send(hs, "\r\nOK\r\n");
 }
@@ -1255,7 +1258,7 @@ static int select_phonebook_memory(struct audio_device *device, const char *buf)
 	struct headset *hs = device->headset;
 	int err;
 
-	if( NULL != buf) {
+	if (NULL != buf) {
 		if (strlen(buf) < 9)
 			return -EINVAL;
 
@@ -1265,11 +1268,10 @@ static int select_phonebook_memory(struct audio_device *device, const char *buf)
 		}
 
 		if (buf[8] == '=') {
-			if(buf[9] == '?') {
+			if (buf[9] == '?') {
 				telephony_list_phonebook_store(device);
-			}
-			else {
-				telephony_set_phonebook_store(device,&buf[9]);
+			} else {
+				telephony_set_phonebook_store(device, &buf[9]);
 				return headset_send(hs, "\r\nOK\r\n");
 			}
 		}
@@ -1278,8 +1280,10 @@ static int select_phonebook_memory(struct audio_device *device, const char *buf)
 }
 
 int telephony_read_phonebook_attributes_rsp(void *telephony_device,
-										uint32_t total, uint32_t number_length,
-										uint32_t name_length,cme_error_t err)
+						uint32_t total,
+						uint32_t number_length,
+						uint32_t name_length,
+						cme_error_t err)
 {
 	struct audio_device *device = telephony_device;
 	struct headset *hs = device->headset;
@@ -1292,17 +1296,19 @@ int telephony_read_phonebook_attributes_rsp(void *telephony_device,
 			return headset_send(hs, "\r\nERROR\r\n");
 	}
 
-	if( total != 0 && name_length !=0 && number_length != 0 ) {
+	if (total != 0 && name_length != 0 && number_length != 0) {
 		if (!active_devices)
 			return -ENODEV;
 
 		send_foreach_headset(active_devices, hfp_cmp,
-					"\r\n+CPBR: (1-%d),%d,%d\r\n",total,number_length,name_length);
+					"\r\n+CPBR: (1-%d),%d,%d\r\n",
+					total, number_length, name_length);
 	}
 	return headset_send(hs, "\r\nOK\r\n");
 }
 
-int telephony_read_phonebook_rsp(void *telephony_device, const char *data, cme_error_t err)
+int telephony_read_phonebook_rsp(void *telephony_device, const char *data,
+					cme_error_t err)
 {
 	struct audio_device *device = telephony_device;
 	struct headset *hs = device->headset;
@@ -1315,12 +1321,12 @@ int telephony_read_phonebook_rsp(void *telephony_device, const char *data, cme_e
 			return headset_send(hs, "\r\nERROR\r\n");
 	}
 
-	if( NULL != data) {
+	if (NULL != data) {
 		if (!active_devices)
 			return -ENODEV;
 
 		send_foreach_headset(active_devices, hfp_cmp,
-					"\r\n+CPBR:  %s\r\n",data);
+					"\r\n+CPBR:  %s\r\n", data);
 	}
 }
 
@@ -1329,23 +1335,23 @@ static int read_phonebook_entries(struct audio_device *device, const char *buf)
 	struct headset *hs = device->headset;
 	int err;
 
-	if( NULL != buf) {
+	if (NULL != buf) {
 		if (strlen(buf) < 8)
 			return -EINVAL;
 
 		if (buf[9] == '?') {
 			telephony_read_phonebook_attributes(device);
-		}
-		else {
-			telephony_read_phonebook(device,&buf[9]);
+		} else {
+			telephony_read_phonebook(device, &buf[9]);
 		}
 	}
 	return 0;
 }
 
 int telephony_find_phonebook_entry_properties_rsp(void *telephony_device,
-										uint32_t max_number_length,
-										uint32_t max_name_length, cme_error_t err )
+						uint32_t max_number_length,
+						uint32_t max_name_length,
+						cme_error_t err)
 {
 	struct audio_device *device = telephony_device;
 	struct headset *hs = device->headset;
@@ -1358,12 +1364,14 @@ int telephony_find_phonebook_entry_properties_rsp(void *telephony_device,
 			return headset_send(hs, "\r\nERROR\r\n");
 	}
 
-	if( max_name_length !=0 && max_number_length != 0 ) {
+	if (max_name_length != 0 && max_number_length != 0) {
 		if (!active_devices)
 			return -ENODEV;
 
 		send_foreach_headset(active_devices, hfp_cmp,
-					"\r\n+CPBF: %d,%d\r\n",max_number_length,max_name_length);
+					"\r\n+CPBF: %d,%d\r\n",
+					max_number_length,
+					max_name_length);
 	}
 	return headset_send(hs, "\r\nOK\r\n");
 }
@@ -1373,21 +1381,21 @@ static int find_phonebook_entires(struct audio_device *device, const char *buf)
 	struct headset *hs = device->headset;
 	int err;
 
-	if( NULL != buf )  {
+	if (NULL != buf)  {
 		if (strlen(buf) < 8)
 			return -EINVAL;
 
-		if (buf[9] == '?') {
+		if (buf[9] == '?')
 			telephony_find_phonebook_entry_properties(device);
-		}
-		else {
-			telephony_find_phonebook_entry(device,&buf[9]);
-		}
+		else
+			telephony_find_phonebook_entry(device, &buf[9]);
 	}
 	return 0;
 }
 
-int telephony_list_preffered_store_rsp(void *telephony_device, char* prefrd_list, cme_error_t err )
+int telephony_list_preffered_store_rsp(void *telephony_device,
+					char *prefrd_list,
+					cme_error_t err)
 {
 	struct audio_device *device = telephony_device;
 	struct headset *hs = device->headset;
@@ -1400,17 +1408,19 @@ int telephony_list_preffered_store_rsp(void *telephony_device, char* prefrd_list
 			return headset_send(hs, "\r\nERROR\r\n");
 	}
 
-	if( NULL != prefrd_list ) {
+	if (NULL != prefrd_list) {
 		if (!active_devices)
 			return -ENODEV;
 
 		send_foreach_headset(active_devices, hfp_cmp,
-					"\r\n+CPMS: %s\r\n",prefrd_list);
+					"\r\n+CPMS: %s\r\n", prefrd_list);
 	}
 	return headset_send(hs, "\r\nOK\r\n");
 }
 
-int telephony_get_preffered_store_capacity_rsp(void *telephony_device, uint32_t store_capacity, cme_error_t err )
+int telephony_get_preffered_store_capacity_rsp(void *telephony_device,
+						uint32_t store_capacity,
+						cme_error_t err)
 {
 	struct audio_device *device = telephony_device;
 	struct headset *hs = device->headset;
@@ -1423,12 +1433,12 @@ int telephony_get_preffered_store_capacity_rsp(void *telephony_device, uint32_t 
 			return headset_send(hs, "\r\nERROR\r\n");
 	}
 
-	if( 0 != store_capacity ) {
+	if (0 != store_capacity) {
 		if (!active_devices)
 			return -ENODEV;
 
 		send_foreach_headset(active_devices, hfp_cmp,
-					"\r\n+CPMS: %d\r\n",store_capacity);
+					"\r\n+CPMS: %d\r\n", store_capacity);
 	}
 	return headset_send(hs, "\r\nOK\r\n");
 }
@@ -1438,7 +1448,7 @@ static int preffered_message_storage(struct audio_device *device, const char *bu
 	struct headset *hs = device->headset;
 	int err;
 
-	if( NULL != buf ) {
+	if (NULL != buf) {
 		if (strlen(buf) < 9)
 			return -EINVAL;
 
@@ -1448,11 +1458,10 @@ static int preffered_message_storage(struct audio_device *device, const char *bu
 		}
 
 		if (buf[8] == '=') {
-			if(buf[9] == '?') {
+			if (buf[9] == '?') {
 				telephony_list_preffered_store(device);
-			}
-			else {
-				//telephony_set_preffered_store_capcity(device,&buf[9]);
+			} else {
+				/* telephony_set_preffered_store_capcity(device, &buf[9]); */
 				return headset_send(hs, "\r\nOK\r\n");
 			}
 		}
@@ -1460,7 +1469,9 @@ static int preffered_message_storage(struct audio_device *device, const char *bu
 	return 0;
 }
 
-int telephony_supported_character_generic_rsp(void *telephony_device, char* character_set_list, cme_error_t err )
+int telephony_supported_character_generic_rsp(void *telephony_device,
+						char *character_set_list,
+						cme_error_t err)
 {
 	struct audio_device *device = telephony_device;
 	struct headset *hs = device->headset;
@@ -1473,12 +1484,12 @@ int telephony_supported_character_generic_rsp(void *telephony_device, char* char
 			return headset_send(hs, "\r\nERROR\r\n");
 	}
 
-	if( NULL != character_set_list ) {
+	if (NULL != character_set_list) {
 		if (!active_devices)
 			return -ENODEV;
 
 		send_foreach_headset(active_devices, hfp_cmp,
-					"\r\n+CPMS: %s\r\n",character_set_list);
+					"\r\n+CPMS: %s\r\n", character_set_list);
 	}
 	return headset_send(hs, "\r\nOK\r\n");
 }
@@ -1487,7 +1498,7 @@ static int select_character_set(struct audio_device *device, const char *buf)
 {
 	struct headset *hs = device->headset;
 	int err;
-	if( NULL != buf ) {
+	if (NULL != buf) {
 		if (strlen(buf) < 9)
 			return -EINVAL;
 
@@ -1497,11 +1508,10 @@ static int select_character_set(struct audio_device *device, const char *buf)
 		}
 
 		if (buf[8] == '=') {
-			if(buf[9] == '?') {
+			if (buf[9] == '?') {
 				telephony_list_supported_character(device);
-			}
-			else {
-				//telephony_set_characterset(device,&buf[9]);
+			} else {
+				/* telephony_set_characterset(device, &buf[9]); */
 				return headset_send(hs, "\r\nOK\r\n");
 			}
 		}
@@ -1509,6 +1519,8 @@ static int select_character_set(struct audio_device *device, const char *buf)
 	return 0;
 
 }
+#endif
+
 static int apple_command(struct audio_device *device, const char *buf)
 {
 	DBG("Got Apple command: %s", buf);
@@ -1539,14 +1551,14 @@ static struct event event_callbacks[] = {
 	{ "AT+BVRA", voice_dial },
 	{ "AT+XAPL", apple_command },
 	{ "AT+IPHONEACCEV", apple_command },
-
-	/*TIZEN PATCH Starts here*/
+#ifdef __SAMSUNG_PATCH__
+	/*SAMSUNG PATCH Starts here*/
 	{ "AT+CPBS", select_phonebook_memory },
 	{ "AT+CPBR", read_phonebook_entries},
 	{ "AT+CPBF", find_phonebook_entires },
 	{ "AT+CPMS", preffered_message_storage },
 	{ "AT+CSCS", select_character_set },
-
+#endif
 	{ 0 }
 };
 
@@ -1596,8 +1608,8 @@ static gboolean rfcomm_io_cb(GIOChannel *chan, GIOCondition cond,
 		return FALSE;
 
 	hs = device->headset;
-#ifdef __TIZEN_PATCH__
-	if(!hs)
+#ifdef __SAMSUNG_PATCH__
+	if (!hs)
 		return FALSE;
 #endif
 	slc = hs->slc;
@@ -1651,15 +1663,8 @@ static gboolean rfcomm_io_cb(GIOChannel *chan, GIOCondition cond,
 		if (err == -EINVAL) {
 			error("Badly formated or unrecognized command: %s",
 					&slc->buf[slc->data_start]);
-#ifdef __TIZEN_PATCH__
-			if (slc->cme_enabled)
-				err = headset_send(hs, "\r\n+CME ERROR: %d\r\n",
-							CME_ERROR_AG_FAILURE);
-			else
-				err = headset_send(hs, "\r\nERROR\r\n");
-#else
-			err = headset_send(hs, "\r\nERROR\r\n");
-#endif
+			err = telephony_generic_rsp(device,
+						CME_ERROR_NOT_SUPPORTED);
 			if (err < 0)
 				goto failed;
 		} else if (err < 0)
@@ -1725,9 +1730,9 @@ void headset_connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 	else
 		hs->auto_dc = FALSE;
 
-#ifdef __TIZEN_PATCH__
+#ifdef __SAMSUNG_PATCH__
 	hs->rfcomm_io_id = g_io_add_watch(chan,
-				G_IO_IN | G_IO_ERR | G_IO_HUP| G_IO_NVAL,
+				G_IO_IN | G_IO_ERR | G_IO_HUP | G_IO_NVAL,
 				(GIOFunc) rfcomm_io_cb, dev);
 #else
 	g_io_add_watch(chan, G_IO_IN | G_IO_ERR | G_IO_HUP| G_IO_NVAL,
@@ -1953,8 +1958,8 @@ static int rfcomm_connect(struct audio_device *dev, headset_stream_cb_t cb,
 	DBG("%s: Connecting to %s channel %d", dev->path, address,
 		hs->rfcomm_ch);
 
-#ifdef __TIZEN_PATCH__
-	if(hs->rfcomm_io_id) {
+#ifdef __SAMSUNG_PATCH__
+	if (hs->rfcomm_io_id) {
 		g_source_remove(hs->rfcomm_io_id);
 		hs->rfcomm_io_id = 0;
 	}
@@ -2487,8 +2492,8 @@ static int headset_close_rfcomm(struct audio_device *dev)
 		hs->rfcomm = NULL;
 	}
 
-#ifdef __TIZEN_PATCH__
-	if(hs->rfcomm_io_id) {
+#ifdef __SAMSUNG_PATCH__
+	if (hs->rfcomm_io_id) {
 		g_source_remove(hs->rfcomm_io_id);
 		hs->rfcomm_io_id = 0;
 	}

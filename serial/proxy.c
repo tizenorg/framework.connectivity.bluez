@@ -53,7 +53,6 @@
 #include "../src/adapter.h"
 
 #include "log.h"
-#include "textfile.h"
 
 #include "error.h"
 #include "sdpd.h"
@@ -208,11 +207,10 @@ static int channel_write(GIOChannel *chan, char *buf, size_t size)
 
 	fd = g_io_channel_unix_get_fd(chan);
 
-	wbytes = written = 0;
+	wbytes = 0;
 	while (wbytes < size) {
 		written = write(fd, buf + wbytes, size - wbytes);
-
-		if (written)
+		if (written < 0)
 			return -errno;
 
 		wbytes += written;
@@ -291,19 +289,18 @@ static inline int unix_socket_connect(const char *address)
 	/* Unix socket */
 	sk = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (sk < 0) {
-		err = errno;
+		err = -errno;
 		error("Unix socket(%s) create failed: %s(%d)",
-				address, strerror(err), err);
-		return -err;
+				address, strerror(-err), -err);
+		return err;
 	}
 
 	if (connect(sk, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
-		err = errno;
+		err = -errno;
 		error("Unix socket(%s) connect failed: %s(%d)",
-				address, strerror(err), err);
+				address, strerror(-err), -err);
 		close(sk);
-		errno = err;
-		return -err;
+		return err;
 	}
 
 	return sk;
@@ -312,8 +309,7 @@ static inline int unix_socket_connect(const char *address)
 static int tcp_socket_connect(const char *address)
 {
 	struct sockaddr_in addr;
-	int err, sk;
-	unsigned short int port;
+	int err, sk, port;
 
 	memset(&addr, 0, sizeof(addr));
 
@@ -332,18 +328,17 @@ static int tcp_socket_connect(const char *address)
 
 	sk = socket(PF_INET, SOCK_STREAM, 0);
 	if (sk < 0) {
-		err = errno;
+		err = -errno;
 		error("TCP socket(%s) create failed %s(%d)", address,
-							strerror(err), err);
-		return -err;
+							strerror(-err), -err);
+		return err;
 	}
 	if (connect(sk, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
-		err = errno;
+		err = -errno;
 		error("TCP socket(%s) connect failed: %s(%d)",
-						address, strerror(err), err);
+						address, strerror(-err), -err);
 		close(sk);
-		errno = err;
-		return -err;
+		return err;
 	}
 	return sk;
 }
@@ -354,18 +349,17 @@ static inline int tty_open(const char *tty, struct termios *ti)
 
 	sk = open(tty, O_RDWR | O_NOCTTY);
 	if (sk < 0) {
-		err = errno;
-		error("Can't open TTY %s: %s(%d)", tty, strerror(err), err);
-		return -err;
+		err = -errno;
+		error("Can't open TTY %s: %s(%d)", tty, strerror(-err), -err);
+		return err;
 	}
 
 	if (ti && tcsetattr(sk, TCSANOW, ti) < 0) {
-		err = errno;
+		err = -errno;
 		error("Can't change serial settings: %s(%d)",
-				strerror(err), err);
+				strerror(-err), -err);
 		close(sk);
-		errno = err;
-		return -err;
+		return err;
 	}
 
 	return sk;
@@ -812,7 +806,7 @@ static int proxy_tty_register(struct serial_adapter *adapter,
 
 	sk = open(address, O_RDONLY | O_NOCTTY);
 	if (sk < 0) {
-		error("Cant open TTY: %s(%d)", strerror(errno), errno);
+		error("Can't open TTY: %s(%d)", strerror(errno), errno);
 		return -EINVAL;
 	}
 
@@ -1147,10 +1141,8 @@ static GDBusSignalTable manager_signals[] = {
 static struct serial_adapter *find_adapter(GSList *list,
 					struct btd_adapter *btd_adapter)
 {
-	GSList *l;
-
-	for (l = list; l; l = l->next) {
-		struct serial_adapter *adapter = l->data;
+	for (; list; list = list->next) {
+		struct serial_adapter *adapter = list->data;
 
 		if (adapter->btd_adapter == btd_adapter)
 			return adapter;

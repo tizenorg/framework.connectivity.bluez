@@ -17,18 +17,12 @@ Background
 General
 ==========
 
-- UUID128 handling: Create new functions to handle UUIDs on host order.
-  Functions should start with prefix "bt_uuid". In the first phase, attribute
-  server/client and gatttool code should be changed to use these new functions.
-  The idea is to keep the consistency for UUID-16, UUID-32 and UUID-128. SDP
-  functions store UUID-16 and UUID-32 on host order, however UUID-128 is stored
-  on network order/big endian. Attribute Protocol uses little endian, while
-  SDP uses big endian. The idea is always store the UUID values on host order
-  and use utility functions to convert to the proper byte order depending on
-  the protocol: ATT or SDP.
+- UUID handling: Use the new functions created for UUID handling in all parts
+  of BlueZ code.  Currently, the new bt_uuid_* functions are being used by
+  GATT-related code only.
 
   Priority: high
-  Complexity: C1
+  Complexity: C4
 
 - Rename glib-helper file to a more convenient name. The ideia is try to keep
   only sdp helpers functions. bt_* prefix shall be also changed.
@@ -120,12 +114,11 @@ Low Energy
 ATT/GATT
 ========
 
-- For BR/EDR, primary services can be registered based on the information
-  extracted from the service records. UUIDs, start and end handles information
-  are available in the record, Discover All Primary Services procedure is not
-  necessary. If a GATT service doesn't export a service record means that
-  it should not be used over BR/EDR. Don't start this task before to move the
-  attribute client code to the bluetoothd core.
+- At the moment authentication and authorization is not supported at the
+  same time, read/write requirements in the attribute server needs to
+  be extended. According to Bluetooth Specification a server shall check
+  authentication and authorization requirements before any other check is
+  performed.
 
   Priority: Medium
   Complexity: C1
@@ -136,16 +129,16 @@ ATT/GATT
   Priority: Medium
   Complexity: C2
 
-- GATT server: fix MTU exchange
-
-  Priority: Medium
-  Complexity: C2
-
 - Implement ATT PDU validation. Malformed PDUs can cause division by zero
   when decoding PDUs. A proper error PDU should be returned for this case.
   See decoding function in att.c file.
 
   Priority: Medium
+  Complexity: C1
+
+- Fix hard-coded PSM for GATT services over basic rate.
+
+  Priority: Low
   Complexity: C1
 
 - Refactor read_by_group() and read_by_type() in src/attrib-server.c
@@ -224,6 +217,7 @@ ATT/GATT
 
   Priority: Low
   Complexity: C2
+  Owner: Anderson Lizardo <anderson.lizardo@openbossa.org>
 
 Management Interface
 ====================
@@ -232,11 +226,6 @@ Management Interface
 
   Priority: High
   Complexity: C3
-
-- EIR generation support
-
-  Priority: High
-  Complexity: C2
 
 - Blacklist support
 
@@ -252,3 +241,4 @@ Management Interface
 
   Priority: Medium
   Complexity: C2
+  Owner: Andre Guedes <andre.guedes@openbossa.org>

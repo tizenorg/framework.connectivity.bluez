@@ -2,8 +2,7 @@
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
- *  Copyright (C) 2010  Nokia Corporation
- *  Copyright (C) 2010  Marcel Holtmann <marcel@holtmann.org>
+ *  Copyright (C) 2004-2010  Marcel Holtmann <marcel@holtmann.org>
  *
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -22,39 +21,10 @@
  *
  */
 
-#ifdef HAVE_CONFIG_H
-#include <config.h>
-#endif
+typedef void (*bt_callback_t) (sdp_list_t *recs, int err, gpointer user_data);
+typedef void (*bt_destroy_t) (gpointer user_data);
 
-#include <errno.h>
-
-#include <gdbus.h>
-
-#include "plugin.h"
-#include "manager.h"
-
-static DBusConnection *connection;
-
-static int attrib_init(void)
-{
-	connection = dbus_bus_get(DBUS_BUS_SYSTEM, NULL);
-	if (connection == NULL)
-		return -EIO;
-
-	if (attrib_manager_init(connection) < 0) {
-		dbus_connection_unref(connection);
-		return -EIO;
-	}
-
-	return 0;
-}
-
-static void attrib_exit(void)
-{
-	attrib_manager_exit();
-
-	dbus_connection_unref(connection);
-}
-
-BLUETOOTH_PLUGIN_DEFINE(attrib, VERSION,
-		BLUETOOTH_PLUGIN_PRIORITY_DEFAULT, attrib_init, attrib_exit)
+int bt_search_service(const bdaddr_t *src, const bdaddr_t *dst,
+			uuid_t *uuid, bt_callback_t cb, void *user_data,
+			bt_destroy_t destroy);
+int bt_cancel_discovery(const bdaddr_t *src, const bdaddr_t *dst);

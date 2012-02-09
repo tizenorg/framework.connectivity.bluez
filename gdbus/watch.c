@@ -572,6 +572,7 @@ static void service_reply(DBusPendingCall *call, void *user_data)
 	reply = dbus_pending_call_steal_reply(call);
 	if (reply == NULL)
 		return;
+
 	dbus_error_init(&err);
 
 	if (dbus_set_error_from_message(&err, reply))

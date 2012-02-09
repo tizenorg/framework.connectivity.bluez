@@ -35,8 +35,6 @@
 #include <time.h>
 #include <sys/file.h>
 #include <sys/stat.h>
-#include <sys/param.h>
-#include <sys/socket.h>
 
 #include <glib.h>
 
@@ -45,8 +43,7 @@
 #include <bluetooth/sdp_lib.h>
 
 #include "textfile.h"
-#include "adapter.h"
-#include "device.h"
+#include "glib-compat.h"
 #include "glib-helper.h"
 #include "storage.h"
 
@@ -241,8 +238,8 @@ int read_local_name(bdaddr_t *bdaddr, char *name)
 		return -ENOENT;
 
 	len = strlen(str);
-	if (len > 248)
-		str[248] = '\0';
+	if (len > HCI_MAX_NAME_LENGTH)
+		str[HCI_MAX_NAME_LENGTH] = '\0';
 	strcpy(name, str);
 
 	free(str);
@@ -323,11 +320,11 @@ int read_remote_class(bdaddr_t *local, bdaddr_t *peer, uint32_t *class)
 
 int write_device_name(bdaddr_t *local, bdaddr_t *peer, char *name)
 {
-	char filename[PATH_MAX + 1], addr[18], str[249];
+	char filename[PATH_MAX + 1], addr[18], str[HCI_MAX_NAME_LENGTH + 1];
 	int i;
 
 	memset(str, 0, sizeof(str));
-	for (i = 0; i < 248 && name[i]; i++)
+	for (i = 0; i < HCI_MAX_NAME_LENGTH && name[i]; i++)
 		if ((unsigned char) name[i] < 32 || name[i] == 127)
 			str[i] = '.';
 		else
@@ -353,8 +350,8 @@ int read_device_name(const char *src, const char *dst, char *name)
 		return -ENOENT;
 
 	len = strlen(str);
-	if (len > 248)
-		str[248] = '\0';
+	if (len > HCI_MAX_NAME_LENGTH)
+		str[HCI_MAX_NAME_LENGTH] = '\0';
 	strcpy(name, str);
 
 	free(str);
@@ -368,7 +365,7 @@ int write_remote_eir(bdaddr_t *local, bdaddr_t *peer, uint8_t *data)
 	int i;
 
 	memset(str, 0, sizeof(str));
-	for (i = 0; i < 240; i++)
+	for (i = 0; i < HCI_MAX_EIR_LENGTH; i++)
 		sprintf(str + (i * 2), "%2.2X", data[i]);
 
 	create_filename(filename, PATH_MAX, local, "eir");
@@ -402,7 +399,7 @@ int read_remote_eir(bdaddr_t *local, bdaddr_t *peer, uint8_t *data)
 		return -EIO;
 	}
 
-	for (i = 0; i < 240; i++)
+	for (i = 0; i < HCI_MAX_EIR_LENGTH; i++)
 		sscanf(str + (i * 2), "%02hhX", &data[i]);
 
 	free(str);
@@ -593,35 +590,11 @@ int read_link_key(bdaddr_t *local, bdaddr_t *peer, unsigned char *key, uint8_t *
 
 	return 0;
 }
-#ifdef __TIZEN_PATCH__
-int read_pin_length(bdaddr_t *local, bdaddr_t *peer)
+
+ssize_t read_pin_code(bdaddr_t *local, bdaddr_t *peer, char *pin)
 {
 	char filename[PATH_MAX + 1], addr[18], *str;
-	int len;
-
-	create_filename(filename, PATH_MAX, local, "linkkeys");
-
-	ba2str(peer, addr);
-	str = textfile_get(filename, addr);
-	if (!str)
-		return -ENOENT;
-
-	if (strlen(str) < 36) {
-		free(str);
-		return -ENOENT;
-	}
-
-	len = atoi(str + 35);
-
-	free(str);
-
-	return len;
-}
-#endif
-int read_pin_code(bdaddr_t *local, bdaddr_t *peer, char *pin)
-{
-	char filename[PATH_MAX + 1], addr[18], *str;
-	int len;
+	ssize_t len;
 
 	create_filename(filename, PATH_MAX, local, "pincodes");
 
@@ -754,35 +727,6 @@ gboolean read_trust(const bdaddr_t *local, const char *addr, const char *service
 	free(str);
 
 	return ret;
-}
-
-struct trust_list {
-	GSList *trusts;
-	const char *service;
-};
-
-static void append_trust(char *key, char *value, void *data)
-{
-	struct trust_list *list = data;
-
-	if (strstr(value, list->service))
-		list->trusts = g_slist_append(list->trusts, g_strdup(key));
-}
-
-GSList *list_trusts(bdaddr_t *local, const char *service)
-{
-	char filename[PATH_MAX + 1];
-	struct trust_list list;
-
-	create_filename(filename, PATH_MAX, local, "trusts");
-
-	list.trusts = NULL;
-	list.service = service;
-
-	if (textfile_foreach(filename, append_trust, &list) < 0)
-		return NULL;
-
-	return list.trusts;
 }
 
 int write_device_profiles(bdaddr_t *src, bdaddr_t *dst, const char *profiles)
@@ -1134,8 +1078,6 @@ int read_device_pairable(bdaddr_t *bdaddr, gboolean *mode)
 
 	create_filename(filename, PATH_MAX, bdaddr, "config");
 
-	create_file(filename, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-
 	str = textfile_get(filename, "pairable");
 	if (!str)
 		return -ENOENT;
@@ -1146,134 +1088,7 @@ int read_device_pairable(bdaddr_t *bdaddr, gboolean *mode)
 
 	return 0;
 }
-#ifdef __TIZEN_PATCH__
-// Storing limited property
-int write_device_limited(bdaddr_t *bdaddr, gboolean mode)
-{
-	char filename[PATH_MAX + 1];
 
-	create_filename(filename, PATH_MAX, bdaddr, "config");
-
-	create_file(filename, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-
-	return textfile_put(filename, "limited", mode ? "yes" : "no");
-}
-
-int read_device_limited(bdaddr_t *bdaddr, gboolean *mode)
-{
-	char filename[PATH_MAX + 1], *str;
-
-	create_filename(filename, PATH_MAX, bdaddr, "config");
-
-	create_file(filename, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-
-	str = textfile_get(filename, "limited");
-	if (!str)
-		return -ENOENT;
-
-	*mode = strcmp(str, "yes") == 0 ? TRUE : FALSE;
-
-	free(str);
-
-	return 0;
-}
-
-int read_version_info(const bdaddr_t *local, const char *addr,
-					uint16_t *manufacturer, uint8_t *lmp_ver, uint16_t *lmp_subver,
-					uint8_t *features)
-{
-	char filename[PATH_MAX + 1], *str, feature_value[5];
-	int i;
-
-	create_filename(filename, PATH_MAX, local, "manufacturers");
-
-	str = textfile_caseget(filename, addr);
-
-	if (!str)
-		return -ENOENT;
-
-	if (sscanf(str, "%d %d %d", manufacturer, lmp_ver, lmp_subver) != 3) {
-		free(str);
-		return -ENOENT;
-	}
-
-	free(str);
-
-	create_filename(filename, PATH_MAX, local, "features");
-
-	str = textfile_caseget(filename, addr);
-
-	if (!str)
-		return -ENOENT;
-
-	if (strlen(str) != 16)
-	{
-		free(str);
-		return -ENOENT;
-	}
-
-	memset(feature_value, 0x00, sizeof(feature_value));
-
-	for (i = 0; i < 8; i++)
-	{
-		strncpy(feature_value, str + (i * 2), 4);
-		if (sscanf(feature_value, "%x", &features[i]) != 1) {
-			free(str);
-			return -ENOENT;
-		}
-	}
-
-	free(str);
-
-	return 0;
-}
-int read_aptx_preference(bdaddr_t *bdaddr, gboolean *aptx_preference)
-{
-	char filename[PATH_MAX + 1], *str;
-	int len;
-
-	create_filename(filename, PATH_MAX, bdaddr, "config");
-
-	str = textfile_get(filename, "Codec_preference");
-	if (!str)
-		return -ENOENT;
-
-	len = strlen(str);
-	if (len > 248)
-		str[248] = '\0';
-
-	if(!aptx_preference)
-		return -EINVAL;
-
-	if(!strncmp(str,"aptx",4))
-		*aptx_preference=TRUE;
-	else
-		*aptx_preference=FALSE;
-
-	free(str);
-
-	return 0;
-}
-
-int write_aptx_preference(bdaddr_t *bdaddr, gboolean aptx_preference)
-{
-	char filename[PATH_MAX + 1], str[249];
-	int i;
-
-	memset(str, 0, sizeof(str));
-	if(aptx_preference)
-		memcpy(str,"aptx",5);
-	else
-		memcpy(str,"sbc",4);
-
-	create_filename(filename, PATH_MAX, bdaddr, "config");
-
-	create_file(filename, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-
-	return textfile_put(filename, "Codec_preference", str);
-}
-
-#endif
 gboolean read_blocked(const bdaddr_t *local, const bdaddr_t *remote)
 {
 	char filename[PATH_MAX + 1], *str, addr[18];
@@ -1325,64 +1140,54 @@ int write_device_services(const bdaddr_t *sba, const bdaddr_t *dba,
 static void filter_keys(char *key, char *value, void *data)
 {
 	struct match *match = data;
-	const char *address = match->pattern;
 
-	/* Each key contains: MAC#handle*/
-	if (strncasecmp(key, address, 17) == 0)
+	if (strncasecmp(key, match->pattern, strlen(match->pattern)) == 0)
 		match->keys = g_slist_append(match->keys, g_strdup(key));
+}
+
+static void delete_by_pattern(const char *filename, char *pattern)
+{
+	struct match match;
+	GSList *l;
+	int err;
+
+	memset(&match, 0, sizeof(match));
+	match.pattern = pattern;
+
+	err = textfile_foreach(filename, filter_keys, &match);
+	if (err < 0)
+		goto done;
+
+	for (l = match.keys; l; l = l->next) {
+		const char *key = l->data;
+		textfile_del(filename, key);
+	}
+
+done:
+	g_slist_free_full(match.keys, g_free);
 }
 
 int delete_device_service(const bdaddr_t *sba, const bdaddr_t *dba)
 {
-	GSList *l;
-	struct match match;
 	char filename[PATH_MAX + 1], address[18];
-	int err;
-
-	create_filename(filename, PATH_MAX, sba, "primary");
 
 	memset(address, 0, sizeof(address));
 	ba2str(dba, address);
 
-	err = textfile_del(filename, address);
-	if (err < 0)
-		return err;
-
 	/* Deleting all characteristics of a given address */
-	memset(&match, 0, sizeof(match));
-	match.pattern = address;
-
 	create_filename(filename, PATH_MAX, sba, "characteristic");
-	err = textfile_foreach(filename, filter_keys, &match);
-	if (err < 0)
-		return err;
-
-	for (l = match.keys; l; l = l->next) {
-		const char *key = l->data;
-		textfile_del(filename, key);
-	}
-
-	g_slist_foreach(match.keys, (GFunc) g_free, NULL);
-	g_slist_free(match.keys);
+	delete_by_pattern(filename, address);
 
 	/* Deleting all attributes values of a given address */
-	memset(&match, 0, sizeof(match));
-	match.pattern = address;
-
 	create_filename(filename, PATH_MAX, sba, "attributes");
-	err = textfile_foreach(filename, filter_keys, &match);
-	if (err < 0)
-		return err;
+	delete_by_pattern(filename, address);
 
-	for (l = match.keys; l; l = l->next) {
-		const char *key = l->data;
-		textfile_del(filename, key);
-	}
+	/* Deleting all CCC values of a given address */
+	create_filename(filename, PATH_MAX, sba, "ccc");
+	delete_by_pattern(filename, address);
 
-	g_slist_foreach(match.keys, (GFunc) g_free, NULL);
-	g_slist_free(match.keys);
-
-	return 0;
+	create_filename(filename, PATH_MAX, sba, "primary");
+	return textfile_del(filename, address);
 }
 
 char *read_device_services(const bdaddr_t *sba, const bdaddr_t *dba)
@@ -1390,8 +1195,6 @@ char *read_device_services(const bdaddr_t *sba, const bdaddr_t *dba)
 	char filename[PATH_MAX + 1], addr[18];
 
 	create_filename(filename, PATH_MAX, sba, "primary");
-
-	create_file(filename, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 
 	ba2str(dba, addr);
 
@@ -1420,8 +1223,6 @@ char *read_device_characteristics(const bdaddr_t *sba, const bdaddr_t *dba,
 	char filename[PATH_MAX + 1], addr[18], key[23];
 
 	create_filename(filename, PATH_MAX, sba, "characteristic");
-
-	create_file(filename, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 
 	ba2str(dba, addr);
 
@@ -1452,45 +1253,60 @@ int read_device_attributes(const bdaddr_t *sba, textfile_cb func, void *data)
 
 	create_filename(filename, PATH_MAX, sba, "attributes");
 
-	create_file(filename, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-
 	return textfile_foreach(filename, func, data);
 }
 
-int write_device_type(const bdaddr_t *sba, const bdaddr_t *dba,
-						device_type_t type)
+int read_device_ccc(bdaddr_t *local, bdaddr_t *peer, uint16_t handle,
+							uint16_t *value)
 {
-	char filename[PATH_MAX + 1], addr[18], chars[3];
+	char filename[PATH_MAX + 1], addr[18], key[23];
+	char *str;
+	unsigned int config;
+	int err = 0;
 
-	create_filename(filename, PATH_MAX, sba, "types");
+	create_filename(filename, PATH_MAX, local, "ccc");
 
-	create_file(filename, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+	ba2str(peer, addr);
+	snprintf(key, sizeof(key), "%17s#%04X", addr, handle);
 
-	ba2str(dba, addr);
+	str = textfile_caseget(filename, key);
+	if (str == NULL)
+		return -ENOENT;
 
-	snprintf(chars, sizeof(chars), "%2.2X", type);
+	if (sscanf(str, "%04X", &config) != 1)
+		err = -ENOENT;
+	else
+		*value = config;
 
-	return textfile_put(filename, addr, chars);
+	free(str);
+
+	return err;
 }
 
-device_type_t read_device_type(const bdaddr_t *sba, const bdaddr_t *dba)
+int write_device_ccc(bdaddr_t *local, bdaddr_t *peer, uint16_t handle,
+							uint16_t value)
 {
-	char filename[PATH_MAX + 1], addr[18], *chars;
-	device_type_t type;
+	char filename[PATH_MAX + 1], addr[18], key[23], config[5];
 
-	create_filename(filename, PATH_MAX, sba, "types");
+	create_filename(filename, PATH_MAX, local, "ccc");
 
 	create_file(filename, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 
-	ba2str(dba, addr);
+	ba2str(peer, addr);
 
-	chars = textfile_caseget(filename, addr);
-	if (chars == NULL)
-		return DEVICE_TYPE_UNKNOWN;
+	snprintf(key, sizeof(key), "%17s#%04X", addr, handle);
+	snprintf(config, sizeof(config), "%04X", value);
 
-	type = strtol(chars, NULL, 16);
+	return textfile_put(filename, key, config);
+}
 
-	free(chars);
+void delete_device_ccc(bdaddr_t *local, bdaddr_t *peer)
+{
+	char filename[PATH_MAX + 1], addr[18];
 
-	return type;
+	ba2str(peer, addr);
+
+	/* Deleting all CCC values of a given address */
+	create_filename(filename, PATH_MAX, local, "ccc");
+	delete_by_pattern(filename, addr);
 }

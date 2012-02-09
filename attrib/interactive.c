@@ -315,13 +315,7 @@ static void char_read_by_uuid_cb(guint8 status, const guint8 *pdu,
 
 	att_data_list_free(list);
 
-	gatt_read_char_by_uuid(attrib, char_data->start, char_data->end,
-					&char_data->uuid, char_read_by_uuid_cb,
-					char_data);
-
 	rl_forced_update_display();
-
-	return;
 
 done:
 	g_free(char_data);
@@ -362,6 +356,7 @@ static void cmd_disconnect(int argcp, char **argvp)
 
 	g_attrib_unref(attrib);
 	attrib = NULL;
+	opt_mtu = 0;
 
 	g_io_channel_shutdown(iochannel, FALSE, NULL);
 	g_io_channel_unref(iochannel);
@@ -431,7 +426,19 @@ static void cmd_char(int argcp, char **argvp)
 		}
 	}
 
-	gatt_discover_char(attrib, start, end, char_cb, NULL);
+	if (argcp > 3) {
+		bt_uuid_t uuid;
+
+		if (bt_string_to_uuid(&uuid, argvp[3]) < 0) {
+			printf("Invalid UUID\n");
+			return;
+		}
+
+		gatt_discover_char(attrib, start, end, &uuid, char_cb, NULL);
+		return;
+	}
+
+	gatt_discover_char(attrib, start, end, NULL, char_cb, NULL);
 }
 
 static void cmd_char_desc(int argcp, char **argvp)
@@ -642,6 +649,65 @@ static void cmd_sec_level(int argcp, char **argvp)
 	}
 }
 
+static void exchange_mtu_cb(guint8 status, const guint8 *pdu, guint16 plen,
+							gpointer user_data)
+{
+	uint16_t mtu;
+
+	if (status != 0) {
+		printf("Exchange MTU Request failed: %s\n",
+							att_ecode2str(status));
+		return;
+	}
+
+	if (!dec_mtu_resp(pdu, plen, &mtu)) {
+		printf("Protocol error\n");
+		return;
+	}
+
+	mtu = MIN(mtu, opt_mtu);
+	/* Set new value for MTU in client */
+	if (g_attrib_set_mtu(attrib, mtu))
+		printf("MTU was exchanged successfully: %d\n", mtu);
+	else
+		printf("Error exchanging MTU\n");
+}
+
+static void cmd_mtu(int argcp, char **argvp)
+{
+	if (conn_state != STATE_CONNECTED) {
+		printf("Command failed: not connected.\n");
+		return;
+	}
+
+	if (opt_psm) {
+		printf("Command failed: operation is only available for LE"
+							" transport.\n");
+		return;
+	}
+
+	if (argcp < 2) {
+		printf("Usage: mtu <value>\n");
+		return;
+	}
+
+	if (opt_mtu) {
+		printf("Command failed: MTU exchange can only occur once per"
+							" connection.\n");
+		return;
+	}
+
+	errno = 0;
+	opt_mtu = strtoll(argvp[1], NULL, 0);
+	if (errno != 0 || opt_mtu < ATT_DEFAULT_LE_MTU) {
+		printf("Invalid value. Minimum MTU size is %d\n",
+							ATT_DEFAULT_LE_MTU);
+		return;
+	}
+
+	gatt_exchange_mtu(attrib, opt_mtu, exchange_mtu_cb, NULL);
+}
+
 static struct {
 	const char *cmd;
 	void (*func)(int argcp, char **argvp);
@@ -652,13 +718,15 @@ static struct {
 		"Show this help"},
 	{ "exit",		cmd_exit,	"",
 		"Exit interactive mode" },
+	{ "quit",		cmd_exit,	"",
+		"Exit interactive mode" },
 	{ "connect",		cmd_connect,	"[address]",
 		"Connect to a remote device" },
 	{ "disconnect",		cmd_disconnect,	"",
 		"Disconnect from a remote device" },
 	{ "primary",		cmd_primary,	"[UUID]",
 		"Primary Service Discovery" },
-	{ "characteristics",	cmd_char,	"[start hnd] [end hnd]",
+	{ "characteristics",	cmd_char,	"[start hnd [end hnd [UUID]]]",
 		"Characteristics Discovery" },
 	{ "char-desc",		cmd_char_desc,	"[start hnd] [end hnd]",
 		"Characteristics Descriptor Discovery" },
@@ -672,6 +740,8 @@ static struct {
 		"Characteristic Value Write (No response)" },
 	{ "sec-level",		cmd_sec_level,	"[low | medium | high]",
 		"Set security level. Default: low" },
+	{ "mtu",		cmd_mtu,	"<value>",
+		"Exchange MTU for GATT/ATT" },
 	{ NULL, NULL, NULL}
 };
 

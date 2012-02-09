@@ -37,7 +37,7 @@ config.status: configure
 	dh_testdir
 
 	# Add here commands to configure the package.
-	CFLAGS="$(CFLAGS) -D__TIZEN_PATCH__ $(BT_CHIP_CFLAGS)" \
+	CFLAGS="$(CFLAGS) -D__SAMSUNG_PATCH__ $(BT_CHIP_CFLAGS)" \
 	LDFLAGS="$(LDFLAGS) -Wl,--warn-unresolved-symbols" \
 	./configure 	--prefix=$(PREFIX) \
 			--sysconfdir=$(PREFIX)/etc \
@@ -58,6 +58,7 @@ config.status: configure
 			--disable-test \
 			--enable-health \
 			--disable-udevrules \
+			--enable-dbusoob \
 			--with-telephony=tizen
 
 build: build-stamp

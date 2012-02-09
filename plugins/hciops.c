@@ -40,6 +40,7 @@
 
 #include <glib.h>
 
+#include "glib-compat.h"
 #include "hcid.h"
 #include "sdpd.h"
 #include "btio.h"
@@ -50,11 +51,33 @@
 #include "storage.h"
 #include "event.h"
 #include "manager.h"
+#include "oob.h"
+#include "eir.h"
+
+#define DISCOV_HALTED 0
+#define DISCOV_INQ 1
+#define DISCOV_SCAN 2
+#define DISCOV_NAMES 3
+
+#define TIMEOUT_BR_LE_SCAN 5120 /* TGAP(100)/2 */
+#define TIMEOUT_LE_SCAN 10240 /* TGAP(gen_disc_scan_min) */
+
+#define LENGTH_BR_INQ 0x08
+#define LENGTH_BR_LE_INQ 0x04
+
+static int start_scanning(int index, int timeout);
 
 static int child_pipe[2] = { -1, -1 };
 
 static guint child_io_id = 0;
 static guint ctl_io_id = 0;
+
+enum adapter_type {
+	BR_EDR,
+	LE_ONLY,
+	BR_EDR_LE,
+	UNKNOWN,
+};
 
 /* Commands sent by kernel on starting an adapter */
 enum {
@@ -62,11 +85,6 @@ enum {
 	PENDING_VERSION,
 	PENDING_FEATURES,
 	PENDING_NAME,
-};
-
-struct uuid_info {
-	uuid_t uuid;
-	uint8_t svc_hint;
 };
 
 struct bt_conn {
@@ -77,9 +95,29 @@ struct bt_conn {
 	uint8_t loc_auth;
 	uint8_t rem_cap;
 	uint8_t rem_auth;
+	uint8_t rem_oob_data;
 	gboolean bonding_initiator;
 	gboolean secmode3;
 	GIOChannel *io; /* For raw L2CAP socket (bonding) */
+};
+
+struct oob_data {
+	bdaddr_t bdaddr;
+	uint8_t hash[16];
+	uint8_t randomizer[16];
+};
+
+enum name_state {
+	NAME_UNKNOWN,
+	NAME_NEEDED,
+	NAME_NOT_NEEDED,
+	NAME_PENDING,
+};
+
+struct found_dev {
+	bdaddr_t bdaddr;
+	int8_t rssi;
+	enum name_state name_state;
 };
 
 static int max_dev = -1;
@@ -88,11 +126,14 @@ static struct dev_info {
 	int sk;
 	bdaddr_t bdaddr;
 	char name[249];
-	uint8_t eir[240];
+	uint8_t eir[HCI_MAX_EIR_LENGTH];
 	uint8_t features[8];
+	uint8_t extfeatures[8];
 	uint8_t ssp_mode;
 
 	int8_t tx_power;
+
+	int discov_state;
 
 	uint32_t current_cod;
 	uint32_t wanted_cod;
@@ -111,7 +152,7 @@ static struct dev_info {
 	uint16_t did_version;
 
 	gboolean up;
-	unsigned long pending;
+	uint32_t pending;
 
 	GIOChannel *io;
 	guint watch_id;
@@ -120,10 +161,144 @@ static struct dev_info {
 	GSList *keys;
 	uint8_t pin_length;
 
+	GSList *oob_data;
+
 	GSList *uuids;
 
 	GSList *connections;
+
+	GSList *found_devs;
+	GSList *need_name;
+
+	guint stop_scan_id;
 } *devs = NULL;
+
+static int found_dev_rssi_cmp(gconstpointer a, gconstpointer b)
+{
+	const struct found_dev *d1 = a, *d2 = b;
+	int rssi1, rssi2;
+
+	if (d2->name_state == NAME_NOT_NEEDED)
+		return -1;
+
+	rssi1 = d1->rssi < 0 ? -d1->rssi : d1->rssi;
+	rssi2 = d2->rssi < 0 ? -d2->rssi : d2->rssi;
+
+	return rssi1 - rssi2;
+}
+
+static int found_dev_bda_cmp(gconstpointer a, gconstpointer b)
+{
+	const struct found_dev *d1 = a, *d2 = b;
+
+	return bacmp(&d1->bdaddr, &d2->bdaddr);
+}
+
+static void found_dev_cleanup(struct dev_info *info)
+{
+	g_slist_free_full(info->found_devs, g_free);
+	info->found_devs = NULL;
+
+	g_slist_free_full(info->need_name, g_free);
+	info->need_name = NULL;
+}
+
+static int resolve_name(struct dev_info *info, bdaddr_t *bdaddr)
+{
+	remote_name_req_cp cp;
+	char addr[18];
+
+	ba2str(bdaddr, addr);
+	DBG("hci%d dba %s", info->id, addr);
+
+	memset(&cp, 0, sizeof(cp));
+	bacpy(&cp.bdaddr, bdaddr);
+	cp.pscan_rep_mode = 0x02;
+
+	if (hci_send_cmd(info->sk, OGF_LINK_CTL, OCF_REMOTE_NAME_REQ,
+					REMOTE_NAME_REQ_CP_SIZE, &cp) < 0)
+		return -errno;
+
+	return 0;
+}
+
+static int resolve_names(struct dev_info *info, struct btd_adapter *adapter)
+{
+	struct found_dev *dev;
+
+	DBG("found_dev %u need_name %u", g_slist_length(info->found_devs),
+					g_slist_length(info->need_name));
+
+	if (g_slist_length(info->need_name) == 0)
+		return -ENOENT;
+
+	dev = info->need_name->data;
+	resolve_name(info, &dev->bdaddr);
+	dev->name_state = NAME_PENDING;
+
+	return 0;
+}
+
+static void set_state(int index, int state)
+{
+	struct btd_adapter *adapter;
+	struct dev_info *dev = &devs[index];
+
+	if (dev->discov_state == state)
+		return;
+
+	adapter = manager_find_adapter_by_id(index);
+	if (!adapter) {
+		error("No matching adapter found");
+		return;
+	}
+
+	dev->discov_state = state;
+
+	DBG("hci%d: new state %d", index, dev->discov_state);
+
+	switch (dev->discov_state) {
+	case DISCOV_HALTED:
+		found_dev_cleanup(dev);
+		adapter_set_discovering(adapter, FALSE);
+		break;
+	case DISCOV_INQ:
+	case DISCOV_SCAN:
+		adapter_set_discovering(adapter, TRUE);
+		break;
+	case DISCOV_NAMES:
+		if (resolve_names(dev, adapter) < 0)
+			set_state(index, DISCOV_HALTED);
+		break;
+	}
+}
+
+static inline gboolean is_le_capable(int index)
+{
+	struct dev_info *dev = &devs[index];
+
+	return (dev->features[4] & LMP_LE &&
+			dev->extfeatures[0] & LMP_HOST_LE) ? TRUE : FALSE;
+}
+
+static inline gboolean is_bredr_capable(int index)
+{
+	struct dev_info *dev = &devs[index];
+
+	return (dev->features[4] & LMP_NO_BREDR) == 0 ? TRUE : FALSE;
+}
+
+static int get_adapter_type(int index)
+{
+	if (is_le_capable(index) && is_bredr_capable(index))
+		return BR_EDR_LE;
+	else if (is_le_capable(index))
+		return LE_ONLY;
+	else if (is_bredr_capable(index))
+		return BR_EDR;
+
+	return UNKNOWN;
+}
 
 static int ignore_device(struct hci_dev_info *di)
 {
@@ -143,6 +318,7 @@ static struct dev_info *init_dev_info(int index, int sk, gboolean registered,
 	dev->registered = registered;
 	dev->already_up = already_up;
 	dev->io_capability = 0x03; /* No Input No Output */
+	dev->discov_state = DISCOV_HALTED;
 
 	return dev;
 }
@@ -462,24 +638,13 @@ static void start_adapter(int index)
 static int hciops_stop_inquiry(int index)
 {
 	struct dev_info *dev = &devs[index];
-	struct hci_dev_info di;
-	int err;
 
 	DBG("hci%d", index);
 
-	if (hci_devinfo(index, &di) < 0)
+	if (hci_send_cmd(dev->sk, OGF_LINK_CTL, OCF_INQUIRY_CANCEL, 0, 0) < 0)
 		return -errno;
 
-	if (hci_test_bit(HCI_INQUIRY, &di.flags))
-		err = hci_send_cmd(dev->sk, OGF_LINK_CTL,
-						OCF_INQUIRY_CANCEL, 0, 0);
-	else
-		err = hci_send_cmd(dev->sk, OGF_LINK_CTL,
-					OCF_EXIT_PERIODIC_INQUIRY, 0, 0);
-	if (err < 0)
-		err = -errno;
-
-	return err;
+	return 0;
 }
 
 static gboolean init_adapter(int index)
@@ -504,7 +669,7 @@ static gboolean init_adapter(int index)
 		return FALSE;
 
 	btd_adapter_get_mode(adapter, &mode, &on_mode, &pairable);
-	DBG("SYAM Mode =  %d, on_mode = %d, pairable = %d", mode, on_mode, pairable);
+
 	if (existing_adapter)
 		mode = on_mode;
 
@@ -724,6 +889,8 @@ static int disconnect_addr(int index, bdaddr_t *dba, uint8_t reason)
 static void bonding_complete(struct dev_info *dev, struct bt_conn *conn,
 								uint8_t status)
 {
+	struct btd_adapter *adapter;
+
 	DBG("status 0x%02x", status);
 
 	if (conn->io != NULL) {
@@ -736,7 +903,9 @@ static void bonding_complete(struct dev_info *dev, struct bt_conn *conn,
 
 	conn->bonding_initiator = FALSE;
 
-	btd_event_bonding_complete(&dev->bdaddr, &conn->bdaddr, status);
+	adapter = manager_find_adapter(&dev->bdaddr);
+	if (adapter)
+		adapter_bonding_complete(adapter, &conn->bdaddr, status);
 }
 
 static int get_auth_info(int index, bdaddr_t *bdaddr, uint8_t *auth)
@@ -863,7 +1032,7 @@ static void link_key_notify(int index, void *ptr)
 		/* Some buggy controller combinations generate a changed
 		 * combination key for legacy pairing even when there's no
 		 * previous key */
-		if ((!conn || conn->rem_auth == 0xff) && old_key_type == 0xff)
+		if (conn->rem_auth == 0xff && old_key_type == 0xff)
 			key_type = 0x00;
 		else if (old_key_type != 0xff)
 			key_type = old_key_type;
@@ -1053,14 +1222,42 @@ static void user_passkey_notify(int index, void *ptr)
 						btohl(req->passkey));
 }
 
-static void remote_oob_data_request(int index, void *ptr)
+static gint oob_bdaddr_cmp(gconstpointer a, gconstpointer b)
+{
+	const struct oob_data *data = a;
+	const bdaddr_t *bdaddr = b;
+
+	return bacmp(&data->bdaddr, bdaddr);
+}
+
+static void remote_oob_data_request(int index, bdaddr_t *bdaddr)
 {
 	struct dev_info *dev = &devs[index];
+	GSList *match;
 
 	DBG("hci%d", index);
 
-	hci_send_cmd(dev->sk, OGF_LINK_CTL,
-				OCF_REMOTE_OOB_DATA_NEG_REPLY, 6, ptr);
+	match = g_slist_find_custom(dev->oob_data, bdaddr, oob_bdaddr_cmp);
+
+	if (match) {
+		struct oob_data *data;
+		remote_oob_data_reply_cp cp;
+
+		data = match->data;
+
+		bacpy(&cp.bdaddr, &data->bdaddr);
+		memcpy(cp.hash, data->hash, sizeof(cp.hash));
+		memcpy(cp.randomizer, data->randomizer, sizeof(cp.randomizer));
+
+		dev->oob_data = g_slist_delete_link(dev->oob_data, match);
+
+		hci_send_cmd(dev->sk, OGF_LINK_CTL, OCF_REMOTE_OOB_DATA_REPLY,
+				REMOTE_OOB_DATA_REPLY_CP_SIZE, &cp);
+
+	} else {
+		hci_send_cmd(dev->sk, OGF_LINK_CTL,
+				OCF_REMOTE_OOB_DATA_NEG_REPLY, 6, bdaddr);
+	}
 }
 
 static int get_io_cap(int index, bdaddr_t *bdaddr, uint8_t *cap, uint8_t *auth)
@@ -1158,11 +1355,23 @@ static void io_capa_request(int index, void *ptr)
 					IO_CAPABILITY_NEG_REPLY_CP_SIZE, &cp);
 	} else {
 		io_capability_reply_cp cp;
+		struct bt_conn *conn;
+		GSList *match;
+
 		memset(&cp, 0, sizeof(cp));
 		bacpy(&cp.bdaddr, dba);
 		cp.capability = cap;
-		cp.oob_data = 0x00;
 		cp.authentication = auth;
+
+		conn = find_connection(dev, dba);
+		match = g_slist_find_custom(dev->oob_data, dba, oob_bdaddr_cmp);
+
+		if ((conn->bonding_initiator || conn->rem_oob_data == 0x01) &&
+				match)
+			cp.oob_data = 0x01;
+		else
+			cp.oob_data = 0x00;
+
 		hci_send_cmd(dev->sk, OGF_LINK_CTL, OCF_IO_CAPABILITY_REPLY,
 					IO_CAPABILITY_REPLY_CP_SIZE, &cp);
 	}
@@ -1182,6 +1391,7 @@ static void io_capa_response(int index, void *ptr)
 	if (conn) {
 		conn->rem_cap = evt->capability;
 		conn->rem_auth = evt->authentication;
+		conn->rem_oob_data = evt->oob_data;
 	}
 }
 
@@ -1208,7 +1418,7 @@ static void pin_code_request(int index, bdaddr_t *dba)
 		goto reject;
 	}
 
-	err = btd_event_request_pin(&dev->bdaddr, dba);
+	err = btd_event_request_pin(&dev->bdaddr, dba, FALSE);
 	if (err < 0) {
 		error("PIN code negative reply: %s", strerror(-err));
 		goto reject;
@@ -1218,56 +1428,6 @@ static void pin_code_request(int index, bdaddr_t *dba)
 
 reject:
 	hci_send_cmd(dev->sk, OGF_LINK_CTL, OCF_PIN_CODE_NEG_REPLY, 6, dba);
-}
-
-static void start_inquiry(bdaddr_t *local, uint8_t status, gboolean periodic)
-{
-	struct btd_adapter *adapter;
-	int state;
-
-	/* Don't send the signal if the cmd failed */
-	if (status) {
-		error("Inquiry Failed with status 0x%02x", status);
-		return;
-	}
-
-	adapter = manager_find_adapter(local);
-	if (!adapter) {
-		error("Unable to find matching adapter");
-		return;
-	}
-
-	state = adapter_get_state(adapter);
-
-	if (periodic)
-		state |= STATE_PINQ;
-	else
-		state |= STATE_STDINQ;
-
-	adapter_set_state(adapter, state);
-}
-
-static void inquiry_complete(bdaddr_t *local, uint8_t status,
-							gboolean periodic)
-{
-	struct btd_adapter *adapter;
-	int state;
-
-	/* Don't send the signal if the cmd failed */
-	if (status) {
-		error("Inquiry Failed with status 0x%02x", status);
-		return;
-	}
-
-	adapter = manager_find_adapter(local);
-	if (!adapter) {
-		error("Unable to find matching adapter");
-		return;
-	}
-
-	state = adapter_get_state(adapter);
-	state &= ~(STATE_STDINQ | STATE_PINQ);
-	adapter_set_state(adapter, state);
 }
 
 static inline void remote_features_notify(int index, void *ptr)
@@ -1283,20 +1443,6 @@ static inline void remote_features_notify(int index, void *ptr)
 									TRUE);
 
 	write_features_info(&dev->bdaddr, &evt->bdaddr, NULL, evt->features);
-}
-
-static void write_le_host_complete(int index, uint8_t status)
-{
-	struct dev_info *dev = &devs[index];
-	uint8_t page_num = 0x01;
-
-	if (status)
-		return;
-
-	if (hci_send_cmd(dev->sk, OGF_INFO_PARAM,
-				OCF_READ_LOCAL_EXT_FEATURES, 1, &page_num) < 0)
-		error("Unable to read extended local features: %s (%d)",
-						strerror(errno), errno);
 }
 
 static void read_local_version_complete(int index,
@@ -1345,167 +1491,6 @@ static void read_local_features_complete(int index,
 		init_adapter(index);
 }
 
-#define SIZEOF_UUID128 16
-
-static void eir_generate_uuid128(GSList *list, uint8_t *ptr, uint16_t *eir_len)
-{
-	int i, k, uuid_count = 0;
-	uint16_t len = *eir_len;
-	uint8_t *uuid128;
-	gboolean truncated = FALSE;
-
-	/* Store UUIDs in place, skip 2 bytes to write type and length later */
-	uuid128 = ptr + 2;
-
-	for (; list; list = list->next) {
-		struct uuid_info *uuid = list->data;
-		uint8_t *uuid128_data = uuid->uuid.value.uuid128.data;
-
-		if (uuid->uuid.type != SDP_UUID128)
-			continue;
-
-		/* Stop if not enough space to put next UUID128 */
-		if ((len + 2 + SIZEOF_UUID128) > EIR_DATA_LENGTH) {
-			truncated = TRUE;
-			break;
-		}
-
-		/* Check for duplicates, EIR data is Little Endian */
-		for (i = 0; i < uuid_count; i++) {
-			for (k = 0; k < SIZEOF_UUID128; k++) {
-				if (uuid128[i * SIZEOF_UUID128 + k] !=
-					uuid128_data[SIZEOF_UUID128 - 1 - k])
-					break;
-			}
-			if (k == SIZEOF_UUID128)
-				break;
-		}
-
-		if (i < uuid_count)
-			continue;
-
-		/* EIR data is Little Endian */
-		for (k = 0; k < SIZEOF_UUID128; k++)
-			uuid128[uuid_count * SIZEOF_UUID128 + k] =
-				uuid128_data[SIZEOF_UUID128 - 1 - k];
-
-		len += SIZEOF_UUID128;
-		uuid_count++;
-	}
-
-	if (uuid_count > 0 || truncated) {
-		/* EIR Data length */
-		ptr[0] = (uuid_count * SIZEOF_UUID128) + 1;
-		/* EIR Data type */
-		ptr[1] = truncated ? EIR_UUID128_SOME : EIR_UUID128_ALL;
-		len += 2;
-		*eir_len = len;
-	}
-}
-
-static void create_ext_inquiry_response(int index, uint8_t *data)
-{
-	struct dev_info *dev = &devs[index];
-	GSList *l;
-	uint8_t *ptr = data;
-	uint16_t eir_len = 0;
-	uint16_t uuid16[EIR_DATA_LENGTH / 2];
-	int i, uuid_count = 0;
-	gboolean truncated = FALSE;
-	size_t name_len;
-
-	name_len = strlen(dev->name);
-
-	if (name_len > 0) {
-		/* EIR Data type */
-		if (name_len > 48) {
-			name_len = 48;
-			ptr[1] = EIR_NAME_SHORT;
-		} else
-			ptr[1] = EIR_NAME_COMPLETE;
-
-		/* EIR Data length */
-		ptr[0] = name_len + 1;
-
-		memcpy(ptr + 2, dev->name, name_len);
-
-		eir_len += (name_len + 2);
-		ptr += (name_len + 2);
-	}
-
-	if (dev->tx_power != 0) {
-		*ptr++ = 2;
-		*ptr++ = EIR_TX_POWER;
-		*ptr++ = (uint8_t) dev->tx_power;
-		eir_len += 3;
-	}
-
-	if (dev->did_vendor != 0x0000) {
-		uint16_t source = 0x0002;
-		*ptr++ = 9;
-		*ptr++ = EIR_DEVICE_ID;
-		*ptr++ = (source & 0x00ff);
-		*ptr++ = (source & 0xff00) >> 8;
-		*ptr++ = (dev->did_vendor & 0x00ff);
-		*ptr++ = (dev->did_vendor & 0xff00) >> 8;
-		*ptr++ = (dev->did_product & 0x00ff);
-		*ptr++ = (dev->did_product & 0xff00) >> 8;
-		*ptr++ = (dev->did_version & 0x00ff);
-		*ptr++ = (dev->did_version & 0xff00) >> 8;
-		eir_len += 10;
-	}
-
-	/* Group all UUID16 types */
-	for (l = dev->uuids; l != NULL; l = g_slist_next(l)) {
-		struct uuid_info *uuid = l->data;
-
-		if (uuid->uuid.type != SDP_UUID16)
-			continue;
-
-		if (uuid->uuid.value.uuid16 < 0x1100)
-			continue;
-
-		if (uuid->uuid.value.uuid16 == PNP_INFO_SVCLASS_ID)
-			continue;
-
-		/* Stop if not enough space to put next UUID16 */
-		if ((eir_len + 2 + sizeof(uint16_t)) > EIR_DATA_LENGTH) {
-			truncated = TRUE;
-			break;
-		}
-
-		/* Check for duplicates */
-		for (i = 0; i < uuid_count; i++)
-			if (uuid16[i] == uuid->uuid.value.uuid16)
-				break;
-
-		if (i < uuid_count)
-			continue;
-
-		uuid16[uuid_count++] = uuid->uuid.value.uuid16;
-		eir_len += sizeof(uint16_t);
-	}
-
-	if (uuid_count > 0) {
-		/* EIR Data length */
-		ptr[0] = (uuid_count * sizeof(uint16_t)) + 1;
-		/* EIR Data type */
-		ptr[1] = truncated ? EIR_UUID16_SOME : EIR_UUID16_ALL;
-
-		ptr += 2;
-		eir_len += 2;
-
-		for (i = 0; i < uuid_count; i++) {
-			*ptr++ = (uuid16[i] & 0x00ff);
-			*ptr++ = (uuid16[i] & 0xff00) >> 8;
-		}
-	}
-
-	/* Group all UUID128 types */
-	if (eir_len <= EIR_DATA_LENGTH - 2)
-		eir_generate_uuid128(dev->uuids, ptr, &eir_len);
-}
-
 static void update_ext_inquiry_response(int index)
 {
 	struct dev_info *dev = &devs[index];
@@ -1524,7 +1509,8 @@ static void update_ext_inquiry_response(int index)
 
 	memset(&cp, 0, sizeof(cp));
 
-	create_ext_inquiry_response(index, cp.data);
+	eir_create(dev->name, dev->tx_power, dev->did_vendor, dev->did_product,
+					dev->did_version, dev->uuids, cp.data);
 
 	if (memcmp(cp.data, dev->eir, sizeof(cp.data)) == 0)
 		return;
@@ -1544,7 +1530,7 @@ static void update_name(int index, const char *name)
 
 	adapter = manager_find_adapter_by_id(index);
 	if (adapter)
-		adapter_update_local_name(adapter, name);
+		adapter_name_changed(adapter, name);
 
 	update_ext_inquiry_response(index);
 }
@@ -1569,22 +1555,7 @@ static void read_local_name_complete(int index, read_local_name_rp *rp)
 
 	DBG("Got name for hci%d", index);
 
-	/* Even though it shouldn't happen (assuming the kernel behaves
-	 * properly) it seems like we might miss the very first
-	 * initialization commands that the kernel sends. So check for
-	 * it here (since read_local_name is one of the last init
-	 * commands) and resend the first ones if we haven't seen
-	 * their results yet */
-
-	if (hci_test_bit(PENDING_FEATURES, &dev->pending))
-		hci_send_cmd(dev->sk, OGF_INFO_PARAM,
-					OCF_READ_LOCAL_FEATURES, 0, NULL);
-
-	if (hci_test_bit(PENDING_VERSION, &dev->pending))
-		hci_send_cmd(dev->sk, OGF_INFO_PARAM,
-					OCF_READ_LOCAL_VERSION, 0, NULL);
-
-	if (!dev->pending)
+	if (!dev->pending && dev->up)
 		init_adapter(index);
 }
 
@@ -1607,7 +1578,6 @@ static void read_simple_pairing_mode_complete(int index, void *ptr)
 {
 	struct dev_info *dev = &devs[index];
 	read_simple_pairing_mode_rp *rp = ptr;
-	struct btd_adapter *adapter;
 
 	DBG("hci%d status %u", index, rp->status);
 
@@ -1616,37 +1586,23 @@ static void read_simple_pairing_mode_complete(int index, void *ptr)
 
 	dev->ssp_mode = rp->mode;
 	update_ext_inquiry_response(index);
-
-	adapter = manager_find_adapter(&dev->bdaddr);
-	if (!adapter) {
-		error("No matching adapter found");
-		return;
-	}
-
-	adapter_update_ssp_mode(adapter, rp->mode);
 }
 
 static void read_local_ext_features_complete(int index,
 				const read_local_ext_features_rp *rp)
 {
-	struct btd_adapter *adapter;
+	struct dev_info *dev = &devs[index];
 
 	DBG("hci%d status %u", index, rp->status);
 
 	if (rp->status)
 		return;
 
-	adapter = manager_find_adapter_by_id(index);
-	if (!adapter) {
-		error("No matching adapter found");
-		return;
-	}
-
 	/* Local Extended feature page number is 1 */
 	if (rp->page_num != 1)
 		return;
 
-	btd_adapter_update_local_ext_features(adapter, rp->features);
+	memcpy(dev->extfeatures, rp->features, sizeof(dev->extfeatures));
 }
 
 static void read_bd_addr_complete(int index, read_bd_addr_rp *rp)
@@ -1671,14 +1627,23 @@ static void read_bd_addr_complete(int index, read_bd_addr_rp *rp)
 		init_adapter(index);
 }
 
+static inline void cs_inquiry_evt(int index, uint8_t status)
+{
+	if (status) {
+		error("Inquiry Failed with status 0x%02x", status);
+		return;
+	}
+
+	set_state(index, DISCOV_INQ);
+}
+
 static inline void cmd_status(int index, void *ptr)
 {
-	struct dev_info *dev = &devs[index];
 	evt_cmd_status *evt = ptr;
 	uint16_t opcode = btohs(evt->opcode);
 
 	if (opcode == cmd_opcode_pack(OGF_LINK_CTL, OCF_INQUIRY))
-		start_inquiry(&dev->bdaddr, evt->status, FALSE);
+		cs_inquiry_evt(index, evt->status);
 }
 
 static void read_scan_complete(int index, uint8_t status, void *ptr)
@@ -1785,6 +1750,70 @@ static void write_class_complete(int index, uint8_t status)
 		write_class(index, dev->wanted_cod);
 }
 
+static void read_local_oob_data_complete(int index, uint8_t status,
+						read_local_oob_data_rp *rp)
+{
+	struct btd_adapter *adapter = manager_find_adapter_by_id(index);
+
+	if (!adapter)
+		return;
+
+	if (status)
+		oob_read_local_data_complete(adapter, NULL, NULL);
+	else
+		oob_read_local_data_complete(adapter, rp->hash, rp->randomizer);
+}
+
+static inline void inquiry_complete_evt(int index, uint8_t status)
+{
+	int adapter_type;
+	struct btd_adapter *adapter;
+
+	if (status) {
+		error("Inquiry Failed with status 0x%02x", status);
+		return;
+	}
+
+	adapter = manager_find_adapter_by_id(index);
+	if (!adapter) {
+		error("No matching adapter found");
+		return;
+	}
+
+	adapter_type = get_adapter_type(index);
+
+	if (adapter_type == BR_EDR_LE &&
+			start_scanning(index, TIMEOUT_BR_LE_SCAN) == 0)
+		return;
+
+	set_state(index, DISCOV_NAMES);
+}
+
+static inline void cc_inquiry_cancel(int index, uint8_t status)
+{
+	if (status) {
+		error("Inquiry Cancel Failed with status 0x%02x", status);
+		return;
+	}
+
+	set_state(index, DISCOV_HALTED);
+}
+
+static inline void cc_le_set_scan_enable(int index, uint8_t status)
+{
+	struct dev_info *info = &devs[index];
+
+	if (status) {
+		error("LE Set Scan Enable Failed with status 0x%02x", status);
+		return;
+	}
+
+	if (info->discov_state == DISCOV_SCAN)
+		set_state(index, DISCOV_HALTED);
+	else
+		set_state(index, DISCOV_SCAN);
+}
+
 static inline void cmd_complete(int index, void *ptr)
 {
 	struct dev_info *dev = &devs[index];
@@ -1809,20 +1838,11 @@ static inline void cmd_complete(int index, void *ptr)
 		ptr += sizeof(evt_cmd_complete);
 		read_bd_addr_complete(index, ptr);
 		break;
-	case cmd_opcode_pack(OGF_LINK_CTL, OCF_PERIODIC_INQUIRY):
-		start_inquiry(&dev->bdaddr, status, TRUE);
-		break;
-	case cmd_opcode_pack(OGF_LINK_CTL, OCF_EXIT_PERIODIC_INQUIRY):
-		inquiry_complete(&dev->bdaddr, status, TRUE);
-		break;
 	case cmd_opcode_pack(OGF_LINK_CTL, OCF_INQUIRY_CANCEL):
-		inquiry_complete(&dev->bdaddr, status, FALSE);
-		break;
-	case cmd_opcode_pack(OGF_HOST_CTL, OCF_WRITE_LE_HOST_SUPPORTED):
-		write_le_host_complete(index, status);
+		cc_inquiry_cancel(index, status);
 		break;
 	case cmd_opcode_pack(OGF_LE_CTL, OCF_LE_SET_SCAN_ENABLE):
-		btd_event_le_set_scan_enable_complete(&dev->bdaddr, status);
+		cc_le_set_scan_enable(index, status);
 		break;
 	case cmd_opcode_pack(OGF_HOST_CTL, OCF_CHANGE_LOCAL_NAME):
 		if (!status)
@@ -1858,6 +1878,10 @@ static inline void cmd_complete(int index, void *ptr)
 		ptr += sizeof(evt_cmd_complete);
 		read_tx_power_complete(index, ptr);
 		break;
+	case cmd_opcode_pack(OGF_HOST_CTL, OCF_READ_LOCAL_OOB_DATA):
+		ptr += sizeof(evt_cmd_complete);
+		read_local_oob_data_complete(index, status, ptr);
+		break;
 	};
 }
 
@@ -1865,16 +1889,43 @@ static inline void remote_name_information(int index, void *ptr)
 {
 	struct dev_info *dev = &devs[index];
 	evt_remote_name_req_complete *evt = ptr;
+	struct btd_adapter *adapter;
 	char name[MAX_NAME_LENGTH + 1];
+	struct found_dev *found;
+
+	GSList *match;
 
 	DBG("hci%d status %u", index, evt->status);
 
 	memset(name, 0, sizeof(name));
 
-	if (!evt->status)
+	if (evt->status == 0) {
 		memcpy(name, evt->name, MAX_NAME_LENGTH);
+		btd_event_remote_name(&dev->bdaddr, &evt->bdaddr, name);
+	}
 
-	btd_event_remote_name(&dev->bdaddr, &evt->bdaddr, evt->status, name);
+	adapter = manager_find_adapter_by_id(index);
+	if (!adapter) {
+		error("No matching adapter found");
+		return;
+	}
+
+	match = g_slist_find_custom(dev->need_name, &evt->bdaddr,
+							found_dev_bda_cmp);
+	if (match == NULL)
+		return;
+
+	found = match->data;
+	found->name_state = NAME_NOT_NEEDED;
+
+	dev->need_name = g_slist_remove_link(dev->need_name, match);
+
+	match->next = dev->found_devs;
+	dev->found_devs = match;
+	dev->found_devs = g_slist_sort(dev->found_devs, found_dev_rssi_cmp);
+
+	if (resolve_names(dev, adapter) < 0)
+		set_state(index, DISCOV_HALTED);
 }
 
 static inline void remote_version_information(int index, void *ptr)
@@ -1897,6 +1948,34 @@ static inline void remote_version_information(int index, void *ptr)
 				btohs(evt->lmp_subver));
 }
 
+static void dev_found(struct dev_info *info, bdaddr_t *dba, addr_type_t type,
+				uint32_t cod, int8_t rssi, uint8_t cfm_name,
+				uint8_t *eir, uint8_t eir_len)
+{
+	struct found_dev *dev;
+	GSList *match;
+
+	match = g_slist_find_custom(info->found_devs, dba, found_dev_bda_cmp);
+	if (match != NULL) {
+		cfm_name = 0;
+		goto event;
+	}
+
+	dev = g_new0(struct found_dev, 1);
+	bacpy(&dev->bdaddr, dba);
+	dev->rssi = rssi;
+	if (cfm_name)
+		dev->name_state = NAME_UNKNOWN;
+	else
+		dev->name_state = NAME_NOT_NEEDED;
+
+	info->found_devs = g_slist_prepend(info->found_devs, dev);
+
+event:
+	btd_event_device_found(&info->bdaddr, dba, type, cod, rssi, cfm_name,
+								eir, eir_len);
+}
+
 static inline void inquiry_result(int index, int plen, void *ptr)
 {
 	struct dev_info *dev = &devs[index];
@@ -1909,8 +1988,8 @@ static inline void inquiry_result(int index, int plen, void *ptr)
 						(info->dev_class[1] << 8) |
 						(info->dev_class[2] << 16);
 
-		btd_event_device_found(&dev->bdaddr, &info->bdaddr, class,
-								0, NULL);
+		dev_found(dev, &info->bdaddr, ADDR_TYPE_BREDR, class, 0, 1,
+								NULL, 0);
 		ptr += INQUIRY_INFO_SIZE;
 	}
 }
@@ -1931,8 +2010,8 @@ static inline void inquiry_result_with_rssi(int index, int plen, void *ptr)
 						| (info->dev_class[1] << 8)
 						| (info->dev_class[2] << 16);
 
-			btd_event_device_found(&dev->bdaddr, &info->bdaddr,
-						class, info->rssi, NULL);
+			dev_found(dev, &info->bdaddr, ADDR_TYPE_BREDR, class,
+						info->rssi, 1, NULL, 0);
 			ptr += INQUIRY_INFO_WITH_RSSI_AND_PSCAN_MODE_SIZE;
 		}
 	} else {
@@ -1942,8 +2021,8 @@ static inline void inquiry_result_with_rssi(int index, int plen, void *ptr)
 						| (info->dev_class[1] << 8)
 						| (info->dev_class[2] << 16);
 
-			btd_event_device_found(&dev->bdaddr, &info->bdaddr,
-						class, info->rssi, NULL);
+			dev_found(dev, &info->bdaddr, ADDR_TYPE_BREDR, class,
+						info->rssi, 1, NULL, 0);
 			ptr += INQUIRY_INFO_WITH_RSSI_SIZE;
 		}
 	}
@@ -1960,9 +2039,16 @@ static inline void extended_inquiry_result(int index, int plen, void *ptr)
 		uint32_t class = info->dev_class[0]
 					| (info->dev_class[1] << 8)
 					| (info->dev_class[2] << 16);
+		gboolean cfm_name;
 
-		btd_event_device_found(&dev->bdaddr, &info->bdaddr, class,
-						info->rssi, info->data);
+		if (eir_has_complete_name(info->data, sizeof(info->data)))
+			cfm_name = FALSE;
+		else
+			cfm_name = TRUE;
+
+		dev_found(dev, &info->bdaddr, ADDR_TYPE_BREDR, class,
+					info->rssi, cfm_name,
+					info->data, sizeof(info->data));
 		ptr += EXTENDED_INQUIRY_INFO_SIZE;
 	}
 }
@@ -2177,23 +2263,41 @@ static inline void conn_request(int index, void *ptr)
 	btd_event_remote_class(&dev->bdaddr, &evt->bdaddr, class);
 }
 
+static inline addr_type_t le_addr_type(uint8_t bdaddr_type)
+{
+	switch (bdaddr_type) {
+	case LE_RANDOM_ADDRESS:
+		return ADDR_TYPE_LE_RANDOM;
+	case LE_PUBLIC_ADDRESS:
+	default:
+		return ADDR_TYPE_LE_PUBLIC;
+	}
+}
+
 static inline void le_advertising_report(int index, evt_le_meta_event *meta)
 {
 	struct dev_info *dev = &devs[index];
 	le_advertising_info *info;
-	uint8_t num_reports;
+	uint8_t num_reports, rssi;
 	const uint8_t RSSI_SIZE = 1;
 
 	num_reports = meta->data[0];
 
 	info = (le_advertising_info *) &meta->data[1];
-	btd_event_advertising_report(&dev->bdaddr, info);
+	rssi = *(info->data + info->length);
+
+	dev_found(dev, &info->bdaddr, le_addr_type(info->bdaddr_type), 0, rssi,
+						0, info->data, info->length);
+
 	num_reports--;
 
 	while (num_reports--) {
 		info = (le_advertising_info *) (info->data + info->length +
 								RSSI_SIZE);
-		btd_event_advertising_report(&dev->bdaddr, info);
+		rssi = *(info->data + info->length);
+
+		dev_found(dev, &info->bdaddr, le_addr_type(info->bdaddr_type),
+				0, rssi, 0, info->data, info->length);
 	}
 }
 
@@ -2226,19 +2330,17 @@ static void stop_hci_dev(int index)
 	if (dev->watch_id > 0)
 		g_source_remove(dev->watch_id);
 
+	if (dev->stop_scan_id > 0)
+		g_source_remove(dev->stop_scan_id);
+
 	if (dev->io != NULL)
 		g_io_channel_unref(dev->io);
 
 	hci_close_dev(dev->sk);
 
-	g_slist_foreach(dev->keys, (GFunc) g_free, NULL);
-	g_slist_free(dev->keys);
-
-	g_slist_foreach(dev->uuids, (GFunc) g_free, NULL);
-	g_slist_free(dev->uuids);
-
-	g_slist_foreach(dev->connections, (GFunc) conn_free, NULL);
-	g_slist_free(dev->connections);
+	g_slist_free_full(dev->keys, g_free);
+	g_slist_free_full(dev->uuids, g_free);
+	g_slist_free_full(dev->connections, g_free);
 
 	init_dev_info(index, -1, dev->registered, dev->already_up);
 }
@@ -2313,7 +2415,7 @@ static gboolean io_security_event(GIOChannel *chan, GIOCondition cond,
 
 	case EVT_INQUIRY_COMPLETE:
 		evt = (evt_cmd_status *) ptr;
-		inquiry_complete(&dev->bdaddr, evt->status, FALSE);
+		inquiry_complete_evt(index, evt->status);
 		break;
 
 	case EVT_INQUIRY_RESULT:
@@ -2387,7 +2489,7 @@ static gboolean io_security_event(GIOChannel *chan, GIOCondition cond,
 		break;
 
 	case EVT_REMOTE_OOB_DATA_REQUEST:
-		remote_oob_data_request(index, ptr);
+		remote_oob_data_request(index, (bdaddr_t *) ptr);
 		break;
 	}
 
@@ -2497,6 +2599,13 @@ static void device_devup_setup(int index)
 	bacpy(&dev->bdaddr, &di.bdaddr);
 	memcpy(dev->features, di.features, 8);
 
+	if (dev->features[7] & LMP_EXT_FEAT) {
+		uint8_t page_num = 0x01;
+
+		hci_send_cmd(dev->sk, OGF_INFO_PARAM,
+				OCF_READ_LOCAL_EXT_FEATURES, 1, &page_num);
+	}
+
 	/* Set page timeout */
 	if ((main_opts.flags & (1 << HCID_SET_PAGETO))) {
 		write_page_timeout_cp cp;
@@ -2511,8 +2620,31 @@ static void device_devup_setup(int index)
 	hci_send_cmd(dev->sk, OGF_HOST_CTL, OCF_READ_STORED_LINK_KEY,
 					READ_STORED_LINK_KEY_CP_SIZE, &cp);
 
-	if (!dev->pending)
+	if (!dev->pending) {
 		init_adapter(index);
+		return;
+	}
+
+	/* Even though it shouldn't happen (assuming the kernel behaves
+	 * properly) it seems like we might miss the very first
+	 * initialization commands that the kernel sends. So check for
+	 * it here and resend the ones we haven't seen their results yet */
+
+	if (hci_test_bit(PENDING_FEATURES, &dev->pending))
+		hci_send_cmd(dev->sk, OGF_INFO_PARAM,
+					OCF_READ_LOCAL_FEATURES, 0, NULL);
+
+	if (hci_test_bit(PENDING_VERSION, &dev->pending))
+		hci_send_cmd(dev->sk, OGF_INFO_PARAM,
+					OCF_READ_LOCAL_VERSION, 0, NULL);
+
+	if (hci_test_bit(PENDING_NAME, &dev->pending))
+		hci_send_cmd(dev->sk, OGF_HOST_CTL,
+					OCF_READ_LOCAL_NAME, 0, 0);
+
+	if (hci_test_bit(PENDING_BDADDR, &dev->pending))
+		hci_send_cmd(dev->sk, OGF_INFO_PARAM,
+					OCF_READ_BD_ADDR, 0, NULL);
 }
 
 static void init_pending(int index)
@@ -2597,7 +2729,7 @@ static void init_conn_list(int index)
 	struct dev_info *dev = &devs[index];
 	struct hci_conn_list_req *cl;
 	struct hci_conn_info *ci;
-	int err, i;
+	int i;
 
 	DBG("hci%d", index);
 
@@ -2622,8 +2754,6 @@ static void init_conn_list(int index)
 		conn = get_connection(dev, &ci->bdaddr);
 		conn->handle = ci->handle;
 	}
-
-	err = 0;
 
 failed:
 	g_free(cl);
@@ -2655,6 +2785,7 @@ static void device_event(int event, int index)
 		devs[index].up = FALSE;
 		devs[index].pending_cod = 0;
 		devs[index].cache_enable = TRUE;
+		devs[index].discov_state = DISCOV_HALTED;
 		if (!devs[index].pending) {
 			struct btd_adapter *adapter;
 
@@ -2916,43 +3047,24 @@ static int hciops_set_dev_class(int index, uint8_t major, uint8_t minor)
 	return err;
 }
 
-static int hciops_start_inquiry(int index, uint8_t length, gboolean periodic)
+static int start_inquiry(int index, uint8_t length)
 {
 	struct dev_info *dev = &devs[index];
 	uint8_t lap[3] = { 0x33, 0x8b, 0x9e };
-	int err;
+	inquiry_cp inq_cp;
 
-	DBG("hci%d length %u periodic %d", index, length, periodic);
+	DBG("hci%d length %u", index, length);
 
-	if (periodic) {
-		periodic_inquiry_cp cp;
+	memset(&inq_cp, 0, sizeof(inq_cp));
+	memcpy(&inq_cp.lap, lap, 3);
+	inq_cp.length = length;
+	inq_cp.num_rsp = 0x00;
 
-		memset(&cp, 0, sizeof(cp));
-		memcpy(&cp.lap, lap, 3);
-		cp.max_period = htobs(24);
-		cp.min_period = htobs(16);
-		cp.length  = length;
-		cp.num_rsp = 0x00;
+	if (hci_send_cmd(dev->sk, OGF_LINK_CTL,
+			OCF_INQUIRY, INQUIRY_CP_SIZE, &inq_cp) < 0)
+		return -errno;
 
-		err = hci_send_cmd(dev->sk, OGF_LINK_CTL,
-						OCF_PERIODIC_INQUIRY,
-						PERIODIC_INQUIRY_CP_SIZE, &cp);
-	} else {
-		inquiry_cp inq_cp;
-
-		memset(&inq_cp, 0, sizeof(inq_cp));
-		memcpy(&inq_cp.lap, lap, 3);
-		inq_cp.length = length;
-		inq_cp.num_rsp = 0x00;
-
-		err = hci_send_cmd(dev->sk, OGF_LINK_CTL,
-					OCF_INQUIRY, INQUIRY_CP_SIZE, &inq_cp);
-	}
-
-	if (err < 0)
-		err = -errno;
-
-	return err;
+	return 0;
 }
 
 static int le_set_scan_enable(int index, uint8_t enable)
@@ -2973,10 +3085,25 @@ static int le_set_scan_enable(int index, uint8_t enable)
 	return 0;
 }
 
-static int hciops_start_scanning(int index)
+static gboolean stop_le_scan_cb(gpointer user_data)
+{
+	struct dev_info *dev = user_data;
+	int err;
+
+	err = le_set_scan_enable(dev->id, 0);
+	if (err < 0)
+		return TRUE;
+
+	dev->stop_scan_id = 0;
+
+	return FALSE;
+}
+
+static int start_scanning(int index, int timeout)
 {
 	struct dev_info *dev = &devs[index];
 	le_set_scan_parameters_cp cp;
+	int err;
 
 	DBG("hci%d", index);
 
@@ -2993,34 +3120,28 @@ static int hciops_start_scanning(int index)
 				LE_SET_SCAN_PARAMETERS_CP_SIZE, &cp) < 0)
 		return -errno;
 
-	return le_set_scan_enable(index, 1);
+	err = le_set_scan_enable(index, 1);
+	if (err < 0)
+		return err;
+
+	/* Schedule a le scan disable in 'timeout' milliseconds */
+	dev->stop_scan_id = g_timeout_add(timeout, stop_le_scan_cb, dev);
+
+	return 0;
 }
 
 static int hciops_stop_scanning(int index)
 {
+	struct dev_info *dev = &devs[index];
+
 	DBG("hci%d", index);
 
+	if (dev->stop_scan_id > 0) {
+		g_source_remove(dev->stop_scan_id);
+		dev->stop_scan_id = 0;
+	}
+
 	return le_set_scan_enable(index, 0);
-}
-
-static int hciops_resolve_name(int index, bdaddr_t *bdaddr)
-{
-	struct dev_info *dev = &devs[index];
-	remote_name_req_cp cp;
-	char addr[18];
-
-	ba2str(bdaddr, addr);
-	DBG("hci%d dba %s", index, addr);
-
-	memset(&cp, 0, sizeof(cp));
-	bacpy(&cp.bdaddr, bdaddr);
-	cp.pscan_rep_mode = 0x02;
-
-	if (hci_send_cmd(dev->sk, OGF_LINK_CTL, OCF_REMOTE_NAME_REQ,
-					REMOTE_NAME_REQ_CP_SIZE, &cp) < 0)
-		return -errno;
-
-	return 0;
 }
 
 static int hciops_set_name(int index, const char *name)
@@ -3043,26 +3164,75 @@ static int hciops_set_name(int index, const char *name)
 	return 0;
 }
 
-static int hciops_cancel_resolve_name(int index, bdaddr_t *bdaddr)
+static int cancel_resolve_name(int index)
 {
-	struct dev_info *dev = &devs[index];
+	struct dev_info *info = &devs[index];
+	struct found_dev *dev;
 	remote_name_req_cancel_cp cp;
-	char addr[18];
+	struct btd_adapter *adapter;
 
-	ba2str(bdaddr, addr);
-	DBG("hci%d dba %s", index, addr);
+	DBG("hci%d", index);
+
+	if (g_slist_length(info->need_name) == 0)
+		return 0;
+
+	dev = info->need_name->data;
+	if (dev->name_state != NAME_PENDING)
+		return 0;
 
 	memset(&cp, 0, sizeof(cp));
-	bacpy(&cp.bdaddr, bdaddr);
+	bacpy(&cp.bdaddr, &dev->bdaddr);
 
-	if (hci_send_cmd(dev->sk, OGF_LINK_CTL, OCF_REMOTE_NAME_REQ_CANCEL,
+	adapter = manager_find_adapter_by_id(index);
+	if (adapter)
+		adapter_set_discovering(adapter, FALSE);
+
+	found_dev_cleanup(info);
+
+	if (hci_send_cmd(info->sk, OGF_LINK_CTL, OCF_REMOTE_NAME_REQ_CANCEL,
 				REMOTE_NAME_REQ_CANCEL_CP_SIZE, &cp) < 0)
 		return -errno;
 
 	return 0;
 }
 
-static int hciops_fast_connectable(int index, gboolean enable)
+static int hciops_start_discovery(int index)
+{
+	int adapter_type = get_adapter_type(index);
+
+	DBG("hci%u", index);
+
+	switch (adapter_type) {
+	case BR_EDR_LE:
+		return start_inquiry(index, LENGTH_BR_LE_INQ);
+	case BR_EDR:
+		return start_inquiry(index, LENGTH_BR_INQ);
+	case LE_ONLY:
+		return start_scanning(index, TIMEOUT_LE_SCAN);
+	default:
+		return -EINVAL;
+	}
+}
+
+static int hciops_stop_discovery(int index)
+{
+	struct dev_info *dev = &devs[index];
+
+	DBG("index %d", index);
+
+	switch (dev->discov_state) {
+	case DISCOV_INQ:
+		return hciops_stop_inquiry(index);
+	case DISCOV_SCAN:
+		return hciops_stop_scanning(index);
+	case DISCOV_NAMES:
+		cancel_resolve_name(index);
+	default:
+		return -EINVAL;
+	}
+}
+
+static int hciops_set_fast_connectable(int index, gboolean enable)
 {
 	struct dev_info *dev = &devs[index];
 	write_page_activity_cp cp;
@@ -3171,28 +3341,6 @@ static int hciops_get_conn_list(int index, GSList **conns)
 	return 0;
 }
 
-static int hciops_read_local_version(int index, struct hci_version *ver)
-{
-	struct dev_info *dev = &devs[index];
-
-	DBG("hci%d", index);
-
-	memcpy(ver, &dev->ver, sizeof(*ver));
-
-	return 0;
-}
-
-static int hciops_read_local_features(int index, uint8_t *features)
-{
-	struct dev_info *dev = &devs[index];
-
-	DBG("hci%d", index);
-
-	memcpy(features, dev->features, 8);
-
-	return  0;
-}
-
 static int hciops_disconnect(int index, bdaddr_t *bdaddr)
 {
 	DBG("hci%d", index);
@@ -3227,7 +3375,8 @@ static int hciops_remove_bonding(int index, bdaddr_t *bdaddr)
 	return 0;
 }
 
-static int hciops_pincode_reply(int index, bdaddr_t *bdaddr, const char *pin)
+static int hciops_pincode_reply(int index, bdaddr_t *bdaddr, const char *pin,
+								size_t pin_len)
 {
 	struct dev_info *dev = &devs[index];
 	char addr[18];
@@ -3238,14 +3387,13 @@ static int hciops_pincode_reply(int index, bdaddr_t *bdaddr, const char *pin)
 
 	if (pin) {
 		pin_code_reply_cp pr;
-		size_t len = strlen(pin);
 
-		dev->pin_length = len;
+		dev->pin_length = pin_len;
 
 		memset(&pr, 0, sizeof(pr));
 		bacpy(&pr.bdaddr, bdaddr);
-		memcpy(pr.pin_code, pin, len);
-		pr.pin_len = len;
+		memcpy(pr.pin_code, pin, pin_len);
+		pr.pin_len = pin_len;
 		err = hci_send_cmd(dev->sk, OGF_LINK_CTL,
 						OCF_PIN_CODE_REPLY,
 						PIN_CODE_REPLY_CP_SIZE, &pr);
@@ -3286,27 +3434,6 @@ static int hciops_passkey_reply(int index, bdaddr_t *bdaddr, uint32_t passkey)
 		err = -errno;
 
 	return err;
-}
-
-static int hciops_enable_le(int index)
-{
-	struct dev_info *dev = &devs[index];
-	write_le_host_supported_cp cp;
-
-	DBG("hci%d", index);
-
-	if (!(dev->features[4] & LMP_LE))
-		return -ENOTSUP;
-
-	cp.le = 0x01;
-	cp.simul = (dev->features[6] & LMP_LE_BREDR) ? 0x01 : 0x00;
-
-	if (hci_send_cmd(dev->sk, OGF_HOST_CTL,
-				OCF_WRITE_LE_HOST_SUPPORTED,
-				WRITE_LE_HOST_SUPPORTED_CP_SIZE, &cp) < 0)
-		return -errno;
-
-	return 0;
 }
 
 static uint8_t generate_service_class(int index)
@@ -3555,6 +3682,101 @@ static int hciops_cancel_bonding(int index, bdaddr_t *bdaddr)
 	return 0;
 }
 
+static int hciops_read_local_oob_data(int index)
+{
+	struct dev_info *dev = &devs[index];
+
+	DBG("hci%d", index);
+
+	if (hci_send_cmd(dev->sk, OGF_HOST_CTL, OCF_READ_LOCAL_OOB_DATA, 0, 0)
+									< 0)
+		return -errno;
+
+	return 0;
+}
+
+static int hciops_add_remote_oob_data(int index, bdaddr_t *bdaddr,
+					uint8_t *hash, uint8_t *randomizer)
+{
+	char addr[18];
+	struct dev_info *dev = &devs[index];
+	GSList *match;
+	struct oob_data *data;
+
+	ba2str(bdaddr, addr);
+	DBG("hci%d bdaddr %s", index, addr);
+
+	match = g_slist_find_custom(dev->oob_data, bdaddr, oob_bdaddr_cmp);
+
+	if (match) {
+		data = match->data;
+	} else {
+		data = g_new(struct oob_data, 1);
+		bacpy(&data->bdaddr, bdaddr);
+		dev->oob_data = g_slist_prepend(dev->oob_data, data);
+	}
+
+	memcpy(data->hash, hash, sizeof(data->hash));
+	memcpy(data->randomizer, randomizer, sizeof(data->randomizer));
+
+	return 0;
+}
+
+static int hciops_remove_remote_oob_data(int index, bdaddr_t *bdaddr)
+{
+	char addr[18];
+	struct dev_info *dev = &devs[index];
+	GSList *match;
+
+	ba2str(bdaddr, addr);
+	DBG("hci%d bdaddr %s", index, addr);
+
+	match = g_slist_find_custom(dev->oob_data, bdaddr, oob_bdaddr_cmp);
+
+	if (!match)
+		return -ENOENT;
+
+	g_free(match->data);
+	dev->oob_data = g_slist_delete_link(dev->oob_data, match);
+
+	return 0;
+}
+
+static int hciops_confirm_name(int index, bdaddr_t *bdaddr,
+							gboolean name_known)
+{
+	struct dev_info *info = &devs[index];
+	struct found_dev *dev;
+	GSList *match;
+	char addr[18];
+
+	ba2str(bdaddr, addr);
+	DBG("hci%u %s name_known %u", index, addr, name_known);
+
+	match = g_slist_find_custom(info->found_devs, bdaddr,
+						found_dev_bda_cmp);
+	if (match == NULL)
+		return -ENOENT;
+
+	dev = match->data;
+
+	if (name_known) {
+		dev->name_state = NAME_NOT_NEEDED;
+		info->found_devs = g_slist_sort(info->found_devs,
+							found_dev_rssi_cmp);
+		return 0;
+	}
+
+	dev->name_state = NAME_NEEDED;
+	info->found_devs = g_slist_remove_link(info->found_devs, match);
+
+	match->next = info->need_name;
+	info->need_name = match;
+	info->need_name = g_slist_sort(info->need_name, found_dev_rssi_cmp);
+
+	return 0;
+}
+
 static struct btd_adapter_ops hci_ops = {
 	.setup = hciops_setup,
 	.cleanup = hciops_cleanup,
@@ -3562,28 +3784,21 @@ static struct btd_adapter_ops hci_ops = {
 	.set_discoverable = hciops_set_discoverable,
 	.set_pairable = hciops_set_pairable,
 	.set_limited_discoverable = hciops_set_limited_discoverable,
-	.start_inquiry = hciops_start_inquiry,
-	.stop_inquiry = hciops_stop_inquiry,
-	.start_scanning = hciops_start_scanning,
-	.stop_scanning = hciops_stop_scanning,
-	.resolve_name = hciops_resolve_name,
-	.cancel_resolve_name = hciops_cancel_resolve_name,
+	.start_discovery = hciops_start_discovery,
+	.stop_discovery = hciops_stop_discovery,
 	.set_name = hciops_set_name,
 	.set_dev_class = hciops_set_dev_class,
-	.set_fast_connectable = hciops_fast_connectable,
+	.set_fast_connectable = hciops_set_fast_connectable,
 	.read_clock = hciops_read_clock,
 	.read_bdaddr = hciops_read_bdaddr,
 	.block_device = hciops_block_device,
 	.unblock_device = hciops_unblock_device,
 	.get_conn_list = hciops_get_conn_list,
-	.read_local_version = hciops_read_local_version,
-	.read_local_features = hciops_read_local_features,
 	.disconnect = hciops_disconnect,
 	.remove_bonding = hciops_remove_bonding,
 	.pincode_reply = hciops_pincode_reply,
 	.confirm_reply = hciops_confirm_reply,
 	.passkey_reply = hciops_passkey_reply,
-	.enable_le = hciops_enable_le,
 	.encrypt_link = hciops_encrypt_link,
 	.set_did = hciops_set_did,
 	.add_uuid = hciops_add_uuid,
@@ -3594,6 +3809,10 @@ static struct btd_adapter_ops hci_ops = {
 	.set_io_capability = hciops_set_io_capability,
 	.create_bonding = hciops_create_bonding,
 	.cancel_bonding = hciops_cancel_bonding,
+	.read_local_oob_data = hciops_read_local_oob_data,
+	.add_remote_oob_data = hciops_add_remote_oob_data,
+	.remove_remote_oob_data = hciops_remove_remote_oob_data,
+	.confirm_name = hciops_confirm_name,
 };
 
 static int hciops_init(void)

@@ -210,9 +210,9 @@ static void cmd_le_addr(int ctl, int hdev, char *opt)
 
 	dd = hci_open_dev(hdev);
 	if (dd < 0) {
-		err = errno;
+		err = -errno;
 		fprintf(stderr, "Could not open device: %s(%d)\n",
-							strerror(err), err);
+							strerror(-err), -err);
 		exit(1);
 	}
 
@@ -230,9 +230,9 @@ static void cmd_le_addr(int ctl, int hdev, char *opt)
 
 	ret = hci_send_req(dd, &rq, 1000);
 	if (status || ret < 0) {
-		err = errno;
+		err = -errno;
 		fprintf(stderr, "Can't set random address for hci%d: "
-					"%s (%d)\n", hdev, strerror(err), err);
+				"%s (%d)\n", hdev, strerror(-err), -err);
 	}
 
 	hci_close_dev(dd);
@@ -1138,7 +1138,7 @@ static void cmd_version(int ctl, int hdev, char *opt)
 	}
 
 	hciver = hci_vertostr(ver.hci_ver);
-	lmpver = lmp_vertostr(ver.hci_ver);
+	lmpver = lmp_vertostr(ver.lmp_ver);
 
 	print_dev_hdr(&di);
 	printf("\tHCI Version: %s (0x%x)  Revision: 0x%x\n"
@@ -1252,7 +1252,7 @@ static void cmd_inq_data(int ctl, int hdev, char *opt)
 	}
 
 	if (opt) {
-		uint8_t fec = 0, data[240];
+		uint8_t fec = 0, data[HCI_MAX_EIR_LENGTH];
 		char tmp[3];
 		int i, size;
 
@@ -1260,8 +1260,8 @@ static void cmd_inq_data(int ctl, int hdev, char *opt)
 
 		memset(tmp, 0, sizeof(tmp));
 		size = (strlen(opt) + 1) / 2;
-		if (size > 240)
-			size = 240;
+		if (size > HCI_MAX_EIR_LENGTH)
+			size = HCI_MAX_EIR_LENGTH;
 
 		for (i = 0; i < size; i++) {
 			memcpy(tmp, opt + (i * 2), 2);
@@ -1274,7 +1274,7 @@ static void cmd_inq_data(int ctl, int hdev, char *opt)
 			exit(1);
 		}
 	} else {
-		uint8_t fec, data[240], len, type, *ptr;
+		uint8_t fec, data[HCI_MAX_EIR_LENGTH], len, type, *ptr;
 		char *str;
 
 		if (hci_read_ext_inquiry_response(dd, &fec, data, 1000) < 0) {
@@ -1285,7 +1285,7 @@ static void cmd_inq_data(int ctl, int hdev, char *opt)
 
 		print_dev_hdr(&di);
 		printf("\tFEC %s\n\t\t", fec ? "enabled" : "disabled");
-		for (i = 0; i < 240; i++)
+		for (i = 0; i < HCI_MAX_EIR_LENGTH; i++)
 			printf("%02x%s%s", data[i], (i + 1) % 8 ? "" : " ",
 				(i + 1) % 16 ? " " : (i < 239 ? "\n\t\t" : "\n"));
 
@@ -1870,7 +1870,7 @@ static void print_dev_info(int ctl, struct hci_dev_info *di)
 		st->byte_tx, st->acl_tx, st->sco_tx, st->cmd_tx, st->err_tx);
 
 	if (all && !hci_test_bit(HCI_RAW, &di->flags) &&
-			bacmp(&di->bdaddr, BDADDR_ANY)) {
+			(bacmp(&di->bdaddr, BDADDR_ANY) || (di->type >> 4))) {
 		print_dev_features(di, 0);
 		print_pkt_type(di);
 		print_link_policy(di);

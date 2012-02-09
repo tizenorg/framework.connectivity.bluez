@@ -41,7 +41,6 @@
 
 #include "log.h"
 
-#include "hcid.h"
 #include "adapter.h"
 #include "device.h"
 #include "agent.h"
@@ -79,9 +78,6 @@ struct agent_request {
 };
 
 static DBusConnection *connection = NULL;
-
-static int request_fallback(struct agent_request *req,
-				DBusPendingCallNotifyFunction function);
 
 static void agent_release(struct agent *agent)
 {
@@ -259,17 +255,10 @@ static void simple_agent_reply(DBusPendingCall *call, void *user_data)
 
 	dbus_error_init(&err);
 	if (dbus_set_error_from_message(&err, message)) {
-		if ((g_str_equal(DBUS_ERROR_UNKNOWN_METHOD, err.name) ||
-				g_str_equal(DBUS_ERROR_NO_REPLY, err.name)) &&
-				request_fallback(req, simple_agent_reply) == 0) {
-			dbus_error_free(&err);
-			return;
-		}
-
 		error("Agent replied with an error: %s, %s",
 				err.name, err.message);
 
-#ifdef __TIZEN_PATCH__
+#ifdef __SAMSUNG_PATCH__
 		if (strcmp(err.message, "CanceledbyUser") == 0)
 		{
 			set_cancel_from_authentication_req(req->user_data);
@@ -342,7 +331,6 @@ int agent_authorize(struct agent *agent,
 	struct agent_request *req;
 	int err;
 
-	info("agent_authorize");
 	if (agent->request)
 		return -EBUSY;
 
@@ -382,17 +370,10 @@ static void pincode_reply(DBusPendingCall *call, void *user_data)
 
 	dbus_error_init(&err);
 	if (dbus_set_error_from_message(&err, message)) {
-		if ((g_str_equal(DBUS_ERROR_UNKNOWN_METHOD, err.name) ||
-				g_str_equal(DBUS_ERROR_NO_REPLY, err.name)) &&
-				request_fallback(req, pincode_reply) == 0) {
-			dbus_error_free(&err);
-			return;
-		}
+		error("Agent %s replied with an error: %s, %s",
+				agent->path, err.name, err.message);
 
-		error("Agent replied with an error: %s, %s",
-				err.name, err.message);
-
-#ifdef __TIZEN_PATCH__
+#ifdef __SAMSUNG_PATCH__
 		if (strcmp(err.message, "CanceledbyUser") == 0)
 		{
 			set_cancel_from_authentication_req(req->user_data);
@@ -438,9 +419,12 @@ done:
 }
 
 static int pincode_request_new(struct agent_request *req, const char *device_path,
-				dbus_bool_t numeric)
+				dbus_bool_t secure)
 {
 	struct agent *agent = req->agent;
+
+	/* TODO: Add a new method or a new param to Agent interface to request
+		secure pin. */
 
 	req->msg = dbus_message_new_method_call(agent->name, agent->path,
 					"org.bluez.Agent", "RequestPinCode");
@@ -463,8 +447,8 @@ static int pincode_request_new(struct agent_request *req, const char *device_pat
 }
 
 int agent_request_pincode(struct agent *agent, struct btd_device *device,
-				agent_pincode_cb cb, void *user_data,
-				GDestroyNotify destroy)
+				agent_pincode_cb cb, gboolean secure,
+				void *user_data, GDestroyNotify destroy)
 {
 	struct agent_request *req;
 	const gchar *dev_path = device_get_path(device);
@@ -476,7 +460,7 @@ int agent_request_pincode(struct agent *agent, struct btd_device *device,
 	req = agent_request_new(agent, AGENT_REQUEST_PINCODE, cb,
 							user_data, destroy);
 
-	err = pincode_request_new(req, dev_path, FALSE);
+	err = pincode_request_new(req, dev_path, secure);
 	if (err < 0)
 		goto failed;
 
@@ -559,16 +543,9 @@ static void passkey_reply(DBusPendingCall *call, void *user_data)
 
 	dbus_error_init(&err);
 	if (dbus_set_error_from_message(&err, message)) {
-		if ((g_str_equal(DBUS_ERROR_UNKNOWN_METHOD, err.name) ||
-				g_str_equal(DBUS_ERROR_NO_REPLY, err.name)) &&
-				request_fallback(req, passkey_reply) == 0) {
-			dbus_error_free(&err);
-			return;
-		}
-
 		error("Agent replied with an error: %s, %s",
-				err.name, err.message);
-#ifdef __TIZEN_PATCH__
+						err.name, err.message);
+#ifdef __SAMSUNG_PATCH__
 		if (strcmp(err.message, "CanceledbyUser") == 0)
 		{
 			set_cancel_from_authentication_req(req->user_data);
@@ -713,43 +690,6 @@ int agent_request_confirmation(struct agent *agent, struct btd_device *device,
 failed:
 	agent_request_free(req, FALSE);
 	return err;
-}
-
-static int request_fallback(struct agent_request *req,
-				DBusPendingCallNotifyFunction function)
-{
-	struct btd_adapter *adapter = req->agent->adapter;
-	struct agent *adapter_agent = adapter_get_agent(adapter);
-	DBusMessage *msg;
-
-	if (req->agent == adapter_agent || adapter_agent == NULL)
-		return -EINVAL;
-
-	dbus_pending_call_cancel(req->call);
-	dbus_pending_call_unref(req->call);
-
-	msg = dbus_message_copy(req->msg);
-
-	dbus_message_set_destination(msg, adapter_agent->name);
-	dbus_message_set_path(msg, adapter_agent->path);
-
-	if (dbus_connection_send_with_reply(connection, msg,
-					&req->call, REQUEST_TIMEOUT) == FALSE) {
-		error("D-Bus send failed");
-		dbus_message_unref(msg);
-		return -EIO;
-	}
-
-	req->agent->request = NULL;
-	req->agent = adapter_agent;
-	req->agent->request = req;
-
-	dbus_message_unref(req->msg);
-	req->msg = msg;
-
-	dbus_pending_call_set_notify(req->call, function, req, NULL);
-
-	return 0;
 }
 
 int agent_display_passkey(struct agent *agent, struct btd_device *device,

@@ -4,10 +4,6 @@
  *
  *  Copyright (C) 2010 GSyC/LibreSoft, Universidad Rey Juan Carlos.
  *
- *  Authors:
- *  Santiago Carot-Nemesio <sancane at gmail.com>
- *  Jose Antonio Santos-Cadenas <santoscadenas at gmail.com>
- *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
  *  the Free Software Foundation; either version 2 of the License, or
@@ -24,17 +20,20 @@
  *
  */
 
-#include "log.h"
-#include "error.h"
-
 #include <netinet/in.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <unistd.h>
 
-#include "btio.h"
+#include <glib.h>
+
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/l2cap.h>
+
+#include <btio.h>
+#include <log.h>
+#include <error.h>
+
 #include "mcap.h"
 #include "mcap_lib.h"
 #include "mcap_internal.h"
@@ -685,11 +684,10 @@ gboolean mcap_mdl_abort(struct mcap_mdl *mdl, mcap_mdl_notify_cb abort_cb,
 
 static struct mcap_mcl *find_mcl(GSList *list, const bdaddr_t *addr)
 {
-	GSList *l;
 	struct mcap_mcl *mcl;
 
-	for (l = list; l; l = l->next) {
-		mcl = l->data;
+	for (; list; list = list->next) {
+		mcl = list->data;
 
 		if (!bacmp(&mcl->addr, addr))
 			return mcl;
@@ -792,7 +790,7 @@ static void mcap_cache_mcl(struct mcap_mcl *mcl)
 		last->ctrl &= ~MCAP_CTRL_CACHED;
 		if (last->ctrl & MCAP_CTRL_CONN) {
 			/* We have to release this MCL if */
-			/* connection is not succesful    */
+			/* connection is not successful    */
 			last->ctrl |= MCAP_CTRL_FREE;
 		} else {
 			mcap_mcl_release(last);
@@ -1126,6 +1124,7 @@ static void process_md_abort_mdl_req(struct mcap_mcl *mcl, void *cmd,
 	req = cmd;
 	mdl_id = ntohs(req->mdl);
 	mcl->state = MCL_CONNECTED;
+	abrt = NULL;
 	for (l = mcl->mdls; l; l = l->next) {
 		mdl = l->data;
 		if (mdl_id == mdl->mdlid && mdl->state == MDL_WAITING) {
@@ -2062,7 +2061,7 @@ struct mcap_instance *mcap_create_instance(bdaddr_t *src,
 	/* Initialize random seed to generate mdlids for this instance */
 	srand(time(NULL));
 
-	return mcap_instance_ref(mi);;
+	return mcap_instance_ref(mi);
 }
 
 void mcap_release_instance(struct mcap_instance *mi)

@@ -52,7 +52,7 @@
 #include "manager.h"
 #include "control.h"
 #include "avdtp.h"
-#include "glib-helper.h"
+#include "glib-compat.h"
 #include "btio.h"
 #include "sink.h"
 #include "source.h"
@@ -89,7 +89,7 @@
 #define AVDTP_MSG_TYPE_ACCEPT			0x02
 #define AVDTP_MSG_TYPE_REJECT			0x03
 
-#ifdef __TIZEN_PATCH__
+#ifdef __SAMSUNG_PATCH__
 #define REQ_TIMEOUT 10
 #else
 #define REQ_TIMEOUT 6

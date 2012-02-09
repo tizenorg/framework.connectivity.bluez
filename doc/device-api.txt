@@ -22,17 +22,6 @@ Methods		dict GetProperties()
 			Possible Errors: org.bluez.Error.DoesNotExist
 					 org.bluez.Error.InvalidArguments
 
-		# __TIZEN_PATCH__
-		dict GetVersionProperties()
-
-			Returns all version properties for the device.
-			See the version properties section for available
-			properties.
-
-			Possible Errors: org.bluez.Error.DoesNotExist
-					 org.bluez.Error.InvalidArguments
-		# __TIZEN_PATCH__
-
 		void SetProperty(string name, variant value)
 
 			Changes the value of the specified property. Only
@@ -136,6 +125,18 @@ Properties	string Address [readonly]
 			The Bluetooth remote name. This value can not be
 			changed. Use the Alias property instead.
 
+		uint16 Vendor [readonly]
+
+			Vendor unique numeric identifier.
+
+		uint16 Product [readonly]
+
+			Product unique numeric identifier.
+
+		uint16 Version [readonly]
+
+			Version unique numeric identifier.
+
 		string Icon [readonly]
 
 			Proposed icon name according to the freedesktop.org
@@ -157,13 +158,6 @@ Properties	string Address [readonly]
 		boolean Paired [readonly]
 
 			Indicates if the remote device is paired.
-
-		# __TIZEN_PATCH__
-		uint32 PinLength [readonly]
-
-			he PIN code length that was used in the	pairing
-			process.
-		# __TIZEN_PATCH__
 
 		boolean Connected [readonly]
 
@@ -215,52 +209,3 @@ Properties	string Address [readonly]
 			Note that this property can exhibit false-positives
 			in the case of Bluetooth 2.1 (or newer) devices that
 			have disabled Extended Inquiry Response support.
-
-		# __TIZEN_PATCH__
-VersionProperties	string Address [readonly]
-
-			The Bluetooth device address of the remote device.
-
-		string Name [readonly]
-
-			The Bluetooth remote name. This value can not be
-			changed. Use the Alias property instead.
-
-		string Icon [readonly]
-
-			Proposed icon name according to the freedesktop.org
-			icon naming specification.
-
-		uint32 Class [readonly]
-
-			The Bluetooth class of device of the remote device.
-
-		string Company [readonly]
-
-			the company name from the OUI database of the
-			Bluetooth device address. This function will need a
-			valid and up-to-date oui.txt from the IEEE. This value
-			will be different from the manufacturer string in the
-			most cases.
-
-		string Manufacturer [readonly]
-
-			the manufacturer of the chip for a remote device.
-
-		string Revision [readonly]
-
-			the revision of the Bluetooth chip. This is a
-			vendor specific value and in most cases it represents
-			the firmware version. This derives only from the LMP
-			subversion value.
-
-		string Version [readonly]
-
-			the version info for a remote device. The base for this
-			string is the LMP version value and the features for
-			EDR support.
-			Not available can be received if the remote device was
-			not contacted(connected) previously. Remote data is
-			automatically retrieved in the first connection.
-
-		# __TIZEN_PATCH__

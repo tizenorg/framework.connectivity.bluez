@@ -4,6 +4,7 @@
  *
  *  Copyright (C) 2006-2010  Nokia Corporation
  *  Copyright (C) 2004-2010  Marcel Holtmann <marcel@holtmann.org>
+ *  Copyright (C) 2011  BMW Car IT GmbH. All rights reserved.
  *
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -120,11 +121,11 @@ struct mpeg_codec_cap {
 #endif
 
 struct a2dp_sep;
+struct a2dp_setup;
 
-typedef void (*a2dp_endpoint_select_t) (struct a2dp_sep *sep, guint setup_id,
-							void *ret, int size);
-typedef void (*a2dp_endpoint_config_t) (struct a2dp_sep *sep, guint setup_id,
-								gboolean ret);
+typedef void (*a2dp_endpoint_select_t) (struct a2dp_setup *setup, void *ret,
+					int size);
+typedef void (*a2dp_endpoint_config_t) (struct a2dp_setup *setup, gboolean ret);
 
 struct a2dp_endpoint {
 	const char *(*get_name) (struct a2dp_sep *sep, void *user_data);
@@ -134,14 +135,14 @@ struct a2dp_endpoint {
 	int (*select_configuration) (struct a2dp_sep *sep,
 						uint8_t *capabilities,
 						size_t length,
-						guint setup_id,
+						struct a2dp_setup *setup,
 						a2dp_endpoint_select_t cb,
 						void *user_data);
 	int (*set_configuration) (struct a2dp_sep *sep,
 						struct audio_device *dev,
 						uint8_t *configuration,
 						size_t length,
-						guint setup_id,
+						struct a2dp_setup *setup,
 						a2dp_endpoint_config_t cb,
 						void *user_data);
 	void (*clear_configuration) (struct a2dp_sep *sep, void *user_data);

@@ -105,7 +105,7 @@ Scripts for testing BlueZ and its functionality
 
 %build
 
-export CFLAGS="${CFLAGS} -D__TIZEN_PATCH__ -D__BROADCOM_PATCH__"
+export CFLAGS="${CFLAGS} -D__SAMSUNG_PATCH__ -D__BROADCOM_PATCH__"
 %reconfigure --disable-static \
 			--localstatedir=/opt/var \
                         --enable-pie \

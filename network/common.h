@@ -40,8 +40,3 @@ int bnep_connadd(int sk, uint16_t role, char *dev);
 int bnep_if_up(const char *devname);
 int bnep_if_down(const char *devname);
 int bnep_add_to_bridge(const char *devname, const char *bridge);
-
-#ifndef  __TIZEN_PATCH__
-void bnep_server_connect(char *devname);
-void bnep_server_disconnect(void);
-#endif

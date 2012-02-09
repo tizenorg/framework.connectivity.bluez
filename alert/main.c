@@ -2,8 +2,8 @@
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
- *  Copyright (C) 2010  Nokia Corporation
- *  Copyright (C) 2010  Marcel Holtmann <marcel@holtmann.org>
+ *  Copyright (C) 2011  Nokia Corporation
+ *  Copyright (C) 2011  Marcel Holtmann <marcel@holtmann.org>
  *
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -22,5 +22,36 @@
  *
  */
 
-int attrib_manager_init(DBusConnection *conn);
-void attrib_manager_exit(void);
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
+
+#include <stdint.h>
+#include <glib.h>
+
+#include "plugin.h"
+#include "hcid.h"
+#include "log.h"
+#include "server.h"
+
+static int alert_init(void)
+{
+	if (!main_opts.attrib_server) {
+		DBG("Attribute server is disabled");
+		return -1;
+	}
+
+	return alert_server_init();
+}
+
+static void alert_exit(void)
+{
+	if (!main_opts.attrib_server)
+		return;
+
+	alert_server_exit();
+}
+
+BLUETOOTH_PLUGIN_DEFINE(alert, VERSION,
+			BLUETOOTH_PLUGIN_PRIORITY_DEFAULT,
+			alert_init, alert_exit)

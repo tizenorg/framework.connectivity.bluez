@@ -31,15 +31,25 @@ Methods		dict GetProperties()
 
 		void RequestSession()
 
-			This method will request a client session that
-			provides operational Bluetooth. A possible mode
-			change must be confirmed by the user via the agent.
+			This method requests a client session that provides
+			operational Bluetooth. A possible mode change must be
+			confirmed by the user via the agent.
+
+			Clients may request multiple sessions. All sessions
+			are released when adapter's mode is changed to off
+			state.
 
 			Possible Errors: org.bluez.Error.Rejected
 
 		void ReleaseSession()
 
-			Release a previous requested session.
+			Release a previously requested session. It sets
+			adapter to the mode in use on the moment of session
+			request.
+
+			SetProperty method call changes adapter's mode
+			persistently, such that session release will not
+			modify it.
 
 			Possible Errors: org.bluez.Error.DoesNotExist
 
@@ -218,7 +228,7 @@ Properties	string Address [readonly]
 		boolean Powered [readwrite]
 
 			Switch an adapter on or off. This will also set the
-			appropiate connectable state.
+			appropriate connectable state.
 
 		boolean Discoverable [readwrite]
 
@@ -238,14 +248,6 @@ Properties	string Address [readonly]
 			this property will be updated via a PropertyChanged
 			signal.
 
-		# __TIZEN_PATCH__
-		boolean Limited [readwrite]
-
-			Switch an adapter to limited discoverable or non-limited. This is
-			a global setting and should only be used by the
-			settings application.
-		# __TIZEN_PATCH__
-
 		boolean Pairable [readwrite]
 
 			Switch an adapter to pairable or non-pairable. This is
@@ -255,7 +257,7 @@ Properties	string Address [readonly]
 			Note that this property only affects incoming pairing
 			requests.
 
-		uint32 PaireableTimeout [readwrite]
+		uint32 PairableTimeout [readwrite]
 
 			The pairable timeout in seconds. A value of zero
 			means that the timeout is disabled and it will stay in

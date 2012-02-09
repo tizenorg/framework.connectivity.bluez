@@ -51,13 +51,15 @@
 #include "manager.h"
 #include "device.h"
 #include "dbus-common.h"
-#include "event.h"
 #include "error.h"
+#include "glib-compat.h"
 #include "glib-helper.h"
 #include "agent.h"
 #include "storage.h"
-#include "attrib-server.h"
+#include "gattrib.h"
 #include "att.h"
+#include "attrib-server.h"
+#include "eir.h"
 
 /* Flags Descriptions */
 #define EIR_LIM_DISC                0x01 /* LE Limited Discoverable Mode */
@@ -68,18 +70,15 @@
 #define EIR_SIM_HOST                0x10 /* Simultaneous LE and BR/EDR to Same
 					    Device Capable (Host) */
 
-#define ADV_TYPE_IND		0x00
-#define ADV_TYPE_DIRECT_IND	0x01
-
 #define IO_CAPABILITY_DISPLAYONLY	0x00
 #define IO_CAPABILITY_DISPLAYYESNO	0x01
 #define IO_CAPABILITY_KEYBOARDONLY	0x02
 #define IO_CAPABILITY_NOINPUTNOOUTPUT	0x03
 #define IO_CAPABILITY_INVALID		0xFF
 
-/* Limited Discoverable bit mask in CoD */
-#define LIMITED_BIT			0x002000
 #define check_address(address) bachk(address)
+
+#define OFF_TIMER 3
 
 static DBusConnection *connection = NULL;
 static GSList *adapter_drivers = NULL;
@@ -108,10 +107,12 @@ struct service_auth {
 
 struct btd_adapter {
 	uint16_t dev_id;
-	int up;
+	gboolean up;
 	char *path;			/* adapter object path */
 	bdaddr_t bdaddr;		/* adapter Bluetooth Address */
 	uint32_t dev_class;		/* Class of Device */
+	char *name;			/* adapter name */
+	gboolean allow_name_changes;	/* whether the adapter name can be changed */
 	guint discov_timeout_id;	/* discoverable timeout id */
 	guint stop_discov_id;		/* stop inquiry/scanning id */
 	uint32_t discov_timeout;	/* discoverable time(sec) */
@@ -119,10 +120,6 @@ struct btd_adapter {
 	uint32_t pairable_timeout;	/* pairable time(sec) */
 	uint8_t scan_mode;		/* scan mode: SCAN_DISABLED, SCAN_PAGE,
 					 * SCAN_INQUIRY */
-#ifdef __TIZEN_PATCH__
-	// Adding Limited state for setting limited discoverable mode
-	gboolean limited;		/* limited discoverable state */
-#endif
 	uint8_t mode;			/* off, connectable, discoverable,
 					 * limited */
 	uint8_t global_mode;		/* last valid global mode */
@@ -137,10 +134,12 @@ struct btd_adapter {
 	GSList *devices;		/* Devices structure pointers */
 	GSList *mode_sessions;		/* Request Mode sessions */
 	GSList *disc_sessions;		/* Discovery sessions */
-	guint scheduler_id;		/* Scheduler handle */
+	guint discov_id;		/* Discovery timer */
+	gboolean discovering;		/* Discovery active */
+	gboolean discov_suspended;	/* Discovery suspended */
+	guint auto_timeout_id;		/* Automatic connections timeout */
 	sdp_list_t *services;		/* Services associated to adapter */
 
-	struct hci_dev dev;		/* hci info */
 	gboolean pairable;		/* pairable state */
 	gboolean initialized;
 
@@ -148,170 +147,29 @@ struct btd_adapter {
 
 	gint ref;
 
-	GSList *powered_callbacks;
+	guint off_timer;
 
-	gboolean name_stored;
+	GSList *powered_callbacks;
+	GSList *pin_callbacks;
 
 	GSList *loaded_drivers;
 };
 
-static void adapter_set_pairable_timeout(struct btd_adapter *adapter,
-					guint interval);
-
-static int found_device_cmp(const struct remote_dev_info *d1,
-			const struct remote_dev_info *d2)
+static void dev_info_free(void *data)
 {
-	int ret;
+	struct remote_dev_info *dev = data;
 
-	if (bacmp(&d2->bdaddr, BDADDR_ANY)) {
-		ret = bacmp(&d1->bdaddr, &d2->bdaddr);
-		if (ret)
-			return ret;
-	}
-
-	if (d2->name_status != NAME_ANY) {
-		ret = (d1->name_status - d2->name_status);
-		if (ret)
-			return ret;
-	}
-
-	return 0;
-}
-
-static void dev_info_free(struct remote_dev_info *dev)
-{
 	g_free(dev->name);
 	g_free(dev->alias);
-	g_slist_foreach(dev->services, (GFunc) g_free, NULL);
-	g_slist_free(dev->services);
+	g_slist_free_full(dev->services, g_free);
 	g_strfreev(dev->uuids);
 	g_free(dev);
-}
-
-/*
- * Device name expansion
- *   %d - device id
- */
-static char *expand_name(char *dst, int size, char *str, int dev_id)
-{
-	register int sp, np, olen;
-	char *opt, buf[10];
-
-	if (!str || !dst)
-		return NULL;
-
-	sp = np = 0;
-	while (np < size - 1 && str[sp]) {
-		switch (str[sp]) {
-		case '%':
-			opt = NULL;
-
-			switch (str[sp+1]) {
-			case 'd':
-				sprintf(buf, "%d", dev_id);
-				opt = buf;
-				break;
-
-			case 'h':
-				opt = main_opts.host_name;
-				break;
-
-			case '%':
-				dst[np++] = str[sp++];
-				/* fall through */
-			default:
-				sp++;
-				continue;
-			}
-
-			if (opt) {
-				/* substitute */
-				olen = strlen(opt);
-				if (np + olen < size - 1)
-					memcpy(dst + np, opt, olen);
-				np += olen;
-			}
-			sp += 2;
-			continue;
-
-		case '\\':
-			sp++;
-			/* fall through */
-		default:
-			dst[np++] = str[sp++];
-			break;
-		}
-	}
-	dst[np] = '\0';
-	return dst;
 }
 
 int btd_adapter_set_class(struct btd_adapter *adapter, uint8_t major,
 								uint8_t minor)
 {
 	return adapter_ops->set_dev_class(adapter->dev_id, major, minor);
-}
-
-static int pending_remote_name_cancel(struct btd_adapter *adapter)
-{
-	struct remote_dev_info *dev, match;
-	int err;
-
-	/* find the pending remote name request */
-	memset(&match, 0, sizeof(struct remote_dev_info));
-	bacpy(&match.bdaddr, BDADDR_ANY);
-	match.name_status = NAME_REQUESTED;
-
-	dev = adapter_search_found_devices(adapter, &match);
-	if (!dev) /* no pending request */
-		return -ENODATA;
-
-	err = adapter_ops->cancel_resolve_name(adapter->dev_id, &dev->bdaddr);
-	if (err < 0)
-		error("Remote name cancel failed: %s(%d)",
-						strerror(errno), errno);
-	return err;
-}
-
-int adapter_resolve_names(struct btd_adapter *adapter)
-{
-	struct remote_dev_info *dev, match;
-	int err;
-
-	/* Do not attempt to resolve more names if on suspended state */
-	if (adapter->state & STATE_SUSPENDED)
-		return 0;
-
-	memset(&match, 0, sizeof(struct remote_dev_info));
-	bacpy(&match.bdaddr, BDADDR_ANY);
-	match.name_status = NAME_REQUIRED;
-
-	dev = adapter_search_found_devices(adapter, &match);
-	if (!dev)
-		return -ENODATA;
-
-	/* send at least one request or return failed if the list is empty */
-	do {
-		/* flag to indicate the current remote name requested */
-		dev->name_status = NAME_REQUESTED;
-
-		err = adapter_ops->resolve_name(adapter->dev_id, &dev->bdaddr);
-
-		if (!err)
-			break;
-
-		error("Unable to send HCI remote name req: %s (%d)",
-						strerror(errno), errno);
-
-		/* if failed, request the next element */
-		/* remove the element from the list */
-		adapter_remove_found_device(adapter, &dev->bdaddr);
-
-		/* get the next element */
-		dev = adapter_search_found_devices(adapter, &match);
-	} while (dev);
-
-	return err;
 }
 
 static const char *mode2str(uint8_t mode)
@@ -463,10 +321,8 @@ static int adapter_set_mode(struct btd_adapter *adapter, uint8_t mode)
 
 static struct session_req *find_session_by_msg(GSList *list, const DBusMessage *msg)
 {
-	GSList *l;
-
-	for (l = list; l; l = l->next) {
-		struct session_req *req = l->data;
+	for (; list; list = list->next) {
+		struct session_req *req = list->data;
 
 		if (req->msg == msg)
 			return req;
@@ -480,12 +336,9 @@ static int set_mode(struct btd_adapter *adapter, uint8_t new_mode,
 {
 	int err;
 	const char *modestr;
-	gboolean discoverable;
 
 	if (adapter->pending_mode != NULL)
 		return -EALREADY;
-
-	discoverable = new_mode == MODE_DISCOVERABLE;
 
 	if (!adapter->up && new_mode != MODE_OFF) {
 		err = adapter_ops->set_powered(adapter->dev_id, TRUE);
@@ -564,19 +417,17 @@ static DBusMessage *set_powered(DBusConnection *conn, DBusMessage *msg,
 	struct btd_adapter *adapter = data;
 	uint8_t mode;
 	int err;
-
-#ifdef __TIZEN_PATCH__
-	if (powered)
-	{
-		mode = adapter->mode ? adapter->mode : get_mode(&adapter->bdaddr, "on");
-
-	}
-	else
-		mode = MODE_OFF;
-#else
+#ifdef __SAMSUNG_PATCH__
 	mode = powered ? get_mode(&adapter->bdaddr, "on") : MODE_OFF;
-#endif
+#else
+	if (powered) {
+		mode = get_mode(&adapter->bdaddr, "on");
+		return set_discoverable(conn, msg, mode == MODE_DISCOVERABLE,
+									data);
+	}
 
+	mode = MODE_OFF;
+#endif
 	if (mode == adapter->mode) {
 		adapter->global_mode = mode;
 		return dbus_message_new_method_return(msg);
@@ -587,22 +438,6 @@ static DBusMessage *set_powered(DBusConnection *conn, DBusMessage *msg,
 		return btd_error_failed(msg, strerror(-err));
 
 	return NULL;
-}
-
-void btd_adapter_pairable_changed(struct btd_adapter *adapter,
-							gboolean pairable)
-{
-	adapter->pairable = pairable;
-
-	write_device_pairable(&adapter->bdaddr, pairable);
-
-	emit_property_changed(connection, adapter->path,
-				ADAPTER_INTERFACE, "Pairable",
-				DBUS_TYPE_BOOLEAN, &pairable);
-
-	if (pairable && adapter->pairable_timeout)
-		adapter_set_pairable_timeout(adapter,
-						adapter->pairable_timeout);
 }
 
 static DBusMessage *set_pairable(DBusConnection *conn, DBusMessage *msg,
@@ -620,11 +455,9 @@ static DBusMessage *set_pairable(DBusConnection *conn, DBusMessage *msg,
 	if (!(adapter->scan_mode & SCAN_INQUIRY))
 		goto store;
 
-#ifndef __TIZEN_PATCH__
 	err = set_mode(adapter, MODE_DISCOVERABLE, NULL);
 	if (err < 0 && msg)
 		return btd_error_failed(msg, strerror(-err));
-#endif
 
 store:
 	adapter_ops->set_pairable(adapter->dev_id, pairable);
@@ -656,12 +489,26 @@ static void adapter_set_pairable_timeout(struct btd_adapter *adapter,
 						adapter);
 }
 
+void btd_adapter_pairable_changed(struct btd_adapter *adapter,
+							gboolean pairable)
+{
+	adapter->pairable = pairable;
+
+	write_device_pairable(&adapter->bdaddr, pairable);
+
+	emit_property_changed(connection, adapter->path,
+				ADAPTER_INTERFACE, "Pairable",
+				DBUS_TYPE_BOOLEAN, &pairable);
+
+	if (pairable && adapter->pairable_timeout)
+		adapter_set_pairable_timeout(adapter,
+						adapter->pairable_timeout);
+}
+
 static struct session_req *find_session(GSList *list, const char *sender)
 {
-	GSList *l;
-
-	for (l = list; l; l = l->next) {
-		struct session_req *req = l->data;
+	for (; list; list = list->next) {
+		struct session_req *req = list->data;
 
 		if (g_str_equal(req->owner, sender))
 			return req;
@@ -693,7 +540,7 @@ static GSList *remove_bredr(GSList *all)
 
 	for (l = all, le = NULL; l; l = l->next) {
 		struct remote_dev_info *dev = l->data;
-		if (dev->le == FALSE) {
+		if (dev->type == ADDR_TYPE_BREDR) {
 			dev_info_free(dev);
 			continue;
 		}
@@ -706,12 +553,10 @@ static GSList *remove_bredr(GSList *all)
 	return le;
 }
 
-static void stop_discovery(struct btd_adapter *adapter, gboolean suspend)
+/* Called when a session gets removed or the adapter is stopped */
+static void stop_discovery(struct btd_adapter *adapter)
 {
-	pending_remote_name_cancel(adapter);
-
-	if (suspend == FALSE)
-		adapter->found_devices = remove_bredr(adapter->found_devices);
+	adapter->found_devices = remove_bredr(adapter->found_devices);
 
 	if (adapter->oor_devices) {
 		g_slist_free(adapter->oor_devices);
@@ -719,22 +564,19 @@ static void stop_discovery(struct btd_adapter *adapter, gboolean suspend)
 	}
 
 	/* Reset if suspended, otherwise remove timer (software scheduler)
-	   or request inquiry to stop */
-	if (adapter->state & STATE_SUSPENDED) {
-		adapter->state &= ~STATE_SUSPENDED;
+	 * or request inquiry to stop */
+	if (adapter->discov_suspended) {
+		adapter->discov_suspended = FALSE;
 		return;
 	}
 
-	if (adapter->scheduler_id) {
-		g_source_remove(adapter->scheduler_id);
-		adapter->scheduler_id = 0;
+	if (adapter->discov_id > 0) {
+		g_source_remove(adapter->discov_id);
+		adapter->discov_id = 0;
 		return;
 	}
 
-	if (adapter->state & STATE_LE_SCAN)
-		adapter_ops->stop_scanning(adapter->dev_id);
-	else
-		adapter_ops->stop_inquiry(adapter->dev_id);
+	adapter_ops->stop_discovery(adapter->dev_id);
 }
 
 static void session_remove(struct session_req *req)
@@ -771,16 +613,16 @@ static void session_remove(struct session_req *req)
 
 		DBG("Stopping discovery");
 
-		stop_discovery(adapter, FALSE);
+		stop_discovery(adapter);
 	}
 }
 
-static void session_free(struct session_req *req)
+static void session_free(void *data)
 {
+	struct session_req *req = data;
+
 	if (req->id)
 		g_dbus_remove_watch(req->conn, req->id);
-
-	session_remove(req);
 
 	if (req->msg) {
 		dbus_message_unref(req->msg);
@@ -800,6 +642,7 @@ static void session_owner_exit(DBusConnection *conn, void *user_data)
 
 	req->id = 0;
 
+	session_remove(req);
 	session_free(req);
 }
 
@@ -812,6 +655,7 @@ static void session_unref(struct session_req *req)
 	if (req->refcount)
 		return;
 
+	session_remove(req);
 	session_free(req);
 }
 
@@ -924,7 +768,7 @@ void btd_adapter_class_changed(struct btd_adapter *adapter, uint32_t new_class)
 	if (main_opts.attrib_server) {
 		/* Removes service class */
 		class[1] = class[1] & 0x1f;
-		attrib_gap_set(GATT_CHARAC_APPEARANCE, class, 2);
+		attrib_gap_set(adapter, GATT_CHARAC_APPEARANCE, class, 2);
 	}
 
 	emit_property_changed(connection, adapter->path,
@@ -932,63 +776,64 @@ void btd_adapter_class_changed(struct btd_adapter *adapter, uint32_t new_class)
 				DBUS_TYPE_UINT32, &new_class);
 }
 
-void adapter_update_local_name(struct btd_adapter *adapter, const char *name)
+void adapter_name_changed(struct btd_adapter *adapter, const char *name)
 {
-	struct hci_dev *dev = &adapter->dev;
-
-	if (strncmp(name, dev->name, MAX_NAME_LENGTH) == 0)
+	if (g_strcmp0(adapter->name, name) == 0)
 		return;
 
-	strncpy(dev->name, name, MAX_NAME_LENGTH);
+	g_free(adapter->name);
+	adapter->name = g_strdup(name);
+
+	if (connection)
+		emit_property_changed(connection, adapter->path,
+					ADAPTER_INTERFACE, "Name",
+					DBUS_TYPE_STRING, &name);
 
 	if (main_opts.attrib_server)
-		attrib_gap_set(GATT_CHARAC_DEVICE_NAME,
-			(const uint8_t *) dev->name, strlen(dev->name));
+		attrib_gap_set(adapter, GATT_CHARAC_DEVICE_NAME,
+				(const uint8_t *) name, strlen(name));
+}
 
-	if (!adapter->name_stored) {
-		char *name_ptr = dev->name;
+int adapter_set_name(struct btd_adapter *adapter, const char *name)
+{
+	char maxname[MAX_NAME_LENGTH + 1];
 
-		write_local_name(&adapter->bdaddr, dev->name);
+	if (g_strcmp0(adapter->name, name) == 0)
+		return 0;
 
-		if (connection)
-			emit_property_changed(connection, adapter->path,
-						ADAPTER_INTERFACE, "Name",
-						DBUS_TYPE_STRING, &name_ptr);
+	memset(maxname, 0, sizeof(maxname));
+	strncpy(maxname, name, MAX_NAME_LENGTH);
+	if (!g_utf8_validate(maxname, -1, NULL)) {
+		error("Name change failed: supplied name isn't valid UTF-8");
+		return -EINVAL;
 	}
 
-	adapter->name_stored = FALSE;
+	if (adapter->up) {
+		int err = adapter_ops->set_name(adapter->dev_id, maxname);
+		if (err < 0)
+			return err;
+	}
+
+	write_local_name(&adapter->bdaddr, maxname);
+
+	return 0;
 }
 
 static DBusMessage *set_name(DBusConnection *conn, DBusMessage *msg,
 					const char *name, void *data)
 {
 	struct btd_adapter *adapter = data;
-	struct hci_dev *dev = &adapter->dev;
-	char *name_ptr = dev->name;
+	int ret;
 
-	if (!g_utf8_validate(name, -1, NULL)) {
-		error("Name change failed: supplied name isn't valid UTF-8");
+	if (adapter->allow_name_changes == FALSE)
+		return btd_error_failed(msg, strerror(EPERM));
+
+	ret = adapter_set_name(adapter, name);
+	if (ret == -EINVAL)
 		return btd_error_invalid_args(msg);
-	}
+	else if (ret < 0)
+		return btd_error_failed(msg, strerror(-ret));
 
-	if (strncmp(name, dev->name, MAX_NAME_LENGTH) == 0)
-		goto done;
-
-	strncpy(dev->name, name, MAX_NAME_LENGTH);
-	write_local_name(&adapter->bdaddr, name);
-	emit_property_changed(connection, adapter->path,
-					ADAPTER_INTERFACE, "Name",
-					DBUS_TYPE_STRING, &name_ptr);
-
-	if (adapter->up) {
-		int err = adapter_ops->set_name(adapter->dev_id, name);
-		if (err < 0)
-			return btd_error_failed(msg, strerror(-err));
-
-		adapter->name_stored = TRUE;
-	}
-
-done:
 	return dbus_message_new_method_return(msg);
 }
 
@@ -1035,6 +880,9 @@ static void adapter_emit_uuids_updated(struct btd_adapter *adapter)
 	char **uuids;
 	int i;
 	sdp_list_t *list;
+
+	if (!adapter->initialized)
+		return;
 
 	uuids = g_new0(char *, sdp_list_len(adapter->services) + 1);
 
@@ -1138,17 +986,11 @@ void adapter_service_remove(struct btd_adapter *adapter, void *r)
 
 	adapter_emit_uuids_updated(adapter);
 }
-#ifdef __TIZEN_PATCH__
-sdp_list_t *adapter_get_services(struct btd_adapter *adapter)
-{
-	return adapter->services;
-}
 
-#endif
 static struct btd_device *adapter_create_device(DBusConnection *conn,
 						struct btd_adapter *adapter,
 						const char *address,
-						device_type_t type)
+						addr_type_t type)
 {
 	struct btd_device *device;
 	const char *path;
@@ -1215,52 +1057,21 @@ struct btd_device *adapter_get_device(DBusConnection *conn,
 		return device;
 
 	return adapter_create_device(conn, adapter, address,
-						DEVICE_TYPE_BREDR);
+						ADDR_TYPE_BREDR);
 }
 
-static gboolean stop_scanning(gpointer user_data)
+static gboolean discovery_cb(gpointer user_data)
 {
 	struct btd_adapter *adapter = user_data;
+	int err;
 
-	adapter_ops->stop_scanning(adapter->dev_id);
+	adapter->discov_id = 0;
+
+	err = adapter_ops->start_discovery(adapter->dev_id);
+	if (err < 0)
+		error("start_discovery: %s (%d)", strerror(-err), -err);
 
 	return FALSE;
-}
-
-static int start_discovery(struct btd_adapter *adapter)
-{
-	int err, type;
-
-	/* Do not start if suspended */
-	if (adapter->state & STATE_SUSPENDED)
-		return 0;
-
-	/* Postpone discovery if still resolving names */
-	if (adapter->state & STATE_RESOLVNAME)
-		return 1;
-
-	pending_remote_name_cancel(adapter);
-
-	type = adapter_get_discover_type(adapter) & ~DISC_RESOLVNAME;
-
-	switch (type) {
-	case DISC_STDINQ:
-	case DISC_INTERLEAVE:
-		err = adapter_ops->start_inquiry(adapter->dev_id,
-							0x08, FALSE);
-		break;
-	case DISC_PINQ:
-		err = adapter_ops->start_inquiry(adapter->dev_id,
-							0x08, TRUE);
-		break;
-	case DISC_LE:
-		err = adapter_ops->start_scanning(adapter->dev_id);
-		break;
-	default:
-		err = -EINVAL;
-	}
-
-	return err;
 }
 
 static DBusMessage *adapter_start_discovery(DBusConnection *conn,
@@ -1270,7 +1081,7 @@ static DBusMessage *adapter_start_discovery(DBusConnection *conn,
 	struct btd_adapter *adapter = data;
 	const char *sender = dbus_message_get_sender(msg);
 	int err;
-	info("adapter_start_discovery");
+
 	if (!adapter->up)
 		return btd_error_not_ready(msg);
 
@@ -1283,14 +1094,16 @@ static DBusMessage *adapter_start_discovery(DBusConnection *conn,
 	if (adapter->disc_sessions)
 		goto done;
 
-	g_slist_foreach(adapter->found_devices, (GFunc) dev_info_free, NULL);
-	g_slist_free(adapter->found_devices);
+	g_slist_free_full(adapter->found_devices, dev_info_free);
 	adapter->found_devices = NULL;
 
 	g_slist_free(adapter->oor_devices);
 	adapter->oor_devices = NULL;
 
-	err = start_discovery(adapter);
+	if (adapter->discov_suspended)
+		goto done;
+
+	err = adapter_ops->start_discovery(adapter->dev_id);
 	if (err < 0)
 		return btd_error_failed(msg, strerror(-err));
 
@@ -1322,11 +1135,6 @@ static DBusMessage *adapter_stop_discovery(DBusConnection *conn,
 	return dbus_message_new_method_return(msg);
 }
 
-struct remote_device_list_t {
-	GSList *list;
-	time_t time;
-};
-
 static DBusMessage *get_properties(DBusConnection *conn,
 					DBusMessage *msg, void *data)
 {
@@ -1335,13 +1143,13 @@ static DBusMessage *get_properties(DBusConnection *conn,
 	DBusMessage *reply;
 	DBusMessageIter iter;
 	DBusMessageIter dict;
-	char str[MAX_NAME_LENGTH + 1], srcaddr[18];
+	char srcaddr[18];
 	gboolean value;
 	char **devices, **uuids;
 	int i;
 	GSList *l;
 	sdp_list_t *list;
-       	info("Get properties 1\n");
+
 	ba2str(&adapter->bdaddr, srcaddr);
 
 	if (check_address(srcaddr) < 0)
@@ -1363,9 +1171,7 @@ static DBusMessage *get_properties(DBusConnection *conn,
 	dict_append_entry(&dict, "Address", DBUS_TYPE_STRING, &property);
 
 	/* Name */
-	memset(str, 0, sizeof(str));
-	strncpy(str, (char *) adapter->dev.name, MAX_NAME_LENGTH);
-	property = str;
+	property = adapter->name ? : "";
 
 	dict_append_entry(&dict, "Name", DBUS_TYPE_STRING, &property);
 
@@ -1380,12 +1186,6 @@ static DBusMessage *get_properties(DBusConnection *conn,
 	/* Discoverable */
 	value = adapter->scan_mode & SCAN_INQUIRY ? TRUE : FALSE;
 	dict_append_entry(&dict, "Discoverable", DBUS_TYPE_BOOLEAN, &value);
-#ifdef __TIZEN_PATCH__
-	// Adding limited property for setting limited discoverable mode
-	/* Limited */
-	dict_append_entry(&dict, "Limited", DBUS_TYPE_BOOLEAN,
-				&adapter->limited);
-#endif
 
 	/* Pairable */
 	dict_append_entry(&dict, "Pairable", DBUS_TYPE_BOOLEAN,
@@ -1400,13 +1200,9 @@ static DBusMessage *get_properties(DBusConnection *conn,
 				DBUS_TYPE_UINT32, &adapter->pairable_timeout);
 
 
-	if (adapter->state & (STATE_PINQ | STATE_STDINQ | STATE_LE_SCAN))
-		value = TRUE;
-	else
-		value = FALSE;
-
 	/* Discovering */
-	dict_append_entry(&dict, "Discovering", DBUS_TYPE_BOOLEAN, &value);
+	dict_append_entry(&dict, "Discovering", DBUS_TYPE_BOOLEAN,
+							&adapter->discovering);
 
 	/* Devices */
 	devices = g_new0(char *, g_slist_length(adapter->devices) + 1);
@@ -1442,7 +1238,6 @@ static DBusMessage *get_properties(DBusConnection *conn,
 static DBusMessage *set_property(DBusConnection *conn,
 					DBusMessage *msg, void *data)
 {
-	info(" set_property 1 \n");
 	struct btd_adapter *adapter = data;
 	DBusMessageIter iter;
 	DBusMessageIter sub;
@@ -1490,19 +1285,6 @@ static DBusMessage *set_property(DBusConnection *conn,
 		dbus_message_iter_get_basic(&sub, &discoverable);
 
 		return set_discoverable(conn, msg, discoverable, data);
-#ifdef __TIZEN_PATCH__
-	// Adding limited property for setting limited discoverable mode
-	} else if (g_str_equal("Limited", property)) {
-		gboolean limited;
-
-		if (dbus_message_iter_get_arg_type(&sub) != DBUS_TYPE_BOOLEAN)
-			return btd_error_invalid_args(msg);
-
-		dbus_message_iter_get_basic(&sub, &limited);
-
-///		return set_limited(conn, msg, limited, data);
-	return btd_error_invalid_args(msg);
-#endif
 	} else if (g_str_equal("DiscoverableTimeout", property)) {
 		uint32_t timeout;
 
@@ -1661,61 +1443,22 @@ static DBusMessage *cancel_device_creation(DBusConnection *conn,
 	return dbus_message_new_method_return(msg);
 }
 
-static device_type_t flags2type(uint8_t flags)
-{
-	/* Inferring the remote type based on the EIR Flags field */
-
-	/* For LE only and dual mode the following flags must be zero */
-	if (flags & (EIR_SIM_CONTROLLER | EIR_SIM_HOST))
-		return DEVICE_TYPE_UNKNOWN;
-
-	/* Limited or General discoverable mode bit must be enabled */
-	if (!(flags & (EIR_LIM_DISC | EIR_GEN_DISC)))
-		return DEVICE_TYPE_UNKNOWN;
-
-	if (flags & EIR_BREDR_UNSUP)
-		return DEVICE_TYPE_LE;
-	else
-		return DEVICE_TYPE_DUALMODE;
-}
-
-static gboolean event_is_connectable(uint8_t type)
-{
-	switch (type) {
-	case ADV_TYPE_IND:
-	case ADV_TYPE_DIRECT_IND:
-		return TRUE;
-	default:
-		return FALSE;
-	}
-}
-
 static struct btd_device *create_device_internal(DBusConnection *conn,
 						struct btd_adapter *adapter,
-						const gchar *address,
-						gboolean force, int *err)
+						const char *address, int *err)
 {
-	struct remote_dev_info *dev, match;
+	struct remote_dev_info *dev;
 	struct btd_device *device;
-	device_type_t type;
+	bdaddr_t addr;
+	addr_type_t type;
 
-	memset(&match, 0, sizeof(struct remote_dev_info));
-	str2ba(address, &match.bdaddr);
-	match.name_status = NAME_ANY;
+	str2ba(address, &addr);
 
-	dev = adapter_search_found_devices(adapter, &match);
-	if (dev && dev->flags)
-		type = flags2type(dev->flags);
+	dev = adapter_search_found_devices(adapter, &addr);
+	if (dev)
+		type = dev->type;
 	else
-		type = DEVICE_TYPE_BREDR;
-
-	if (!force && type == DEVICE_TYPE_LE &&
-					!event_is_connectable(dev->evt_type)) {
-		if (err)
-			*err = -ENOTCONN;
-
-		return NULL;
-	}
+		type = ADDR_TYPE_BREDR;
 
 	device = adapter_create_device(conn, adapter, address, type);
 	if (!device && err)
@@ -1748,11 +1491,11 @@ static DBusMessage *create_device(DBusConnection *conn,
 
 	DBG("%s", address);
 
-	device = create_device_internal(conn, adapter, address, TRUE, &err);
+	device = create_device_internal(conn, adapter, address, &err);
 	if (!device)
 		goto failed;
 
-	if (device_get_type(device) != DEVICE_TYPE_LE)
+	if (device_is_bredr(device))
 		err = device_browse_sdp(device, conn, msg, NULL, FALSE);
 	else
 		err = device_browse_primary(device, conn, msg, FALSE);
@@ -1794,176 +1537,7 @@ static uint8_t parse_io_capability(const char *capability)
 		return IO_CAPABILITY_NOINPUTNOOUTPUT;
 	return IO_CAPABILITY_INVALID;
 }
-#ifdef __TIZEN_PATCH__
-DBusMessage *adapter_encrypt_link(DBusConnection *conn,
-					DBusMessage *msg,
-					const char *address,
-					dbus_bool_t encrypt,
-					void* data)
 
-{
-	struct btd_adapter *adapter = data;
-	struct btd_device *device;
-	char filename[PATH_MAX + 1];
-	bdaddr_t bdaddr;
-	struct hci_conn_info_req *cr;
-	int opt, dd;
-	int dev_id = 0;
-
-	DBG("handle_authenticate_link_request1");
-	 device = adapter_get_device(conn, adapter, address);
-
-	str2ba(address, &bdaddr);
-	/* check if there is a pending discover: requested by D-Bus/non clients */
-	if (0)//todo
-
-		return g_dbus_create_error(msg, ERROR_INTERFACE ".InProgress", "Discover in progress");
-
-	pending_remote_name_cancel(adapter);
-
-	if (device_get_bonding(device))
-		return g_dbus_create_error(msg, ERROR_INTERFACE ".InProgress", "Bonding in progress");
-
-
-	/*if (adapter_find_auth_request(adapter, &bdaddr))
-		return in_progress(msg, "Bonding in progress");*/
-
-	/* check if a link key already exists */
-	create_name(filename, PATH_MAX, STORAGEDIR,address,
-			"linkkeys");
-
-	dd = hci_open_dev(dev_id);
-	if (dd < 0) {
-		return g_dbus_create_error(msg,
-				ERROR_INTERFACE ".Failed",
-				"Device open failed");
-	}
-
-	cr = malloc(sizeof(*cr) + sizeof(struct hci_conn_info));
-	if (!cr) {
-		return NULL;
-	}
-
-	bacpy(&cr->bdaddr, &bdaddr);
-	cr->type = ACL_LINK;
-	if (ioctl(dd, HCIGETCONNINFO, (unsigned long) cr) < 0) {
-		free(cr);
-		return g_dbus_create_error(msg,
-				ERROR_INTERFACE ".Failed",
-				"Getting connection info failed");
-	}
-
-#if 0
-	if (hci_authenticate_link(dd, htobs(cr->conn_info->handle), 25000) < 0) {
-		free(cr);
-		return g_dbus_create_error(msg,
-				ERROR_INTERFACE ".Failed",
-				"Authentication request failed");
-	}
-
-#endif
-       info("Encrypt value   %d",encrypt);
-	if (hci_encrypt_link(dd, htobs(cr->conn_info->handle), encrypt, 25000) < 0) {
-		free(cr);
-		return g_dbus_create_error(msg,
-				ERROR_INTERFACE ".Failed",
-				"Encryption request failed");
-	}
-
-       DBG("handle_authenticate_link_request2");
-	free(cr);
-
-	hci_close_dev(dd);
-
-	return dbus_message_new_method_return(msg);
-
-}
-#endif
-
-
-
-
-#ifdef __TIZEN_PATCH__
-static DBusMessage *authenticate_link(DBusConnection *conn,
-						DBusMessage *msg, void *data)
-{
-	struct btd_adapter *adapter = data;
-	struct btd_device *device;
-	const gchar *address, *agent_path, *capability, *sender;
-	uint8_t cap;
-       info("authenticate_link 1\n");
-	if (dbus_message_get_args(msg, NULL, DBUS_TYPE_STRING, &address,
-					DBUS_TYPE_OBJECT_PATH, &agent_path,
-					DBUS_TYPE_STRING, &capability,
-						DBUS_TYPE_INVALID) == FALSE)
-		return btd_error_invalid_args(msg);
-      info("authenticate_link 2\n");
-	if (check_address(address) < 0)
-		return btd_error_invalid_args(msg);
-       info("authenticate_link 3\n");
-	sender = dbus_message_get_sender(msg);
-	if (adapter->agent &&
-			agent_matches(adapter->agent, sender, agent_path)) {
-		error("Refusing adapter agent usage as device specific one");
-		return btd_error_invalid_args(msg);
-	}
-       info("authenticate_link 4\n");
-	cap = parse_io_capability(capability);
-	if (cap == IO_CAPABILITY_INVALID)
-		return btd_error_invalid_args(msg);
-       info("authenticate_link 5\n");
-	device = adapter_get_device(conn, adapter, address);
-	if (!device)
-		return g_dbus_create_error(msg,
-				ERROR_INTERFACE ".Failed",
-				"Unable to create a new device object");
-	info("authenticate_link 5\n");
-	return device_jsr82_authenticate_link(device, conn, msg, agent_path, cap);
-}
-#endif
-
-#ifdef __TIZEN_PATCH__
-static DBusMessage *encrypt_connection(DBusConnection *conn,
-						DBusMessage *msg, void *data)
-{
-	struct btd_adapter *adapter = data;
-	gboolean encrypt = FALSE;
-	DBG("encrypt_link");
-       info("encrypt_connection value  1   %d",encrypt);
-	if (!adapter->up)
-		return btd_error_not_ready(msg);
-	DBusMessageIter iter;
-	DBusMessageIter sub;
-	const char *address;
-
-
-	if (!dbus_message_iter_init(msg, &iter))
-		return btd_error_invalid_args(msg);
-
-	if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_STRING)
-		return btd_error_invalid_args(msg);
-
-	dbus_message_iter_get_basic(&iter, &address);
-	dbus_message_iter_next(&iter);
-
-	if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_VARIANT)
-		return btd_error_invalid_args(msg);
-	dbus_message_iter_recurse(&iter, &sub);
-
-   	if (dbus_message_iter_get_arg_type(&sub) != DBUS_TYPE_BOOLEAN)
-		return btd_error_invalid_args(msg);
-
-	dbus_message_iter_get_basic(&sub, &encrypt);
-/*	if (!dbus_message_get_args(msg, NULL,
-				DBUS_TYPE_STRING, &address, DBUS_TYPE_BOOLEAN,&encrypt,
-				DBUS_TYPE_INVALID))
-		return btd_error_invalid_args(msg);*/
-
-       info("encrypt_connection value  2   %d",encrypt);
-	return adapter_encrypt_link(conn, msg, address, encrypt, data);
-
-}
-#endif
 static DBusMessage *create_paired_device(DBusConnection *conn,
 					DBusMessage *msg, void *data)
 {
@@ -1998,13 +1572,12 @@ static DBusMessage *create_paired_device(DBusConnection *conn,
 
 	device = adapter_find_device(adapter, address);
 	if (!device) {
-		device = create_device_internal(conn, adapter, address,
-								FALSE, &err);
+		device = create_device_internal(conn, adapter, address, &err);
 		if (!device)
 			return btd_error_failed(msg, strerror(-err));
 	}
 
-	if (device_get_type(device) != DEVICE_TYPE_LE)
+	if (device_is_bredr(device))
 		return device_create_bonding(device, conn, msg,
 							agent_path, cap);
 
@@ -2179,11 +1752,6 @@ static GDBusMethodTable adapter_methods[] = {
 	{ "FindDevice",		"s",	"o",	find_device		},
 	{ "RegisterAgent",	"os",	"",	register_agent		},
 	{ "UnregisterAgent",	"o",	"",	unregister_agent	},
-
-	#ifdef __TIZEN_PATCH__
-	{ "AuthenticateLink","sos",	"o",	authenticate_link, G_DBUS_METHOD_FLAG_ASYNC},
-	{ "EncryptLink","sv",	"",	encrypt_connection, G_DBUS_METHOD_FLAG_ASYNC},
-	#endif
 	{ }
 };
 
@@ -2200,24 +1768,27 @@ static void create_stored_device_from_profiles(char *key, char *value,
 						void *user_data)
 {
 	struct btd_adapter *adapter = user_data;
-	GSList *uuids = bt_string2list(value);
+	GSList *list, *uuids = bt_string2list(value);
 	struct btd_device *device;
 
 	if (g_slist_find_custom(adapter->devices,
 				key, (GCompareFunc) device_address_cmp))
 		return;
 
-	device = device_create(connection, adapter, key, DEVICE_TYPE_BREDR);
+	device = device_create(connection, adapter, key, ADDR_TYPE_BREDR);
 	if (!device)
 		return;
 
 	device_set_temporary(device, FALSE);
 	adapter->devices = g_slist_append(adapter->devices, device);
 
+	list = device_services_from_record(device, uuids);
+	if (list)
+		device_register_services(connection, device, list, ATT_PSM);
+
 	device_probe_drivers(device, uuids);
 
-	g_slist_foreach(uuids, (GFunc) g_free, NULL);
-	g_slist_free(uuids);
+	g_slist_free_full(uuids, g_free);
 }
 
 struct adapter_keys {
@@ -2276,7 +1847,7 @@ static void create_stored_device_from_linkkeys(char *key, char *value,
 					(GCompareFunc) device_address_cmp))
 		return;
 
-	device = device_create(connection, adapter, key, DEVICE_TYPE_BREDR);
+	device = device_create(connection, adapter, key, ADDR_TYPE_BREDR);
 	if (device) {
 		device_set_temporary(device, FALSE);
 		adapter->devices = g_slist_append(adapter->devices, device);
@@ -2293,32 +1864,7 @@ static void create_stored_device_from_blocked(char *key, char *value,
 				key, (GCompareFunc) device_address_cmp))
 		return;
 
-	device = device_create(connection, adapter, key, DEVICE_TYPE_BREDR);
-	if (device) {
-		device_set_temporary(device, FALSE);
-		adapter->devices = g_slist_append(adapter->devices, device);
-	}
-}
-
-static void create_stored_device_from_types(char *key, char *value,
-							void *user_data)
-{
-	GSList *l;
-	struct btd_adapter *adapter = user_data;
-	struct btd_device *device;
-	uint8_t type;
-
-	type = strtol(value, NULL, 16);
-
-	l = g_slist_find_custom(adapter->devices,
-				key, (GCompareFunc) device_address_cmp);
-	if (l) {
-		device = l->data;
-		device_set_type(device, type);
-		return;
-	}
-
-	device = device_create(connection, adapter, key, type);
+	device = device_create(connection, adapter, key, ADDR_TYPE_BREDR);
 	if (device) {
 		device_set_temporary(device, FALSE);
 		adapter->devices = g_slist_append(adapter->devices, device);
@@ -2367,18 +1913,17 @@ static void create_stored_device_from_primary(char *key, char *value,
 	struct btd_device *device;
 	GSList *services, *uuids, *l;
 
-	l = g_slist_find_custom(adapter->devices,
-				key, (GCompareFunc) device_address_cmp);
-	if (l)
-		device = l->data;
-	else {
-		device = device_create(connection, adapter, key, DEVICE_TYPE_BREDR);
-		if (!device)
-			return;
+	if (g_slist_find_custom(adapter->devices,
+			key, (GCompareFunc) device_address_cmp))
+		return;
 
-		device_set_temporary(device, FALSE);
-		adapter->devices = g_slist_append(adapter->devices, device);
-	}
+	/* FIXME: Get the correct LE addr type (public/random) */
+	device = device_create(connection, adapter, key, ADDR_TYPE_LE_PUBLIC);
+	if (!device)
+		return;
+
+	device_set_temporary(device, FALSE);
+	adapter->devices = g_slist_append(adapter->devices, device);
 
 	services = string_to_primary_list(value);
 	if (services == NULL)
@@ -2387,13 +1932,12 @@ static void create_stored_device_from_primary(char *key, char *value,
 	for (l = services, uuids = NULL; l; l = l->next) {
 		struct att_primary *prim = l->data;
 		uuids = g_slist_append(uuids, prim->uuid);
-
-		device_add_primary(device, prim);
 	}
+
+	device_register_services(connection, device, services, -1);
 
 	device_probe_drivers(device, uuids);
 
-	g_slist_free(services);
 	g_slist_free(uuids);
 }
 
@@ -2422,15 +1966,11 @@ static void load_devices(struct btd_adapter *adapter)
 	if (err < 0) {
 		error("Unable to load keys to adapter_ops: %s (%d)",
 							strerror(-err), -err);
-		g_slist_foreach(keys.keys, (GFunc) g_free, NULL);
-		g_slist_free(keys.keys);
+		g_slist_free_full(keys.keys, g_free);
 	}
 
 	create_name(filename, PATH_MAX, STORAGEDIR, srcaddr, "blocked");
 	textfile_foreach(filename, create_stored_device_from_blocked, adapter);
-
-	create_name(filename, PATH_MAX, STORAGEDIR, srcaddr, "types");
-	textfile_foreach(filename, create_stored_device_from_types, adapter);
 }
 
 int btd_adapter_block_address(struct btd_adapter *adapter, bdaddr_t *bdaddr)
@@ -2507,8 +2047,7 @@ static void load_connections(struct btd_adapter *adapter)
 			adapter_add_connection(adapter, device);
 	}
 
-	g_slist_foreach(conns, (GFunc) g_free, NULL);
-	g_slist_free(conns);
+	g_slist_free_full(conns, g_free);
 }
 
 static int get_discoverable_timeout(const char *src)
@@ -2560,49 +2099,6 @@ static void emit_device_disappeared(gpointer data, gpointer user_data)
 	adapter->found_devices = g_slist_remove(adapter->found_devices, dev);
 }
 
-static void update_oor_devices(struct btd_adapter *adapter)
-{
-	g_slist_foreach(adapter->oor_devices, emit_device_disappeared, adapter);
-	g_slist_foreach(adapter->oor_devices, (GFunc) dev_info_free, NULL);
-	g_slist_free(adapter->oor_devices);
-	adapter->oor_devices =  g_slist_copy(adapter->found_devices);
-}
-
-static gboolean bredr_capable(struct btd_adapter *adapter)
-{
-	struct hci_dev *dev = &adapter->dev;
-
-	return (dev->features[4] & LMP_NO_BREDR) == 0 ? TRUE : FALSE;
-}
-
-static gboolean le_capable(struct btd_adapter *adapter)
-{
-	struct hci_dev *dev = &adapter->dev;
-
-	return (dev->features[4] & LMP_LE &&
-			dev->extfeatures[0] & LMP_HOST_LE) ? TRUE : FALSE;
-}
-
-int adapter_get_discover_type(struct btd_adapter *adapter)
-{
-	gboolean le, bredr;
-	int type;
-
-	le = le_capable(adapter);
-	bredr = bredr_capable(adapter);
-
-	if (le)
-		type = bredr ? DISC_INTERLEAVE : DISC_LE;
-	else
-		type = main_opts.discov_interval ? DISC_STDINQ :
-							DISC_PINQ;
-
-	if (main_opts.name_resolv)
-		type |= DISC_RESOLVNAME;
-
-	return type;
-}
-
 void btd_adapter_get_mode(struct btd_adapter *adapter, uint8_t *mode,
 					uint8_t *on_mode, gboolean *pairable)
 {
@@ -2613,25 +2109,14 @@ void btd_adapter_get_mode(struct btd_adapter *adapter, uint8_t *mode,
 	if (mode) {
 		if (main_opts.remember_powered == FALSE)
 			*mode = main_opts.mode;
-		else if (read_device_mode(address, str, sizeof(str)) < 0)
-			*mode = main_opts.mode;
-		else
+		else if (read_device_mode(address, str, sizeof(str)) == 0)
 			*mode = get_mode(&adapter->bdaddr, str);
+		else
+			*mode = main_opts.mode;
 	}
 
-	if (on_mode) {
-		if (main_opts.remember_powered == FALSE) {
-			if (adapter->initialized)
-				*on_mode = get_mode(&adapter->bdaddr, "on");
-			else {
-				*on_mode = main_opts.mode;
-				adapter->initialized = TRUE;
-			}
-		} else if (read_on_mode(address, str, sizeof(str)) < 0)
-			*on_mode = main_opts.mode;
-		else
-			*on_mode = get_mode(&adapter->bdaddr, str);
-	}
+	if (on_mode)
+		*on_mode = get_mode(&adapter->bdaddr, "on");
 
 	if (pairable)
 		*pairable = adapter->pairable;
@@ -2650,13 +2135,12 @@ void btd_adapter_start(struct btd_adapter *adapter)
 	adapter->up = TRUE;
 	adapter->discov_timeout = get_discoverable_timeout(address);
 	adapter->pairable_timeout = get_pairable_timeout(address);
-	adapter->state = STATE_IDLE;
 	adapter->mode = MODE_CONNECTABLE;
+	adapter->off_timer = 0;
 
-	if (main_opts.le)
-		adapter_ops->enable_le(adapter->dev_id);
-
-	adapter_ops->set_name(adapter->dev_id, adapter->dev.name);
+	/* Forcing: Name is lost when adapter is powered off */
+	if (adapter->name)
+		adapter_ops->set_name(adapter->dev_id, adapter->name);
 
 	if (read_local_class(&adapter->bdaddr, cls) < 0) {
 		uint32_t class = htobl(main_opts.class);
@@ -2718,6 +2202,11 @@ static void set_mode_complete(struct btd_adapter *adapter)
 
 	DBG("");
 
+	if (adapter->mode == MODE_OFF) {
+		g_slist_free_full(adapter->mode_sessions, session_free);
+		adapter->mode_sessions = NULL;
+	}
+
 	if (adapter->pending_mode == NULL)
 		return;
 
@@ -2757,10 +2246,7 @@ static void set_mode_complete(struct btd_adapter *adapter)
 
 int btd_adapter_stop(struct btd_adapter *adapter)
 {
-	gboolean powered, discoverable, pairable;
-#ifdef __TIZEN_PATCH__
-	gboolean limited;
-#endif
+	gboolean prop_false = FALSE;
 
 	/* cancel pending timeout */
 	if (adapter->discov_timeout_id) {
@@ -2771,12 +2257,10 @@ int btd_adapter_stop(struct btd_adapter *adapter)
 	/* check pending requests */
 	reply_pending_requests(adapter);
 
-	stop_discovery(adapter, FALSE);
+	stop_discovery(adapter);
 
 	if (adapter->disc_sessions) {
-		g_slist_foreach(adapter->disc_sessions, (GFunc) session_free,
-				NULL);
-		g_slist_free(adapter->disc_sessions);
+		g_slist_free_full(adapter->disc_sessions, session_free);
 		adapter->disc_sessions = NULL;
 	}
 
@@ -2785,30 +2269,28 @@ int btd_adapter_stop(struct btd_adapter *adapter)
 		adapter_remove_connection(adapter, device);
 	}
 
-	if (adapter->scan_mode == (SCAN_PAGE | SCAN_INQUIRY)) {
-		discoverable = FALSE;
+	if (adapter->scan_mode == (SCAN_PAGE | SCAN_INQUIRY))
 		emit_property_changed(connection, adapter->path,
 					ADAPTER_INTERFACE, "Discoverable",
-					DBUS_TYPE_BOOLEAN, &discoverable);
-	}
+					DBUS_TYPE_BOOLEAN, &prop_false);
 
-	if ((adapter->scan_mode & SCAN_PAGE) && adapter->pairable == TRUE) {
-		pairable = FALSE;
+	if ((adapter->scan_mode & SCAN_PAGE) && adapter->pairable == TRUE)
 		emit_property_changed(connection, adapter->path,
 					ADAPTER_INTERFACE, "Pairable",
-					DBUS_TYPE_BOOLEAN, &pairable);
-	}
+					DBUS_TYPE_BOOLEAN, &prop_false);
 
-	powered = FALSE;
+	if (adapter->discovering)
+		emit_property_changed(connection, adapter->path,
+					ADAPTER_INTERFACE, "Discovering",
+					DBUS_TYPE_BOOLEAN, &prop_false);
+
 	emit_property_changed(connection, adapter->path, ADAPTER_INTERFACE,
-				"Powered", DBUS_TYPE_BOOLEAN, &powered);
+				"Powered", DBUS_TYPE_BOOLEAN, &prop_false);
 
-	adapter->up = 0;
+	adapter->up = FALSE;
 	adapter->scan_mode = SCAN_DISABLED;
 	adapter->mode = MODE_OFF;
-	adapter->state = STATE_IDLE;
 	adapter->off_requested = FALSE;
-	adapter->name_stored = FALSE;
 
 	call_adapter_powered_callbacks(adapter, FALSE);
 
@@ -2819,13 +2301,10 @@ int btd_adapter_stop(struct btd_adapter *adapter)
 	return 0;
 }
 
-int adapter_update_ssp_mode(struct btd_adapter *adapter, uint8_t mode)
+static void off_timer_remove(struct btd_adapter *adapter)
 {
-	struct hci_dev *dev = &adapter->dev;
-
-	dev->ssp_mode = mode;
-
-	return 0;
+	g_source_remove(adapter->off_timer);
+	adapter->off_timer = 0;
 }
 
 static void adapter_free(gpointer user_data)
@@ -2840,14 +2319,17 @@ static void adapter_free(gpointer user_data)
 	if (adapter->auth_idle_id)
 		g_source_remove(adapter->auth_idle_id);
 
+	if (adapter->off_timer)
+		off_timer_remove(adapter);
+
 	sdp_list_free(adapter->services, NULL);
 
-	g_slist_foreach(adapter->found_devices, (GFunc) dev_info_free, NULL);
-	g_slist_free(adapter->found_devices);
+	g_slist_free_full(adapter->found_devices, dev_info_free);
 
 	g_slist_free(adapter->oor_devices);
 
 	g_free(adapter->path);
+	g_free(adapter->name);
 	g_free(adapter);
 }
 
@@ -2880,13 +2362,11 @@ void btd_adapter_unref(struct btd_adapter *adapter)
 
 gboolean adapter_init(struct btd_adapter *adapter)
 {
-	struct hci_version ver;
-	struct hci_dev *dev;
-	int err;
-
 	/* adapter_ops makes sure that newly registered adapters always
 	 * start off as powered */
 	adapter->up = TRUE;
+
+	adapter->allow_name_changes = TRUE;
 
 	adapter_ops->read_bdaddr(adapter->dev_id, &adapter->bdaddr);
 
@@ -2895,36 +2375,11 @@ gboolean adapter_init(struct btd_adapter *adapter)
 		return FALSE;
 	}
 
-	err = adapter_ops->read_local_version(adapter->dev_id, &ver);
-	if (err < 0) {
-		error("Can't read version info for hci%d: %s (%d)",
-					adapter->dev_id, strerror(-err), -err);
-		return FALSE;
-	}
-
-	dev = &adapter->dev;
-
-	dev->hci_rev = ver.hci_rev;
-	dev->lmp_ver = ver.lmp_ver;
-	dev->lmp_subver = ver.lmp_subver;
-	dev->manufacturer = ver.manufacturer;
-
-	err = adapter_ops->read_local_features(adapter->dev_id, dev->features);
-	if (err < 0) {
-		error("Can't read features for hci%d: %s (%d)",
-					adapter->dev_id, strerror(-err), -err);
-		return FALSE;
-	}
-
-	if (read_local_name(&adapter->bdaddr, adapter->dev.name) < 0)
-		expand_name(adapter->dev.name, MAX_NAME_LENGTH, main_opts.name,
-							adapter->dev_id);
+	sdp_init_services_list(&adapter->bdaddr);
 
 	if (main_opts.attrib_server)
-		attrib_gap_set(GATT_CHARAC_DEVICE_NAME,
-			(const uint8_t *) dev->name, strlen(dev->name));
+		btd_adapter_gatt_server_start(adapter);
 
-	sdp_init_services_list(&adapter->bdaddr);
 	load_drivers(adapter);
 	clear_blocked(adapter);
 	load_devices(adapter);
@@ -2936,6 +2391,8 @@ gboolean adapter_init(struct btd_adapter *adapter)
 	/* retrieve the active connections: address the scenario where
 	 * the are active connections before the daemon've started */
 	load_connections(adapter);
+
+	adapter->initialized = TRUE;
 
 	return TRUE;
 }
@@ -2982,11 +2439,13 @@ void adapter_remove(struct btd_adapter *adapter)
 	g_slist_free(adapter->devices);
 
 	unload_drivers(adapter);
+	if (main_opts.attrib_server)
+		btd_adapter_gatt_server_stop(adapter);
+
+	g_slist_free(adapter->pin_callbacks);
 
 	/* Return adapter to down state if it was not up on init */
 	adapter_ops->restore_powered(adapter->dev_id);
-
-	btd_adapter_unref(adapter);
 }
 
 uint16_t adapter_get_dev_id(struct btd_adapter *adapter)
@@ -3007,92 +2466,79 @@ void adapter_get_address(struct btd_adapter *adapter, bdaddr_t *bdaddr)
 	bacpy(bdaddr, &adapter->bdaddr);
 }
 
-void adapter_set_state(struct btd_adapter *adapter, int state)
+void adapter_set_allow_name_changes(struct btd_adapter *adapter,
+						gboolean allow_name_changes)
+{
+	adapter->allow_name_changes = allow_name_changes;
+}
+
+void adapter_set_discovering(struct btd_adapter *adapter,
+						gboolean discovering)
 {
 	const char *path = adapter->path;
-	gboolean discov_active;
-	int previous, type;
 
-	if (adapter->state == state)
-		return;
-
-	previous = adapter->state;
-	adapter->state = state;
-
-	type = adapter_get_discover_type(adapter);
-
-	switch (state) {
-	case STATE_STDINQ:
-	case STATE_PINQ:
-		discov_active = TRUE;
-
-		/* Started a new session while resolving names ? */
-		if (previous & STATE_RESOLVNAME)
-			return;
-		break;
-	case STATE_LE_SCAN:
-		/* Scanning enabled */
-		adapter->stop_discov_id = g_timeout_add(5120,
-						stop_scanning, adapter);
-
-		/* For dual mode: don't send "Discovering = TRUE"  */
-		if (bredr_capable(adapter) == TRUE)
-			return;
-
-		/* LE only */
-		discov_active = TRUE;
-
-		break;
-	case STATE_IDLE:
-		/*
-		 * Interleave: from inquiry to scanning. Interleave is not
-		 * applicable to requests triggered by external applications.
-		 */
-		if (adapter->disc_sessions && (type & DISC_INTERLEAVE) &&
-						(previous & STATE_STDINQ)) {
-			adapter_ops->start_scanning(adapter->dev_id);
-			return;
-		}
-		/* BR/EDR only: inquiry finished */
-		discov_active = FALSE;
-		break;
-	default:
-		discov_active = FALSE;
-		break;
-	}
-
-	if (discov_active == FALSE) {
-		if (type & DISC_RESOLVNAME) {
-			if (adapter_resolve_names(adapter) == 0) {
-				adapter->state |= STATE_RESOLVNAME;
-				return;
-			}
-		}
-
-		update_oor_devices(adapter);
-	} else if (adapter->disc_sessions && main_opts.discov_interval)
-			adapter->scheduler_id = g_timeout_add_seconds(
-						main_opts.discov_interval,
-						(GSourceFunc) start_discovery,
-						adapter);
+	adapter->discovering = discovering;
 
 	emit_property_changed(connection, path,
 				ADAPTER_INTERFACE, "Discovering",
-				DBUS_TYPE_BOOLEAN, &discov_active);
+				DBUS_TYPE_BOOLEAN, &discovering);
+
+	if (discovering)
+		return;
+
+	g_slist_foreach(adapter->oor_devices, emit_device_disappeared, adapter);
+	g_slist_free_full(adapter->oor_devices, dev_info_free);
+	adapter->oor_devices = g_slist_copy(adapter->found_devices);
+
+	if (!adapter_has_discov_sessions(adapter) || adapter->discov_suspended)
+		return;
+
+	DBG("hci%u enabling timer, disc_sessions %u", adapter->dev_id,
+					g_slist_length(adapter->disc_sessions));
+
+	adapter->discov_id = g_timeout_add_seconds(main_opts.discov_interval,
+							discovery_cb, adapter);
 }
 
-int adapter_get_state(struct btd_adapter *adapter)
+static void suspend_discovery(struct btd_adapter *adapter)
 {
-	return adapter->state;
+	if (adapter->disc_sessions == NULL || adapter->discov_suspended)
+		return;
+
+	DBG("Suspending discovery");
+
+	if (adapter->oor_devices) {
+		g_slist_free(adapter->oor_devices);
+		adapter->oor_devices = NULL;
+	}
+
+	adapter->discov_suspended = TRUE;
+
+	if (adapter->discov_id > 0) {
+		g_source_remove(adapter->discov_id);
+		adapter->discov_id = 0;
+	} else
+		adapter_ops->stop_discovery(adapter->dev_id);
+}
+
+static int found_device_cmp(gconstpointer a, gconstpointer b)
+{
+	const struct remote_dev_info *d = a;
+	const bdaddr_t *bdaddr = b;
+
+	if (bacmp(bdaddr, BDADDR_ANY) == 0)
+		return 0;
+
+	return bacmp(&d->bdaddr, bdaddr);
 }
 
 struct remote_dev_info *adapter_search_found_devices(struct btd_adapter *adapter,
-						struct remote_dev_info *match)
+							bdaddr_t *bdaddr)
 {
 	GSList *l;
 
-	l = g_slist_find_custom(adapter->found_devices, match,
-					(GCompareFunc) found_device_cmp);
+	l = g_slist_find_custom(adapter->found_devices, bdaddr,
+							found_device_cmp);
 	if (l)
 		return l->data;
 
@@ -3167,7 +2613,6 @@ static void emit_device_found(const char *path, const char *address,
 
 static char **strlist2array(GSList *list)
 {
-	GSList *l;
 	unsigned int i, n;
 	char **array;
 
@@ -3177,8 +2622,8 @@ static char **strlist2array(GSList *list)
 	n = g_slist_length(list);
 	array = g_new0(char *, n + 1);
 
-	for (l = list, i = 0; l; l = l->next, i++)
-		array[i] = g_strdup((const gchar *) l->data);
+	for (i = 0; list; list = list->next, i++)
+		array[i] = g_strdup((const gchar *) list->data);
 
 	return array;
 }
@@ -3189,7 +2634,7 @@ void adapter_emit_device_found(struct btd_adapter *adapter,
 	struct btd_device *device;
 	char peer_addr[18], local_addr[18];
 	const char *icon, *paddr = peer_addr;
-	dbus_bool_t paired = FALSE;
+	dbus_bool_t paired = FALSE, trusted = FALSE;
 	dbus_int16_t rssi = dev->rssi;
 	char *alias;
 	size_t uuid_count;
@@ -3198,8 +2643,10 @@ void adapter_emit_device_found(struct btd_adapter *adapter,
 	ba2str(&adapter->bdaddr, local_addr);
 
 	device = adapter_find_device(adapter, paddr);
-	if (device)
+	if (device) {
 		paired = device_is_paired(device);
+		trusted = device_is_trusted(device);
+	}
 
 	/* The uuids string array is updated only if necessary */
 	uuid_count = g_slist_length(dev->services);
@@ -3208,27 +2655,6 @@ void adapter_emit_device_found(struct btd_adapter *adapter,
 		dev->uuids = strlist2array(dev->services);
 		dev->uuid_count = uuid_count;
 	}
-
-	if (dev->le) {
-		gboolean broadcaster;
-
-		if (dev->flags & (EIR_LIM_DISC | EIR_GEN_DISC))
-			broadcaster = FALSE;
-		else
-			broadcaster = TRUE;
-
-		emit_device_found(adapter->path, paddr,
-				"Address", DBUS_TYPE_STRING, &paddr,
-				"RSSI", DBUS_TYPE_INT16, &rssi,
-				"Name", DBUS_TYPE_STRING, &dev->name,
-				"Paired", DBUS_TYPE_BOOLEAN, &paired,
-				"Broadcaster", DBUS_TYPE_BOOLEAN, &broadcaster,
-				"UUIDs", DBUS_TYPE_ARRAY, &dev->uuids, uuid_count,
-				NULL);
-		return;
-	}
-
-	icon = class_to_icon(dev->class);
 
 	if (!dev->alias) {
 		if (!dev->name) {
@@ -3239,44 +2665,62 @@ void adapter_emit_device_found(struct btd_adapter *adapter,
 	} else
 		alias = g_strdup(dev->alias);
 
-	emit_device_found(adapter->path, paddr,
-			"Address", DBUS_TYPE_STRING, &paddr,
-			"Class", DBUS_TYPE_UINT32, &dev->class,
-			"Icon", DBUS_TYPE_STRING, &icon,
-			"RSSI", DBUS_TYPE_INT16, &rssi,
-			"Name", DBUS_TYPE_STRING, &dev->name,
-			"Alias", DBUS_TYPE_STRING, &alias,
-			"LegacyPairing", DBUS_TYPE_BOOLEAN, &dev->legacy,
-			"Paired", DBUS_TYPE_BOOLEAN, &paired,
-			"UUIDs", DBUS_TYPE_ARRAY, &dev->uuids, uuid_count,
-			NULL);
+	if (dev->type != ADDR_TYPE_BREDR) {
+		gboolean broadcaster;
+
+		if (dev->flags & (EIR_LIM_DISC | EIR_GEN_DISC))
+			broadcaster = FALSE;
+		else
+			broadcaster = TRUE;
+
+		dev->legacy = FALSE;
+
+		emit_device_found(adapter->path, paddr,
+				"Address", DBUS_TYPE_STRING, &paddr,
+				"RSSI", DBUS_TYPE_INT16, &rssi,
+				"Name", DBUS_TYPE_STRING, &dev->name,
+				"Alias", DBUS_TYPE_STRING, &alias,
+				"LegacyPairing", DBUS_TYPE_BOOLEAN, &dev->legacy,
+				"Paired", DBUS_TYPE_BOOLEAN, &paired,
+				"Broadcaster", DBUS_TYPE_BOOLEAN, &broadcaster,
+				"UUIDs", DBUS_TYPE_ARRAY, &dev->uuids, uuid_count,
+				NULL);
+	} else {
+		icon = class_to_icon(dev->class);
+
+		emit_device_found(adapter->path, paddr,
+				"Address", DBUS_TYPE_STRING, &paddr,
+				"Class", DBUS_TYPE_UINT32, &dev->class,
+				"Icon", DBUS_TYPE_STRING, &icon,
+				"RSSI", DBUS_TYPE_INT16, &rssi,
+				"Name", DBUS_TYPE_STRING, &dev->name,
+				"Alias", DBUS_TYPE_STRING, &alias,
+				"LegacyPairing", DBUS_TYPE_BOOLEAN, &dev->legacy,
+				"Paired", DBUS_TYPE_BOOLEAN, &paired,
+				"Trusted", DBUS_TYPE_BOOLEAN, &trusted,
+				"UUIDs", DBUS_TYPE_ARRAY, &dev->uuids, uuid_count,
+				NULL);
+	}
 
 	g_free(alias);
 }
 
-static struct remote_dev_info *get_found_dev(struct btd_adapter *adapter,
-						const bdaddr_t *bdaddr,
-						gboolean *new_dev)
+static struct remote_dev_info *found_device_new(const bdaddr_t *bdaddr,
+					addr_type_t type, const char *name,
+					const char *alias, uint32_t class,
+					gboolean legacy, int flags)
 {
-	struct remote_dev_info *dev, match;
+	struct remote_dev_info *dev;
 
-	memset(&match, 0, sizeof(struct remote_dev_info));
-	bacpy(&match.bdaddr, bdaddr);
-	match.name_status = NAME_ANY;
-
-	dev = adapter_search_found_devices(adapter, &match);
-	if (dev) {
-		*new_dev = FALSE;
-		/* Out of range list update */
-		adapter->oor_devices = g_slist_remove(adapter->oor_devices,
-							dev);
-	} else {
-		*new_dev = TRUE;
-		dev = g_new0(struct remote_dev_info, 1);
-		bacpy(&dev->bdaddr, bdaddr);
-		adapter->found_devices = g_slist_prepend(adapter->found_devices,
-									dev);
-	}
+	dev = g_new0(struct remote_dev_info, 1);
+	bacpy(&dev->bdaddr, bdaddr);
+	dev->type = type;
+	dev->name = g_strdup(name);
+	dev->alias = g_strdup(alias);
+	dev->class = class;
+	dev->legacy = legacy;
+	if (flags >= 0)
+		dev->flags = flags;
 
 	return dev;
 }
@@ -3306,92 +2750,114 @@ static void dev_prepend_uuid(gpointer data, gpointer user_data)
 	dev->services = g_slist_prepend(dev->services, g_strdup(new_uuid));
 }
 
-void adapter_update_device_from_info(struct btd_adapter *adapter,
-					bdaddr_t bdaddr, int8_t rssi,
-					uint8_t evt_type, const char *name,
-					GSList *services, int flags)
+static gboolean pairing_is_legacy(bdaddr_t *local, bdaddr_t *peer,
+					const uint8_t *eir, const char *name)
+{
+	unsigned char features[8];
+
+	if (eir)
+		return FALSE;
+
+	if (name == NULL)
+		return TRUE;
+
+	if (read_remote_features(local, peer, NULL, features) < 0)
+		return TRUE;
+
+	if (features[0] & 0x01)
+		return FALSE;
+	else
+		return TRUE;
+}
+
+static char *read_stored_data(bdaddr_t *local, bdaddr_t *peer, const char *file)
+{
+	char local_addr[18], peer_addr[18], filename[PATH_MAX + 1];
+
+	ba2str(local, local_addr);
+	ba2str(peer, peer_addr);
+
+	create_name(filename, PATH_MAX, STORAGEDIR, local_addr, file);
+
+	return textfile_get(filename, peer_addr);
+}
+
+void adapter_update_found_devices(struct btd_adapter *adapter,
+					bdaddr_t *bdaddr, addr_type_t type,
+					uint32_t class, int8_t rssi,
+					uint8_t confirm_name,
+					uint8_t *data, uint8_t data_len)
 {
 	struct remote_dev_info *dev;
-	gboolean new_dev;
+	struct eir_data eir_data;
+	char *alias, *name;
+	gboolean legacy, name_known;
+	int err;
 
-	dev = get_found_dev(adapter, &bdaddr, &new_dev);
-
-	if (new_dev) {
-		dev->le = TRUE;
-		dev->evt_type = evt_type;
-	} else if (dev->rssi == rssi)
+	memset(&eir_data, 0, sizeof(eir_data));
+	err = eir_parse(&eir_data, data, data_len);
+	if (err < 0) {
+		error("Error parsing EIR data: %s (%d)", strerror(-err), -err);
 		return;
-
-	dev->rssi = rssi;
-
-	adapter->found_devices = g_slist_sort(adapter->found_devices,
-						(GCompareFunc) dev_rssi_cmp);
-
-	g_slist_foreach(services, remove_same_uuid, dev);
-	g_slist_foreach(services, dev_prepend_uuid, dev);
-
-	if (flags >= 0)
-		dev->flags = flags;
-
-	if (name) {
-		g_free(dev->name);
-		dev->name = g_strdup(name);
 	}
 
-	/* FIXME: check if other information was changed before emitting the
-	 * signal */
-	adapter_emit_device_found(adapter, dev);
-}
+	if (eir_data.name != NULL && eir_data.name_complete)
+		write_device_name(&adapter->bdaddr, bdaddr, eir_data.name);
 
-void adapter_update_found_devices(struct btd_adapter *adapter, bdaddr_t *bdaddr,
-				int8_t rssi, uint32_t class, const char *name,
-				const char *alias, gboolean legacy,
-				GSList *services, name_status_t name_status)
-{
-	struct remote_dev_info *dev;
-	gboolean new_dev;
+	dev = adapter_search_found_devices(adapter, bdaddr);
+	if (dev) {
+		adapter->oor_devices = g_slist_remove(adapter->oor_devices,
+							dev);
+		if (dev->rssi != rssi)
+			goto done;
 
-	dev = get_found_dev(adapter, bdaddr, &new_dev);
+		eir_data_free(&eir_data);
 
-	if (new_dev) {
-		if (name)
-			dev->name = g_strdup(name);
-
-		if (alias)
-			dev->alias = g_strdup(alias);
-
-		dev->le = FALSE;
-		dev->class = class;
-		dev->legacy = legacy;
-		dev->name_status = name_status;
-	} else if (dev->rssi == rssi)
 		return;
+	}
 
+	/* New device in the discovery session */
+
+	name = read_stored_data(&adapter->bdaddr, bdaddr, "names");
+
+	if (type == ADDR_TYPE_BREDR) {
+		legacy = pairing_is_legacy(&adapter->bdaddr, bdaddr, data,
+									name);
+
+		if (!name && main_opts.name_resolv &&
+				adapter_has_discov_sessions(adapter))
+			name_known = FALSE;
+		else
+			name_known = TRUE;
+	} else {
+		legacy = FALSE;
+		name_known = TRUE;
+	}
+
+	if (confirm_name)
+		adapter_ops->confirm_name(adapter->dev_id, bdaddr, name_known);
+
+	alias = read_stored_data(&adapter->bdaddr, bdaddr, "aliases");
+
+	dev = found_device_new(bdaddr, type, name, alias, class, legacy,
+							eir_data.flags);
+	free(name);
+	free(alias);
+
+	adapter->found_devices = g_slist_prepend(adapter->found_devices, dev);
+
+done:
 	dev->rssi = rssi;
 
 	adapter->found_devices = g_slist_sort(adapter->found_devices,
 						(GCompareFunc) dev_rssi_cmp);
 
-	g_slist_foreach(services, remove_same_uuid, dev);
-	g_slist_foreach(services, dev_prepend_uuid, dev);
+	g_slist_foreach(eir_data.services, remove_same_uuid, dev);
+	g_slist_foreach(eir_data.services, dev_prepend_uuid, dev);
 
 	adapter_emit_device_found(adapter, dev);
-}
 
-int adapter_remove_found_device(struct btd_adapter *adapter, bdaddr_t *bdaddr)
-{
-	struct remote_dev_info *dev, match;
-
-	memset(&match, 0, sizeof(struct remote_dev_info));
-	bacpy(&match.bdaddr, bdaddr);
-
-	dev = adapter_search_found_devices(adapter, &match);
-	if (!dev)
-		return -1;
-
-	dev->name_status = NAME_NOT_REQUIRED;
-
-	return 0;
+	eir_data_free(&eir_data);
 }
 
 void adapter_mode_changed(struct btd_adapter *adapter, uint8_t scan_mode)
@@ -3400,9 +2866,6 @@ void adapter_mode_changed(struct btd_adapter *adapter, uint8_t scan_mode)
 	gboolean discoverable, pairable;
 
 	DBG("old 0x%02x new 0x%02x", adapter->scan_mode, scan_mode);
-#ifdef __TIZEN_PATCH__
-	gboolean limited;
-#endif
 
 	if (adapter->scan_mode == scan_mode)
 		return;
@@ -3414,17 +2877,11 @@ void adapter_mode_changed(struct btd_adapter *adapter, uint8_t scan_mode)
 		adapter->mode = MODE_OFF;
 		discoverable = FALSE;
 		pairable = FALSE;
-#ifdef __TIZEN_PATCH__
-		limited = FALSE;
-#endif
 		break;
 	case SCAN_PAGE:
 		adapter->mode = MODE_CONNECTABLE;
 		discoverable = FALSE;
 		pairable = adapter->pairable;
-#ifdef __TIZEN_PATCH__
-		limited = FALSE;
-#endif
 		break;
 	case (SCAN_PAGE | SCAN_INQUIRY):
 		adapter->mode = MODE_DISCOVERABLE;
@@ -3467,7 +2924,7 @@ void adapter_mode_changed(struct btd_adapter *adapter, uint8_t scan_mode)
 
 struct agent *adapter_get_agent(struct btd_adapter *adapter)
 {
-	if (!adapter || !adapter->agent)
+	if (!adapter)
 		return NULL;
 
 	return adapter->agent;
@@ -3489,8 +2946,6 @@ void adapter_add_connection(struct btd_adapter *adapter,
 void adapter_remove_connection(struct btd_adapter *adapter,
 						struct btd_device *device)
 {
-	bdaddr_t bdaddr;
-
 	DBG("");
 
 	if (!g_slist_find(adapter->connections, device)) {
@@ -3501,9 +2956,6 @@ void adapter_remove_connection(struct btd_adapter *adapter,
 	device_remove_connection(device, connection);
 
 	adapter->connections = g_slist_remove(adapter->connections, device);
-
-	/* clean pending HCI cmds */
-	device_get_address(device, &bdaddr);
 
 	if (device_is_authenticating(device))
 		device_cancel_authentication(device, TRUE);
@@ -3522,29 +2974,6 @@ gboolean adapter_has_discov_sessions(struct btd_adapter *adapter)
 		return FALSE;
 
 	return TRUE;
-}
-
-void adapter_suspend_discovery(struct btd_adapter *adapter)
-{
-	if (adapter->disc_sessions == NULL ||
-			adapter->state & STATE_SUSPENDED)
-		return;
-
-	DBG("Suspending discovery");
-
-	stop_discovery(adapter, TRUE);
-	adapter->state |= STATE_SUSPENDED;
-}
-
-void adapter_resume_discovery(struct btd_adapter *adapter)
-{
-	if (adapter->disc_sessions == NULL)
-		return;
-
-	DBG("Resuming discovery");
-
-	adapter->state &= ~STATE_SUSPENDED;
-	start_discovery(adapter);
 }
 
 int btd_register_adapter_driver(struct btd_adapter_driver *driver)
@@ -3745,11 +3174,6 @@ void btd_adapter_any_release_path(void)
 	adapter_any_path = NULL;
 }
 
-gboolean adapter_is_pairable(struct btd_adapter *adapter)
-{
-	return adapter->pairable;
-}
-
 gboolean adapter_powering_down(struct btd_adapter *adapter)
 {
 	return adapter->off_requested;
@@ -3758,7 +3182,6 @@ gboolean adapter_powering_down(struct btd_adapter *adapter)
 int btd_adapter_restore_powered(struct btd_adapter *adapter)
 {
 	char mode[14], address[18];
-	gboolean discoverable;
 
 	if (!adapter_ops)
 		return -EINVAL;
@@ -3774,9 +3197,17 @@ int btd_adapter_restore_powered(struct btd_adapter *adapter)
 						g_str_equal(mode, "off"))
 		return 0;
 
-	discoverable = get_mode(&adapter->bdaddr, mode) == MODE_DISCOVERABLE;
-
 	return adapter_ops->set_powered(adapter->dev_id, TRUE);
+}
+
+static gboolean switch_off_timeout(gpointer user_data)
+{
+	struct btd_adapter *adapter = user_data;
+
+	adapter_ops->set_powered(adapter->dev_id, FALSE);
+	adapter->off_timer = 0;
+
+	return FALSE;
 }
 
 int btd_adapter_switch_online(struct btd_adapter *adapter)
@@ -3785,7 +3216,10 @@ int btd_adapter_switch_online(struct btd_adapter *adapter)
 		return -EINVAL;
 
 	if (adapter->up)
-		return 0;
+		return -EALREADY;
+
+	if (adapter->off_timer)
+		off_timer_remove(adapter);
 
 	return adapter_ops->set_powered(adapter->dev_id, TRUE);
 }
@@ -3796,9 +3230,95 @@ int btd_adapter_switch_offline(struct btd_adapter *adapter)
 		return -EINVAL;
 
 	if (!adapter->up)
+		return -EALREADY;
+
+	if (adapter->off_timer)
 		return 0;
 
-	return adapter_ops->set_powered(adapter->dev_id, FALSE);
+	adapter->global_mode = MODE_OFF;
+
+	if (adapter->connections == NULL)
+		return adapter_ops->set_powered(adapter->dev_id, FALSE);
+
+	g_slist_foreach(adapter->connections,
+				(GFunc) device_request_disconnect, NULL);
+
+	adapter->off_timer = g_timeout_add_seconds(OFF_TIMER,
+						switch_off_timeout, adapter);
+
+	return 0;
+}
+
+static gboolean disable_auto(gpointer user_data)
+{
+	struct btd_adapter *adapter = user_data;
+	GSList *l;
+
+	for (l = adapter->devices; l; l = l->next) {
+		struct btd_device *device = l->data;
+
+		device_set_auto_connect(device, FALSE);
+	}
+
+	adapter->auto_timeout_id = 0;
+
+	return FALSE;
+}
+
+static void set_auto_connect(gpointer data, gpointer user_data)
+{
+	struct btd_device *device = data;
+
+	device_set_auto_connect(device, TRUE);
+}
+
+void btd_adapter_enable_auto_connect(struct btd_adapter *adapter)
+{
+	if (!adapter->up)
+		return;
+
+	DBG("Enabling automatic connections");
+
+	if (adapter->auto_timeout_id)
+		return;
+
+	g_slist_foreach(adapter->devices, set_auto_connect, NULL);
+
+	adapter->auto_timeout_id = g_timeout_add_seconds(main_opts.autoto,
+						disable_auto, adapter);
+}
+
+void btd_adapter_register_pin_cb(struct btd_adapter *adapter,
+							btd_adapter_pin_cb_t cb)
+{
+	adapter->pin_callbacks = g_slist_prepend(adapter->pin_callbacks, cb);
+}
+
+void btd_adapter_unregister_pin_cb(struct btd_adapter *adapter,
+							btd_adapter_pin_cb_t cb)
+{
+	adapter->pin_callbacks = g_slist_remove(adapter->pin_callbacks, cb);
+}
+
+ssize_t btd_adapter_get_pin(struct btd_adapter *adapter, struct btd_device *dev,
+								char *pin_buf)
+{
+	GSList *l;
+	btd_adapter_pin_cb_t cb;
+	bdaddr_t sba, dba;
+	ssize_t ret;
+
+	for (l = adapter->pin_callbacks; l != NULL; l = g_slist_next(l)) {
+		cb = l->data;
+		ret = cb(adapter, dev, pin_buf);
+		if (ret > 0)
+			return ret;
+	}
+
+	adapter_get_address(adapter, &sba);
+	device_get_address(dev, &dba, NULL);
+
+	return read_pin_code(&sba, &dba, pin_buf);
 }
 
 int btd_register_adapter_ops(struct btd_adapter_ops *ops, gboolean priority)
@@ -3896,9 +3416,10 @@ int btd_adapter_remove_bonding(struct btd_adapter *adapter, bdaddr_t *bdaddr)
 }
 
 int btd_adapter_pincode_reply(struct btd_adapter *adapter, bdaddr_t *bdaddr,
-							const char *pin)
+					const char *pin, size_t pin_len)
 {
-	return adapter_ops->pincode_reply(adapter->dev_id, bdaddr, pin);
+	return adapter_ops->pincode_reply(adapter->dev_id, bdaddr, pin,
+								pin_len);
 }
 
 int btd_adapter_confirm_reply(struct btd_adapter *adapter, bdaddr_t *bdaddr,
@@ -3911,14 +3432,6 @@ int btd_adapter_passkey_reply(struct btd_adapter *adapter, bdaddr_t *bdaddr,
 							uint32_t passkey)
 {
 	return adapter_ops->passkey_reply(adapter->dev_id, bdaddr, passkey);
-}
-
-void btd_adapter_update_local_ext_features(struct btd_adapter *adapter,
-						const uint8_t *features)
-{
-	struct hci_dev *dev = &adapter->dev;
-
-	memcpy(dev->extfeatures, features, 8);
 }
 
 int btd_adapter_encrypt_link(struct btd_adapter *adapter, bdaddr_t *bdaddr,
@@ -3936,10 +3449,50 @@ int btd_adapter_set_did(struct btd_adapter *adapter, uint16_t vendor,
 int adapter_create_bonding(struct btd_adapter *adapter, bdaddr_t *bdaddr,
 								uint8_t io_cap)
 {
+	suspend_discovery(adapter);
 	return adapter_ops->create_bonding(adapter->dev_id, bdaddr, io_cap);
 }
 
 int adapter_cancel_bonding(struct btd_adapter *adapter, bdaddr_t *bdaddr)
 {
 	return adapter_ops->cancel_bonding(adapter->dev_id, bdaddr);
+}
+
+void adapter_bonding_complete(struct btd_adapter *adapter, bdaddr_t *bdaddr,
+								uint8_t status)
+{
+	struct btd_device *device;
+	char addr[18];
+
+	ba2str(bdaddr, addr);
+	if (status == 0)
+		device = adapter_get_device(connection, adapter, addr);
+	else
+		device = adapter_find_device(adapter, addr);
+
+	if (device != NULL)
+		device_bonding_complete(device, status);
+
+	if (adapter->discov_suspended) {
+		adapter->discov_suspended = FALSE;
+		adapter_ops->start_discovery(adapter->dev_id);
+	}
+}
+
+int btd_adapter_read_local_oob_data(struct btd_adapter *adapter)
+{
+	return adapter_ops->read_local_oob_data(adapter->dev_id);
+}
+
+int btd_adapter_add_remote_oob_data(struct btd_adapter *adapter,
+			bdaddr_t *bdaddr, uint8_t *hash, uint8_t *randomizer)
+{
+	return adapter_ops->add_remote_oob_data(adapter->dev_id, bdaddr, hash,
+								randomizer);
+}
+
+int btd_adapter_remove_remote_oob_data(struct btd_adapter *adapter,
+							bdaddr_t *bdaddr)
+{
+	return adapter_ops->remove_remote_oob_data(adapter->dev_id, bdaddr);
 }

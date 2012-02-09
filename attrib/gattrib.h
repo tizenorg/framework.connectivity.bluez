@@ -29,6 +29,7 @@ extern "C" {
 #endif
 
 #define GATTRIB_ALL_EVENTS 0xFF
+#define GATTRIB_ALL_REQS 0xFE
 
 struct _GAttrib;
 typedef struct _GAttrib GAttrib;
@@ -67,6 +68,9 @@ guint g_attrib_register(GAttrib *attrib, guint8 opcode,
 					GDestroyNotify notify);
 
 gboolean g_attrib_is_encrypted(GAttrib *attrib);
+
+uint8_t *g_attrib_get_buffer(GAttrib *attrib, int *len);
+gboolean g_attrib_set_mtu(GAttrib *attrib, int mtu);
 
 gboolean g_attrib_unregister(GAttrib *attrib, guint id);
 gboolean g_attrib_unregister_all(GAttrib *attrib);

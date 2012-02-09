@@ -65,7 +65,7 @@ static const int sdpServerVnumEntries = 1;
  * seconds. Used for updating the service db state
  * attribute of the service record of the SDP server
  */
-uint32_t sdp_get_time()
+uint32_t sdp_get_time(void)
 {
 	/*
 	 * To handle failure in gettimeofday, so an old
@@ -86,90 +86,13 @@ uint32_t sdp_get_time()
  * Set the SDP server DB. Simply a timestamp which is the marker
  * when the DB was modified.
  */
-void update_db_timestamp(void)
+static void update_db_timestamp(void)
 {
 	uint32_t dbts = sdp_get_time();
 	sdp_data_t *d = sdp_data_alloc(SDP_UINT32, &dbts);
 	sdp_attr_replace(server, SDP_ATTR_SVCDB_STATE, d);
 }
 
-#ifdef __TIZEN_PATCH__
-static void update_adapter_svclass_list(struct btd_adapter *adapter)
-{
-	sdp_list_t *list = adapter_get_services(adapter);
-	uint8_t val = 0;
-
-	for (; list; list = list->next) {
-		sdp_record_t *rec = (sdp_record_t *) list->data;
-
-		if (rec->svclass.type != SDP_UUID16)
-			continue;
-
-		switch (rec->svclass.value.uuid16) {
-		case DIALUP_NET_SVCLASS_ID:
-		case CIP_SVCLASS_ID:
-			val |= 0x42;	/* Telephony & Networking */
-			break;
-		case IRMC_SYNC_SVCLASS_ID:
-		case OBEX_OBJPUSH_SVCLASS_ID:
-		case OBEX_FILETRANS_SVCLASS_ID:
-		case IRMC_SYNC_CMD_SVCLASS_ID:
-		case PBAP_PSE_SVCLASS_ID:
-			val |= 0x10;	/* Object Transfer */
-			break;
-		case HEADSET_SVCLASS_ID:
-		case HANDSFREE_SVCLASS_ID:
-			val |= 0x20;	/* Audio */
-			break;
-		case CORDLESS_TELEPHONY_SVCLASS_ID:
-		case INTERCOM_SVCLASS_ID:
-		case FAX_SVCLASS_ID:
-		case SAP_SVCLASS_ID:
-		/*
-		 * Setting the telephony bit for the handsfree audio gateway
-		 * role is not required by the HFP specification, but the
-		 * Nokia 616 carkit is just plain broken! It will refuse
-		 * pairing without this bit set.
-		 */
-		case HANDSFREE_AGW_SVCLASS_ID:
-			val |= 0x40;	/* Telephony */
-			break;
-		case AUDIO_SOURCE_SVCLASS_ID:
-		case VIDEO_SOURCE_SVCLASS_ID:
-			val |= 0x08;	/* Capturing */
-			break;
-		case AUDIO_SINK_SVCLASS_ID:
-		case VIDEO_SINK_SVCLASS_ID:
-			val |= 0x04;	/* Rendering */
-			break;
-		case PANU_SVCLASS_ID:
-		case NAP_SVCLASS_ID:
-		case GN_SVCLASS_ID:
-			val |= 0x02;	/* Networking */
-			break;
-		}
-	}
-
-	SDPDBG("Service classes 0x%02x", val);
-
-//	manager_update_svc(adapter, val);
-}
-void update_svclass_list(const bdaddr_t *src)
-{
-	GSList *adapters = manager_get_adapters();
-
-	for (; adapters; adapters = adapters->next) {
-		struct btd_adapter *adapter = adapters->data;
-		bdaddr_t bdaddr;
-
-		adapter_get_address(adapter, &bdaddr);
-
-		if (bacmp(src, BDADDR_ANY) == 0 || bacmp(src, &bdaddr) == 0)
-			update_adapter_svclass_list(adapter);
-	}
-
-}
-#endif
 void register_public_browse_group(void)
 {
 	sdp_list_t *browselist;
@@ -488,7 +411,7 @@ int service_register_req(sdp_req_t *req, sdp_buf_t *rsp)
 		bufsize -= sizeof(bdaddr_t);
 	}
 
-	// save image of PDU: we need it when clients request this attribute
+	/* save image of PDU: we need it when clients request this attribute */
 	rec = extract_pdu_server(&req->device, p, bufsize, 0xffffffff, &scanned);
 	if (!rec)
 		goto invalid;
@@ -592,7 +515,6 @@ int service_remove_req(sdp_req_t *req, sdp_buf_t *rsp)
 	int status = 0;
 
 	/* extract service record handle */
-	p += sizeof(uint32_t);
 
 	rec = sdp_record_find(handle);
 	if (rec) {

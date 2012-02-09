@@ -38,7 +38,7 @@
 #include <gdbus.h>
 
 #include "log.h"
-#include "glib-helper.h"
+#include "glib-compat.h"
 #include "btio.h"
 #include "dbus-common.h"
 #include "adapter.h"
@@ -85,10 +85,8 @@ static GSList *peers = NULL;
 
 static struct network_peer *find_peer(GSList *list, const char *path)
 {
-	GSList *l;
-
-	for (l = list; l; l = l->next) {
-		struct network_peer *peer = l->data;
+	for (; list; list = list->next) {
+		struct network_peer *peer = list->data;
 
 		if (!strcmp(peer->path, path))
 			return peer;
@@ -99,10 +97,8 @@ static struct network_peer *find_peer(GSList *list, const char *path)
 
 static struct network_conn *find_connection(GSList *list, uint16_t id)
 {
-	GSList *l;
-
-	for (l = list; l; l = l->next) {
-		struct network_conn *nc = l->data;
+	for (; list; list = list->next) {
+		struct network_conn *nc = list->data;
 
 		if (nc->id == id)
 			return nc;
@@ -119,11 +115,6 @@ static gboolean bnep_watchdog_cb(GIOChannel *chan, GIOCondition cond,
 	if (connection != NULL) {
 		gboolean connected = FALSE;
 		const char *property = "";
-#ifdef __TIZEN_PATCH__
-		char address[20] = {0};
-		const gchar* paddr = address;
-		ba2str(&nc->peer->dst, address);
-#endif
 		emit_property_changed(connection, nc->peer->path,
 					NETWORK_PEER_INTERFACE, "Connected",
 					DBUS_TYPE_BOOLEAN, &connected);
@@ -133,11 +124,6 @@ static gboolean bnep_watchdog_cb(GIOChannel *chan, GIOCondition cond,
 		emit_property_changed(connection, nc->peer->path,
 					NETWORK_PEER_INTERFACE, "UUID",
 					DBUS_TYPE_STRING, &property);
-#ifdef __TIZEN_PATCH__
-		emit_property_changed(connection, nc->peer->path,
-					NETWORK_PEER_INTERFACE, "Address",
-					DBUS_TYPE_STRING, &paddr);
-#endif
 		device_remove_disconnect_watch(nc->peer->device, nc->dc_id);
 		nc->dc_id = 0;
 		if (nc->watch) {
@@ -209,10 +195,6 @@ static gboolean bnep_setup_cb(GIOChannel *chan, GIOCondition cond,
 	int sk;
 	const char *pdev, *uuid;
 	gboolean connected;
-#ifdef __TIZEN_PATCH__
-	char address[20] = {0};
-	const gchar* paddr = address;
-#endif
 
 	if (cond & G_IO_NVAL)
 		return FALSE;
@@ -278,9 +260,6 @@ static gboolean bnep_setup_cb(GIOChannel *chan, GIOCondition cond,
 			DBUS_TYPE_INVALID);
 
 	connected = TRUE;
-#ifdef __TIZEN_PATCH__
-	ba2str(&nc->peer->dst, address);
-#endif
 	emit_property_changed(connection, nc->peer->path,
 				NETWORK_PEER_INTERFACE, "Connected",
 				DBUS_TYPE_BOOLEAN, &connected);
@@ -290,11 +269,7 @@ static gboolean bnep_setup_cb(GIOChannel *chan, GIOCondition cond,
 	emit_property_changed(connection, nc->peer->path,
 				NETWORK_PEER_INTERFACE, "UUID",
 				DBUS_TYPE_STRING, &uuid);
-#ifdef __TIZEN_PATCH__
-	emit_property_changed(connection, nc->peer->path,
-				NETWORK_PEER_INTERFACE, "Address",
-				DBUS_TYPE_STRING, &paddr);
-#endif
+
 	nc->state = CONNECTED;
 	nc->dc_id = device_add_disconnect_watch(nc->peer->device, disconnect_cb,
 						nc, NULL);
@@ -502,8 +477,10 @@ static DBusMessage *connection_get_properties(DBusConnection *conn,
 	return reply;
 }
 
-static void connection_free(struct network_conn *nc)
+static void connection_free(void *data)
 {
+	struct network_conn *nc = data;
+
 	if (nc->dc_id)
 		device_remove_disconnect_watch(nc->peer->device, nc->dc_id);
 
@@ -515,8 +492,7 @@ static void connection_free(struct network_conn *nc)
 
 static void peer_free(struct network_peer *peer)
 {
-	g_slist_foreach(peer->connections, (GFunc) connection_free, NULL);
-	g_slist_free(peer->connections);
+	g_slist_free_full(peer->connections, connection_free);
 	btd_device_unref(peer->device);
 	g_free(peer->path);
 	g_free(peer);

@@ -40,7 +40,6 @@ extern "C" {
 #define SDP_RSP_BUFFER_SIZE	65535
 #define SDP_PDU_CHUNK_SIZE	1024
 
-#define BLUEZ_SDP_DEBUG(format, args...)    printf("%s():%d " format, /*__FILE__,*/ __FUNCTION__, __LINE__, ##args) /*__SYAM__*/
 /*
  * All definitions are based on Bluetooth Assigned Numbers
  * of the Bluetooth Specification

@@ -149,7 +149,7 @@ static inline int write_key_value(int fd, const char *key, const char *value)
 	sprintf(str, "%s %s\n", key, value);
 
 	if (write(fd, str, size) < 0)
-		err = errno;
+		err = -errno;
 
 	free(str);
 
@@ -182,7 +182,8 @@ static int write_key(const char *pathname, const char *key, const char *value, i
 {
 	struct stat st;
 	char *map, *off, *end, *str;
-	off_t size, pos; size_t base;
+	off_t size;
+	size_t base;
 	int fd, len, err = 0;
 
 	fd = open(pathname, O_RDWR);
@@ -190,12 +191,12 @@ static int write_key(const char *pathname, const char *key, const char *value, i
 		return -errno;
 
 	if (flock(fd, LOCK_EX) < 0) {
-		err = errno;
+		err = -errno;
 		goto close;
 	}
 
 	if (fstat(fd, &st) < 0) {
-		err = errno;
+		err = -errno;
 		goto unlock;
 	}
 
@@ -203,7 +204,7 @@ static int write_key(const char *pathname, const char *key, const char *value, i
 
 	if (!size) {
 		if (value) {
-			pos = lseek(fd, size, SEEK_SET);
+			lseek(fd, size, SEEK_SET);
 			err = write_key_value(fd, key, value);
 		}
 		goto unlock;
@@ -212,7 +213,7 @@ static int write_key(const char *pathname, const char *key, const char *value, i
 	map = mmap(NULL, size, PROT_READ | PROT_WRITE,
 					MAP_PRIVATE | MAP_LOCKED, fd, 0);
 	if (!map || map == MAP_FAILED) {
-		err = errno;
+		err = -errno;
 		goto unlock;
 	}
 
@@ -221,7 +222,7 @@ static int write_key(const char *pathname, const char *key, const char *value, i
 	if (!off) {
 		if (value) {
 			munmap(map, size);
-			pos = lseek(fd, size, SEEK_SET);
+			lseek(fd, size, SEEK_SET);
 			err = write_key_value(fd, key, value);
 		}
 		goto unlock;
@@ -231,7 +232,7 @@ static int write_key(const char *pathname, const char *key, const char *value, i
 
 	end = strnpbrk(off, size, "\r\n");
 	if (!end) {
-		err = EILSEQ;
+		err = -EILSEQ;
 		goto unmap;
 	}
 
@@ -246,10 +247,10 @@ static int write_key(const char *pathname, const char *key, const char *value, i
 	if (!len) {
 		munmap(map, size);
 		if (ftruncate(fd, base) < 0) {
-			err = errno;
+			err = -errno;
 			goto unlock;
 		}
-		pos = lseek(fd, base, SEEK_SET);
+		lseek(fd, base, SEEK_SET);
 		if (value)
 			err = write_key_value(fd, key, value);
 
@@ -257,13 +258,13 @@ static int write_key(const char *pathname, const char *key, const char *value, i
 	}
 
 	if (len < 0 || len > size) {
-		err = EILSEQ;
+		err = -EILSEQ;
 		goto unmap;
 	}
 
 	str = malloc(len);
 	if (!str) {
-		err = errno;
+		err = -errno;
 		goto unmap;
 	}
 
@@ -271,16 +272,16 @@ static int write_key(const char *pathname, const char *key, const char *value, i
 
 	munmap(map, size);
 	if (ftruncate(fd, base) < 0) {
-		err = errno;
+		err = -errno;
 		free(str);
 		goto unlock;
 	}
-	pos = lseek(fd, base, SEEK_SET);
+	lseek(fd, base, SEEK_SET);
 	if (value)
 		err = write_key_value(fd, key, value);
 
 	if (write(fd, str, len) < 0)
-		err = errno;
+		err = -errno;
 
 	free(str);
 
@@ -296,9 +297,9 @@ close:
 	fdatasync(fd);
 
 	close(fd);
-	errno = err;
+	errno = -err;
 
-	return -err;
+	return err;
 }
 
 static char *read_key(const char *pathname, const char *key, int icase)
@@ -313,12 +314,12 @@ static char *read_key(const char *pathname, const char *key, int icase)
 		return NULL;
 
 	if (flock(fd, LOCK_SH) < 0) {
-		err = errno;
+		err = -errno;
 		goto close;
 	}
 
 	if (fstat(fd, &st) < 0) {
-		err = errno;
+		err = -errno;
 		goto unlock;
 	}
 
@@ -326,26 +327,26 @@ static char *read_key(const char *pathname, const char *key, int icase)
 
 	map = mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0);
 	if (!map || map == MAP_FAILED) {
-		err = errno;
+		err = -errno;
 		goto unlock;
 	}
 
 	len = strlen(key);
 	off = find_key(map, size, key, len, icase);
 	if (!off) {
-		err = EILSEQ;
+		err = -EILSEQ;
 		goto unmap;
 	}
 
 	end = strnpbrk(off, size - (map - off), "\r\n");
 	if (!end) {
-		err = EILSEQ;
+		err = -EILSEQ;
 		goto unmap;
 	}
 
 	str = malloc(end - off - len);
 	if (!str) {
-		err = EILSEQ;
+		err = -EILSEQ;
 		goto unmap;
 	}
 
@@ -360,7 +361,7 @@ unlock:
 
 close:
 	close(fd);
-	errno = err;
+	errno = -err;
 
 	return str;
 }
@@ -407,12 +408,12 @@ int textfile_foreach(const char *pathname, textfile_cb func, void *data)
 		return -errno;
 
 	if (flock(fd, LOCK_SH) < 0) {
-		err = errno;
+		err = -errno;
 		goto close;
 	}
 
 	if (fstat(fd, &st) < 0) {
-		err = errno;
+		err = -errno;
 		goto unlock;
 	}
 
@@ -420,7 +421,7 @@ int textfile_foreach(const char *pathname, textfile_cb func, void *data)
 
 	map = mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0);
 	if (!map || map == MAP_FAILED) {
-		err = errno;
+		err = -errno;
 		goto unlock;
 	}
 
@@ -429,7 +430,7 @@ int textfile_foreach(const char *pathname, textfile_cb func, void *data)
 	while (size - (off - map) > 0) {
 		end = strnpbrk(off, size - (off - map), " ");
 		if (!end) {
-			err = EILSEQ;
+			err = -EILSEQ;
 			break;
 		}
 
@@ -437,7 +438,7 @@ int textfile_foreach(const char *pathname, textfile_cb func, void *data)
 
 		key = malloc(len + 1);
 		if (!key) {
-			err = errno;
+			err = -errno;
 			break;
 		}
 
@@ -447,14 +448,14 @@ int textfile_foreach(const char *pathname, textfile_cb func, void *data)
 		off = end + 1;
 
 		if (size - (off - map) < 0) {
-			err = EILSEQ;
+			err = -EILSEQ;
 			free(key);
 			break;
 		}
 
 		end = strnpbrk(off, size - (off - map), "\r\n");
 		if (!end) {
-			err = EILSEQ;
+			err = -EILSEQ;
 			free(key);
 			break;
 		}
@@ -463,7 +464,7 @@ int textfile_foreach(const char *pathname, textfile_cb func, void *data)
 
 		value = malloc(len + 1);
 		if (!value) {
-			err = errno;
+			err = -errno;
 			free(key);
 			break;
 		}
@@ -486,7 +487,7 @@ unlock:
 
 close:
 	close(fd);
-	errno = err;
+	errno = -err;
 
 	return 0;
 }

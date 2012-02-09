@@ -4,6 +4,7 @@
  *
  *  Copyright (C) 2006-2007  Nokia Corporation
  *  Copyright (C) 2004-2009  Marcel Holtmann <marcel@holtmann.org>
+ *  Copyright (C) 2011  BMW Car IT GmbH. All rights reserved.
  *
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -196,7 +197,7 @@ static void headset_setconf_cb(struct media_endpoint *endpoint, void *ret,
 	if (ret != NULL)
 		return;
 
-	headset_set_state(dev, HEADSET_STATE_DISCONNECTED);
+	headset_shutdown(dev);
 }
 
 static void clear_configuration(struct media_endpoint *endpoint)
@@ -481,12 +482,12 @@ static size_t get_capabilities(struct a2dp_sep *sep, uint8_t **capabilities,
 }
 
 struct a2dp_config_data {
-	guint setup_id;
+	struct a2dp_setup *setup;
 	a2dp_endpoint_config_t cb;
 };
 
 struct a2dp_select_data {
-	guint setup_id;
+	struct a2dp_setup *setup;
 	a2dp_endpoint_select_t cb;
 };
 
@@ -495,18 +496,18 @@ static void select_cb(struct media_endpoint *endpoint, void *ret, int size,
 {
 	struct a2dp_select_data *data = user_data;
 
-	data->cb(endpoint->sep, data->setup_id, ret, size);
+	data->cb(data->setup, ret, size);
 }
 
 static int select_config(struct a2dp_sep *sep, uint8_t *capabilities,
-				size_t length, guint setup_id,
+				size_t length, struct a2dp_setup *setup,
 				a2dp_endpoint_select_t cb, void *user_data)
 {
 	struct media_endpoint *endpoint = user_data;
 	struct a2dp_select_data *data;
 
 	data = g_new0(struct a2dp_select_data, 1);
-	data->setup_id = setup_id;
+	data->setup = setup;
 	data->cb = cb;
 
 	if (select_configuration(endpoint, capabilities, length,
@@ -522,19 +523,20 @@ static void config_cb(struct media_endpoint *endpoint, void *ret, int size,
 {
 	struct a2dp_config_data *data = user_data;
 
-	data->cb(endpoint->sep, data->setup_id, ret ? TRUE : FALSE);
+	data->cb(data->setup, ret ? TRUE : FALSE);
 }
 
 static int set_config(struct a2dp_sep *sep, struct audio_device *dev,
 				uint8_t *configuration, size_t length,
-				guint setup_id, a2dp_endpoint_config_t cb,
+				struct a2dp_setup *setup,
+				a2dp_endpoint_config_t cb,
 				void *user_data)
 {
 	struct media_endpoint *endpoint = user_data;
 	struct a2dp_config_data *data;
 
 	data = g_new0(struct a2dp_config_data, 1);
-	data->setup_id = setup_id;
+	data->setup = setup;
 	data->cb = cb;
 
 	if (set_configuration(endpoint, dev, configuration, length,
@@ -659,7 +661,7 @@ static struct media_endpoint *media_endpoint_create(struct media_adapter *adapte
 			goto failed;
 	} else if (strcasecmp(uuid, A2DP_SINK_UUID) == 0) {
 		endpoint->sep = a2dp_add_sep(&adapter->src,
-					AVDTP_SEP_TYPE_SOURCE, codec,
+					AVDTP_SEP_TYPE_SINK, codec,
 					delay_reporting, &a2dp_endpoint,
 					endpoint, a2dp_destroy_endpoint, err);
 		if (endpoint->sep == NULL)
@@ -1304,6 +1306,7 @@ static gboolean set_status(struct media_player *mp, DBusMessageIter *iter)
 static gboolean set_position(struct media_player *mp, DBusMessageIter *iter)
 {
 	uint32_t value;
+	struct metadata_value *duration;
 
 	if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_UINT32)
 			return FALSE;
@@ -1317,7 +1320,20 @@ static gboolean set_position(struct media_player *mp, DBusMessageIter *iter)
 	if (!mp->position) {
 		avrcp_player_event(mp->player,
 					AVRCP_EVENT_TRACK_REACHED_START, NULL);
+		return TRUE;
 	}
+
+	duration = g_hash_table_lookup(mp->track, GUINT_TO_POINTER(
+					AVRCP_MEDIA_ATTRIBUTE_DURATION));
+
+	/*
+	 * If position is the maximum value allowed or greater than track's
+	 * duration, we send a track-reached-end event.
+	 */
+	if (mp->position == UINT32_MAX ||
+			(duration && mp->position >= duration->value.num))
+		avrcp_player_event(mp->player, AVRCP_EVENT_TRACK_REACHED_END,
+									NULL);
 
 	return TRUE;
 }

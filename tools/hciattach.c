@@ -67,6 +67,8 @@ struct uart_t {
 	char *bdaddr;
 	int  (*init) (int fd, struct uart_t *u, struct termios *ti);
 	int  (*post) (int fd, struct uart_t *u, struct termios *ti);
+
+/* __SAMSUNG_PATCH__ */
 #ifdef __TI_PATCH__
 	uint16_t device_param;
 #endif
@@ -310,7 +312,7 @@ static int digi(int fd, struct uart_t *u, struct termios *ti)
 
 static int texas(int fd, struct uart_t *u, struct termios *ti)
 {
-	return texas_init(fd, ti);
+	return texas_init(fd, &u->speed, ti);
 }
 
 static int texas2(int fd, struct uart_t *u, struct termios *ti)
@@ -365,12 +367,12 @@ static int bcsp_max_retries = 10;
 static void bcsp_tshy_sig_alarm(int sig)
 {
 	unsigned char bcsp_sync_pkt[10] = {0xc0,0x00,0x41,0x00,0xbe,0xda,0xdc,0xed,0xed,0xc0};
-	int len;
 	static int retries = 0;
 
 	if (retries < bcsp_max_retries) {
 		retries++;
-		len = write(serial_fd, &bcsp_sync_pkt, 10);
+		if (write(serial_fd, &bcsp_sync_pkt, 10) < 0)
+			return;
 		alarm(1);
 		return;
 	}
@@ -383,12 +385,12 @@ static void bcsp_tshy_sig_alarm(int sig)
 static void bcsp_tconf_sig_alarm(int sig)
 {
 	unsigned char bcsp_conf_pkt[10] = {0xc0,0x00,0x41,0x00,0xbe,0xad,0xef,0xac,0xed,0xc0};
-	int len;
 	static int retries = 0;
 
 	if (retries < bcsp_max_retries){
 		retries++;
-		len = write(serial_fd, &bcsp_conf_pkt, 10);
+		if (write(serial_fd, &bcsp_conf_pkt, 10) < 0)
+			return;
 		alarm(1);
 		return;
 	}
@@ -465,7 +467,8 @@ static int bcsp(int fd, struct uart_t *u, struct termios *ti)
 		}
 
 		if (!memcmp(bcspp, bcspsync, 4)) {
-			len = write(fd, &bcsp_sync_resp_pkt,10);
+			if (write(fd, &bcsp_sync_resp_pkt,10) < 0)
+				return -1;
 		} else if (!memcmp(bcspp, bcspsyncresp, 4))
 			break;
 	}
@@ -514,6 +517,11 @@ static int bcsp(int fd, struct uart_t *u, struct termios *ti)
 			len = write(fd, &bcsp_conf_resp_pkt, 10);
 		else if (!memcmp(bcspp, bcspconfresp,  4))
 			break;
+		else
+			continue;
+
+		if (len < 0)
+			return -errno;
 	}
 
 	/* State = garrulous */
@@ -788,12 +796,12 @@ static int swave(int fd, struct uart_t *u, struct termios *ti)
 	nanosleep(&tm, NULL);
 
 	// now the uart baud rate on the silicon wave module is set and effective.
-	// change our own baud rate as well. Then there is a reset event comming in
+	// change our own baud rate as well. Then there is a reset event coming in
  	// on the *new* baud rate. This is *undocumented*! The packet looks like this:
 	// 04 FF 01 0B (which would make that a confirmation of 0x0B = "Param
 	// subcommand class". So: change to new baud rate, read with timeout, parse
 	// data, error handling. BTW: all param access in Silicon Wave is done this way.
-	// Maybe this code would belong in a seperate file, or at least code reuse...
+	// Maybe this code would belong in a separate file, or at least code reuse...
 
 	return 0;
 }
@@ -1000,6 +1008,8 @@ static int bcm2035(int fd, struct uart_t *u, struct termios *ti)
 	/* Set the baud rate */
 	memset(cmd, 0, sizeof(cmd));
 	memset(resp, 0, sizeof(resp));
+
+/* __SAMSUNG_PATCH__ */
 #ifndef __BROADCOM_PATCH__
 	cmd[0] = HCI_COMMAND_PKT;
 	cmd[1] = 0x18;
@@ -1107,13 +1117,17 @@ struct uart_t uart[] = {
 	{ "swave",      0x0000, 0x0000, HCI_UART_H4,   115200, 115200,
 				FLOW_CTL, DISABLE_PM, NULL, swave    },
 
+/* __SAMSUNG_PATCH__ */
 #ifdef __TI_PATCH__
 	/* Texas Instruments BRF63xx modules */
 	{ "texas",      0x0000, 0x0000, HCI_UART_LL,   115200,3000000, FLOW_CTL, NULL, texas,    NULL/*texas_continue_script*/,    BRF_DEEP_SLEEP_OPCODE},
 #else
 	/* Texas Instruments Bluelink (BRF) modules */
-	{ "texas",      0x0000, 0x0000, HCI_UART_LL,   115200, 115200, FLOW_CTL, NULL, texas,    texas2 },
-	{ "texasalt",   0x0000, 0x0000, HCI_UART_LL,   115200, 115200, FLOW_CTL, NULL, texasalt, NULL   },
+	{ "texas",      0x0000, 0x0000, HCI_UART_LL,   115200, 115200,
+				FLOW_CTL, DISABLE_PM, NULL, texas,    texas2 },
+
+	{ "texasalt",   0x0000, 0x0000, HCI_UART_LL,   115200, 115200,
+				FLOW_CTL, DISABLE_PM, NULL, texasalt, NULL   },
 #endif
 
 	/* ST Microelectronics minikits based on STLC2410/STLC2415 */
@@ -1213,6 +1227,7 @@ static int init_uart(char *dev, struct uart_t *u, int send_break, int raw)
 	int fd, i;
 	unsigned long flags = 0;
 
+/* __SAMSUNG_PATCH__ */
 #if defined(__TI_PATCH__) || defined(__BROADCOM_PATCH__)
 	int power;
 #endif
@@ -1234,6 +1249,7 @@ static int init_uart(char *dev, struct uart_t *u, int send_break, int raw)
 
 	cfmakeraw(&ti);
 
+/* __SAMSUNG_PATCH__ */
 #ifndef __BROADCOM_PATCH__
 	ti.c_cflag |= CLOCAL;
 	if (u->flags & FLOW_CTL)
@@ -1259,6 +1275,8 @@ static int init_uart(char *dev, struct uart_t *u, int send_break, int raw)
 		tcsendbreak(fd, 0);
 		usleep(500000);
 	}
+
+/* __SAMSUNG_PATCH__ */
 #if defined(__TI_PATCH__) || defined(__BROADCOM_PATCH__)
 	/* Power up the BRF chip */
 	power = 1;
@@ -1306,6 +1324,8 @@ static void usage(void)
 {
 	printf("hciattach - HCI UART driver initialization utility\n");
 	printf("Usage:\n");
+
+/* __SAMSUNG_PATCH__ */
 #ifdef __TI_PATCH__
 	printf("\thciattach [-n] [-p] [-b] [-g device_param] [-r] [-f] [-t timeout] [-s initial_speed] <tty> <type | id> [speed] [flow|noflow] [bdaddr]\n");
 #else
@@ -1327,6 +1347,7 @@ int main(int argc, char *argv[])
 	sigset_t sigs;
 	char dev[PATH_MAX];
 
+/* __SAMSUNG_PATCH__ */
 #if defined(__TI_PATCH__) || defined(__BROADCOM_PATCH__)
 	int power;
 #endif
@@ -1341,7 +1362,7 @@ int main(int argc, char *argv[])
 #ifdef __TI_PATCH__
 	while ((opt=getopt(argc, argv, "bnprft:g:s:l")) != EOF)
 #else
-	while ((opt=getopt(argc, argv, "bnpt:s:l")) != EOF)
+	while ((opt=getopt(argc, argv, "bnpt:s:lr")) != EOF)
 #endif
 	{
 		switch(opt) {
@@ -1361,6 +1382,7 @@ int main(int argc, char *argv[])
 			to = atoi(optarg);
 			break;
 
+/* __SAMSUNG_PATCH__ */
 #ifdef __TI_PATCH__
 		case 'g':
 			device_param = (uint16_t)strtol(optarg, NULL, 16);
@@ -1396,6 +1418,7 @@ int main(int argc, char *argv[])
 	}
 
 	n = argc - optind;
+/* __SAMSUNG_PATCH__ */
 #ifdef __TI_PATCH__
 	if (!reset_device || (reset_device && n < 1))
 #endif
@@ -1456,6 +1479,7 @@ int main(int argc, char *argv[])
 			break;
 		}
 	}
+/* __SAMSUNG_PATCH__ */
 #ifdef __TI_PATCH__
 	if (reset_device)
 	{
@@ -1558,6 +1582,7 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
+/* __SAMSUNG_PATCH__ */
 #if defined(__TI_PATCH__) || defined(__BROADCOM_PATCH__)
 	/* Power down the BRF or BCMchip */
 	power = 0;

@@ -43,6 +43,7 @@
 #define GATT_SERVER_CHARAC_CFG_UUID	0x2903
 #define GATT_CHARAC_FMT_UUID		0x2904
 #define GATT_CHARAC_AGREG_FMT_UUID	0x2905
+#define GATT_CHARAC_VALID_RANGE_UUID	0x2906
 
 /* Attribute Protocol Opcodes */
 #define ATT_OP_ERROR			0x01
@@ -79,10 +80,10 @@
 #define ATT_ECODE_READ_NOT_PERM			0x02
 #define ATT_ECODE_WRITE_NOT_PERM		0x03
 #define ATT_ECODE_INVALID_PDU			0x04
-#define ATT_ECODE_INSUFF_AUTHEN			0x05
+#define ATT_ECODE_AUTHENTICATION		0x05
 #define ATT_ECODE_REQ_NOT_SUPP			0x06
 #define ATT_ECODE_INVALID_OFFSET		0x07
-#define ATT_ECODE_INSUFF_AUTHO			0x08
+#define ATT_ECODE_AUTHORIZATION			0x08
 #define ATT_ECODE_PREP_QUEUE_FULL		0x09
 #define ATT_ECODE_ATTR_NOT_FOUND		0x0A
 #define ATT_ECODE_ATTR_NOT_LONG			0x0B
@@ -105,10 +106,16 @@
 #define ATT_CHAR_PROPER_AUTH			0x40
 #define ATT_CHAR_PROPER_EXT_PROPER		0x80
 
+/* Client Characteristic Configuration bit field */
+#define ATT_CLIENT_CHAR_CONF_NOTIFICATION	0x0001
+#define ATT_CLIENT_CHAR_CONF_INDICATION		0x0002
 
 #define ATT_MAX_MTU				256
 #define ATT_DEFAULT_L2CAP_MTU			48
 #define ATT_DEFAULT_LE_MTU			23
+
+#define ATT_CID					4
+#define ATT_PSM					31
 
 /* Requirements for read/write operations */
 enum {
@@ -127,7 +134,7 @@ struct attribute {
 	uint8_t (*write_cb)(struct attribute *a, gpointer user_data);
 	gpointer cb_user_data;
 	int len;
-	uint8_t data[0];
+	uint8_t *data;
 };
 
 struct att_data_list {
@@ -295,9 +302,12 @@ uint16_t enc_find_info_resp(uint8_t format, struct att_data_list *list,
 							uint8_t *pdu, int len);
 struct att_data_list *dec_find_info_resp(const uint8_t *pdu, int len,
 							uint8_t *format);
-uint16_t enc_notification(struct attribute *a, uint8_t *pdu, int len);
-uint16_t enc_indication(struct attribute *a, uint8_t *pdu, int len);
-struct attribute *dec_indication(const uint8_t *pdu, int len);
+uint16_t enc_notification(uint16_t handle, uint8_t *value, int vlen,
+						uint8_t *pdu, int len);
+uint16_t enc_indication(uint16_t handle, uint8_t *value, int vlen,
+						uint8_t *pdu, int len);
+uint16_t dec_indication(const uint8_t *pdu, int len, uint16_t *handle,
+						uint8_t *value, int vlen);
 uint16_t enc_confirmation(uint8_t *pdu, int len);
 
 uint16_t enc_mtu_req(uint16_t mtu, uint8_t *pdu, int len);

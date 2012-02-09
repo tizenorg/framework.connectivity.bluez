@@ -58,18 +58,6 @@ static struct {
 	{ NULL }
 };
 
-#ifdef  __TIZEN_PATCH__
-struct bnep_data {
-	char *devname;
-	char *script;
-	int pid;
-};
-
-struct bnep_data data;
-#endif
-
-
-
 uint16_t bnep_service_id(const char *svc)
 {
 	int i;
@@ -120,10 +108,10 @@ int bnep_init(void)
 	ctl = socket(PF_BLUETOOTH, SOCK_RAW, BTPROTO_BNEP);
 
 	if (ctl < 0) {
-		int err = errno;
+		int err = -errno;
 		error("Failed to open control socket: %s (%d)",
-						strerror(err), err);
-		return -err;
+						strerror(-err), -err);
+		return err;
 	}
 
 	return 0;
@@ -143,10 +131,10 @@ int bnep_kill_connection(bdaddr_t *dst)
 	baswap((bdaddr_t *)&req.dst, dst);
 	req.flags = 0;
 	if (ioctl(ctl, BNEPCONNDEL, &req)) {
-		int err = errno;
+		int err = -errno;
 		error("Failed to kill connection: %s (%d)",
-						strerror(err), err);
-		return -err;
+						strerror(-err), -err);
+		return err;
 	}
 	return 0;
 }
@@ -162,10 +150,10 @@ int bnep_kill_all_connections(void)
 	req.cnum = 7;
 	req.ci   = ci;
 	if (ioctl(ctl, BNEPGETCONNLIST, &req)) {
-		err = errno;
+		err = -errno;
 		error("Failed to get connection list: %s (%d)",
-						strerror(err), err);
-		return -err;
+						strerror(-err), -err);
+		return err;
 	}
 
 	for (i = 0; i < req.cnum; i++) {
@@ -189,56 +177,15 @@ int bnep_connadd(int sk, uint16_t role, char *dev)
 	req.sock = sk;
 	req.role = role;
 	if (ioctl(ctl, BNEPCONNADD, &req) < 0) {
-		int err = errno;
+		int err = -errno;
 		error("Failed to add device %s: %s(%d)",
-				dev, strerror(err), err);
-		return -err;
+				dev, strerror(-err), -err);
+		return err;
 	}
 
 	strncpy(dev, req.device, 16);
 	return 0;
 }
-
-#ifdef  __TIZEN_PATCH__
-static void bnep_child_setup(gpointer data)
-{
-}
-
-void bnep_server_connect(char *devname)
-{
-	// Run bluetooth-ics
-	const char *argv[5];
-	GSpawnFlags flags = G_SPAWN_DO_NOT_REAP_CHILD | G_SPAWN_SEARCH_PATH;
-
-	argv[0] = "bluetooth-ics";
-	argv[1] = devname;
-	argv[2] = NULL;
-	argv[3] = NULL;
-
-	if (!g_spawn_async(NULL, (char **) argv, NULL, flags, bnep_child_setup, NULL,
-				&data.pid, NULL)) {
-		error("Unable to execute %s %s", argv[0], argv[1]);
-	}
-}
-
-void bnep_server_disconnect(void)
-{
-	int err = -1;
-
-	// Kill bluetooth-ics
-	info("data.pid: %d", data.pid);
-
-	if (data.pid > 0)
-	{
-		/* Kill script */
-		err = kill(data.pid, SIGTERM);
-		if (err < 0)
-			error("kill(%d, SIGTERM): %s (%d)", data.pid, strerror(errno), errno);
-
-		data.pid = 0;
-	}
-}
-#endif
 
 int bnep_if_up(const char *devname)
 {
@@ -282,6 +229,11 @@ int bnep_if_down(const char *devname)
 
 	close(sk);
 
+	if (err < 0) {
+		error("Could not bring down %s", devname);
+		return err;
+	}
+
 	return 0;
 }
 
@@ -298,7 +250,7 @@ int bnep_add_to_bridge(const char *devname, const char *bridge)
 	if (sk < 0)
 		return -1;
 
-#ifdef  __TIZEN_PATCH__
+#ifdef  __SAMSUNG_PATCH__
 	err = ioctl(sk, SIOCBRADDBR, bridge);
 	if (err < 0)
 	{

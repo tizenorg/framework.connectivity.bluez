@@ -49,10 +49,9 @@ int write_lastseen_info(bdaddr_t *local, bdaddr_t *peer, struct tm *tm);
 int write_lastused_info(bdaddr_t *local, bdaddr_t *peer, struct tm *tm);
 int write_link_key(bdaddr_t *local, bdaddr_t *peer, unsigned char *key, uint8_t type, int length);
 int read_link_key(bdaddr_t *local, bdaddr_t *peer, unsigned char *key, uint8_t *type);
-int read_pin_code(bdaddr_t *local, bdaddr_t *peer, char *pin);
+ssize_t read_pin_code(bdaddr_t *local, bdaddr_t *peer, char *pin);
 gboolean read_trust(const bdaddr_t *local, const char *addr, const char *service);
 int write_trust(const char *src, const char *addr, const char *service, gboolean trust);
-GSList *list_trusts(bdaddr_t *local, const char *service);
 int write_device_profiles(bdaddr_t *src, bdaddr_t *dst, const char *profiles);
 int delete_entry(bdaddr_t *src, const char *storage, const char *key);
 int store_record(const gchar *src, const gchar *dst, sdp_record_t *rec);
@@ -84,17 +83,11 @@ char *read_device_characteristics(const bdaddr_t *sba, const bdaddr_t *dba,
 int write_device_attribute(const bdaddr_t *sba, const bdaddr_t *dba,
                                         uint16_t handle, const char *chars);
 int read_device_attributes(const bdaddr_t *sba, textfile_cb func, void *data);
-int write_device_type(const bdaddr_t *sba, const bdaddr_t *dba,
-						device_type_t type);
-device_type_t read_device_type(const bdaddr_t *sba, const bdaddr_t *dba);
+int read_device_ccc(bdaddr_t *local, bdaddr_t *peer, uint16_t handle,
+							uint16_t *value);
+int write_device_ccc(bdaddr_t *local, bdaddr_t *peer, uint16_t handle,
+							uint16_t value);
+void delete_device_ccc(bdaddr_t *local, bdaddr_t *peer);
 
 #define PNP_UUID		"00001200-0000-1000-8000-00805f9b34fb"
 
-#ifdef __TIZEN_PATCH__
-// Storing limited property
-int write_device_limited(bdaddr_t *local, gboolean mode);
-int read_device_limited(bdaddr_t *local, gboolean *mode);
-int read_version_info(const bdaddr_t *local, const char *addr,
-					uint16_t *manufacturer, uint8_t *lmp_ver, uint16_t *lmp_subver,
-					uint8_t *features);
-#endif

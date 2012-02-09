@@ -84,17 +84,6 @@ struct sap_message {
 	struct sap_parameter param[0];
 } __attribute__((packed));
 
-enum {
-	ICC_READER_UNSPECIFIED_ERROR, /* No further information available */
-	ICC_READER_NOT_PRESENT,       /* Card Reader removed or not present */
-	ICC_READER_BUSY,              /* Card Reader in use */
-	ICC_READER_CARD_POWERED_ON,   /* Card in reader and is powered on */
-	ICC_READER_DEACTIVATED,       /* Card Reader deactivated */
-	ICC_READER_CARD_POWERED_OFF,  /* Card in reader, but powered off */
-	ICC_READER_NO_CARD,           /* No card in reader */
-	ICC_READER_LAST
-};
-
 #define SAP_BUF_SIZE		512
 #define SAP_MSG_HEADER_SIZE	4
 
@@ -143,7 +132,7 @@ enum sap_param_id {
 #define SAP_PARAM_ID_DISCONNECT_IND_LEN		0x01
 #define SAP_PARAM_ID_CARD_READER_STATUS_LEN	0x01
 #define SAP_PARAM_ID_STATUS_CHANGE_LEN		0x01
-#define SAP_PARAM_ID_TRANSPORT_PROTOCOL_LEN	0x01
+#define SAP_PARAM_ID_TRANSPORT_PROTO_LEN	0x01
 
 /* Transport Protocol - SAP v1.1 section 5.2.9 */
 enum sap_transport_protocol {
@@ -184,3 +173,4 @@ int sap_transport_protocol_rsp(void *sap_device, uint8_t result);
 
 /* Event indication. Implemented by server.c*/
 int sap_status_ind(void *sap_device, uint8_t status_change);
+int sap_disconnect_ind(void *sap_device, uint8_t disc_type);

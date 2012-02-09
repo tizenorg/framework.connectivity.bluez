@@ -53,7 +53,6 @@
 #include "../src/device.h"
 
 #include "log.h"
-#include "textfile.h"
 #include "ipc.h"
 #include "device.h"
 #include "error.h"
@@ -118,8 +117,8 @@ static struct enabled_interfaces enabled = {
 	.sink		= TRUE,
 	.source		= FALSE,
 	.control	= TRUE,
-	.socket		= TRUE,
-	.media		= FALSE,
+	.socket		= FALSE,
+	.media		= TRUE,
 };
 
 static struct audio_adapter *find_adapter(GSList *list,
@@ -779,7 +778,7 @@ static int audio_probe(struct btd_device *device, GSList *uuids)
 	struct audio_device *audio_dev;
 
 	adapter_get_address(adapter, &src);
-	device_get_address(device, &dst);
+	device_get_address(device, &dst, NULL);
 
 	audio_dev = manager_get_device(&src, &dst, TRUE);
 	if (!audio_dev) {
@@ -1388,7 +1387,7 @@ gboolean manager_allow_headset_connection(struct audio_device *device)
 		if (dev == device)
 			continue;
 
-		if (bacmp(&dev->src, &device->src))
+		if (device && bacmp(&dev->src, &device->src) != 0)
 			continue;
 
 		if (!hs)
@@ -1407,6 +1406,11 @@ gboolean manager_allow_headset_connection(struct audio_device *device)
 void manager_set_fast_connectable(gboolean enable)
 {
 	GSList *l;
+
+	if (enable && !manager_allow_headset_connection(NULL)) {
+		DBG("Refusing enabling fast connectable");
+		return;
+	}
 
 	for (l = adapters; l != NULL; l = l->next) {
 		struct audio_adapter *adapter = l->data;
