@@ -1,3 +1,11 @@
+bluez (4.98-slp2+1-2) unstable; urgency=low
+
+  * Change "SAMSUNG_PATCH" -> "TIZEN_PATCH"
+  * Git: pkgs/b/bluez
+  * Tag: bluez_4.98-slp2+1-2
+
+ -- DoHyun Pyun <dh79.pyun@samsung.com>  Tue, 21 Feb 2012 18:03:00 +0900
+
 bluez (4.98-slp2+1-1) unstable; urgency=low
 
   * Merge with lastest private git
