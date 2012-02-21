@@ -57,7 +57,7 @@
 
 #define TI_MANUFACTURER_ID	13
 
-/* __SAMSUNG_PATCH__ */
+/* __TIZEN_PATCH__ */
 #ifdef __TI_PATCH__
 #define FIRMWARE_DIRECTORY1	"/mnt/mmc/"
 #define FIRMWARE_DIRECTORY2	"/usr/etc/bluetooth/"
@@ -205,7 +205,7 @@ static const char *get_firmware_name(const uint8_t *respond)
 	if (version & 0x8000)
 		maj_ver |= 0x0008;
 
-/* __SAMSUNG_PATCH__ */
+/* __TIZEN_PATCH__ */
 #ifdef __TI_PATCH__
 	FILE *fp;
 	sprintf(firmware_file_name, FIRMWARE_DIRECTORY1 "TIInit_%d.%d.%d.bts", chip, maj_ver, min_ver);

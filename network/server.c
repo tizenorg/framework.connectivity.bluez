@@ -79,7 +79,7 @@ struct network_server {
 	GSList		*sessions;	/* Active connections */
 	struct network_adapter *na;	/* Adapter reference */
 	guint		watch_id;	/* Client service watch */
-#ifdef __SAMSUNG_PATCH__
+#ifdef __TIZEN_PATCH__
 	char		dev[16];	/* Interface name */
 #endif
 };
@@ -88,7 +88,7 @@ static DBusConnection *connection = NULL;
 static GSList *adapters = NULL;
 static gboolean security = TRUE;
 
-#ifdef  __SAMSUNG_PATCH__
+#ifdef  __TIZEN_PATCH__
 static gboolean server_disconnected_cb(GIOChannel *chan,
 			GIOCondition cond, gpointer user_data);
 #endif
@@ -118,7 +118,7 @@ static struct network_server *find_server(GSList *list, uint16_t id)
 	return NULL;
 }
 
-#ifdef  __SAMSUNG_PATCH__
+#ifdef  __TIZEN_PATCH__
 static struct network_session *find_session(GSList *list, GIOChannel *io)
 {
 	GSList *l;
@@ -302,7 +302,7 @@ static int server_connadd(struct network_server *ns,
 
 	info("Added new connection: %s", devname);
 
-#ifdef  __SAMSUNG_PATCH__
+#ifdef  __TIZEN_PATCH__
 	{
 		guint watch = 0;
 
@@ -400,7 +400,7 @@ static void setup_destroy(void *user_data)
 	session_free(setup);
 }
 
-#ifdef  __SAMSUNG_PATCH__
+#ifdef  __TIZEN_PATCH__
 static gboolean server_disconnected_cb(GIOChannel *chan,
 			GIOCondition cond, gpointer user_data)
 {
@@ -457,7 +457,7 @@ static gboolean bnep_setup(GIOChannel *chan,
 	struct bnep_setup_conn_req *req = (void *) packet;
 	uint16_t src_role, dst_role, rsp = BNEP_CONN_NOT_ALLOWED;
 	int n, sk;
-#ifdef  __SAMSUNG_PATCH__
+#ifdef  __TIZEN_PATCH__
 	gboolean connected = TRUE;
 #endif
 
@@ -523,13 +523,13 @@ static gboolean bnep_setup(GIOChannel *chan,
 	if (server_connadd(ns, na->setup, dst_role) < 0)
 		goto reply;
 
-#ifndef  __SAMSUNG_PATCH__
+#ifndef  __TIZEN_PATCH__
 	na->setup = NULL;
 #endif
 
 	rsp = BNEP_SUCCESS;
 
-#ifdef  __SAMSUNG_PATCH__
+#ifdef  __TIZEN_PATCH__
 {
 // Emit connected signal to BT application
 	const gchar* adapter_path = adapter_get_path(na->adapter);
@@ -730,7 +730,7 @@ static DBusMessage *register_server(DBusConnection *conn,
 	g_free(ns->bridge);
 	ns->bridge = g_strdup(bridge);
 
-#ifndef  __SAMSUNG_PATCH__
+#ifndef  __TIZEN_PATCH__
 	ns->watch_id = g_dbus_add_disconnect_watch(conn,
 					dbus_message_get_sender(msg),
 					server_disconnect, ns, NULL);
@@ -761,7 +761,7 @@ static DBusMessage *unregister_server(DBusConnection *conn,
 
 	server_disconnect(conn, ns);
 
-#ifdef  __SAMSUNG_PATCH__
+#ifdef  __TIZEN_PATCH__
 	/* Down the bnep interface, and disconnect all connection */
 	bnep_kill_all_connections();
 	bnep_if_down(ns->dev);
@@ -829,7 +829,7 @@ static GDBusMethodTable server_methods[] = {
 	{ }
 };
 
-#ifdef  __SAMSUNG_PATCH__
+#ifdef  __TIZEN_PATCH__
 static GDBusSignalTable server_signals[] = {
 	{ "PeerConnected",	"ss"	},
 	{ "PeerDisconnected",	"ss"	},
@@ -891,7 +891,7 @@ int server_register(struct btd_adapter *adapter)
 
 	path = adapter_get_path(adapter);
 
-#ifndef  __SAMSUNG_PATCH__
+#ifndef  __TIZEN_PATCH__
 	if (!g_dbus_register_interface(connection, path, ns->iface,
 					server_methods, NULL, NULL,
 					ns, path_unregister)) {

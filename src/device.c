@@ -85,7 +85,7 @@ struct bonding_req {
 	DBusMessage *msg;
 	GIOChannel *io;
 	guint listener_id;
-#ifdef __SAMSUNG_PATCH__
+#ifdef __TIZEN_PATCH__
 	guint cancel_by_user;
 #endif
 	struct btd_device *device;
@@ -2146,7 +2146,7 @@ static DBusMessage *new_authentication_return(DBusMessage *msg, int status)
 					ERROR_INTERFACE ".AuthenticationCanceled",
 					"Authentication Canceled");
 
-#ifdef __SAMSUNG_PATCH__
+#ifdef __TIZEN_PATCH__
 	case 0x2a: /* Cancel by agent */
 		return dbus_message_new_error(msg,
 					ERROR_INTERFACE ".CanceledbyUser",
@@ -2221,7 +2221,7 @@ static void device_agent_removed(struct agent *agent, void *user_data)
 	struct btd_device *device = user_data;
 
 	device->agent = NULL;
-#ifdef __SAMSUNG_PATCH__
+#ifdef __TIZEN_PATCH__
 	if (device->authr && (device->authr->agent == agent)) {
 		DBG("device->agent is the same with authr->agent");
 		device->authr->agent = NULL;
@@ -2288,7 +2288,7 @@ static void create_bond_req_exit(DBusConnection *conn, void *user_data)
 		device_request_disconnect(device, NULL);
 	}
 }
-#ifdef __SAMSUNG_PATCH__
+#ifdef __TIZEN_PATCH__
 void set_cancel_from_authentication_req(void *user_data)
 {
 	struct authentication_req *auth = (struct authentication_req *)user_data;
@@ -2473,7 +2473,7 @@ void device_cancel_bonding(struct btd_device *device, uint8_t status)
 	if (device->authr)
 		device_cancel_authentication(device, FALSE);
 
-#ifdef __SAMSUNG_PATCH__
+#ifdef __TIZEN_PATCH__
 	if (bonding->cancel_by_user)
 	{
 		info("Bonding Cancel by user");

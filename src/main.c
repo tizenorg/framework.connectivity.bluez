@@ -239,7 +239,7 @@ static void init_defaults(void)
 {
 	/* Default HCId settings */
 	memset(&main_opts, 0, sizeof(main_opts));
-#ifdef __SAMSUNG_PATCH__
+#ifdef __TIZEN_PATCH__
 	main_opts.mode	= MODE_DISCOVERABLE;
 #else
 	main_opts.mode	= MODE_CONNECTABLE;

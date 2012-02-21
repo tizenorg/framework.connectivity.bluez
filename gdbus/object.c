@@ -33,7 +33,7 @@
 
 #include "gdbus.h"
 
-#ifdef __SAMSUNG_PATCH__
+#ifdef __TIZEN_PATCH__
 #include "log.h"
 #else
 #define info(fmt...)
@@ -448,7 +448,7 @@ static DBusHandlerResult generic_message(DBusConnection *connection,
 						iface->user_data) == TRUE)
 			return DBUS_HANDLER_RESULT_HANDLED;
 
-#ifdef __SAMSUNG_PATCH__
+#ifdef __TIZEN_PATCH__
 		DBG("%s: %s.%s()",dbus_message_get_path(message),
 									iface->name,method->name);
 #endif

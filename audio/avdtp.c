@@ -89,7 +89,7 @@
 #define AVDTP_MSG_TYPE_ACCEPT			0x02
 #define AVDTP_MSG_TYPE_REJECT			0x03
 
-#ifdef __SAMSUNG_PATCH__
+#ifdef __TIZEN_PATCH__
 #define REQ_TIMEOUT 10
 #else
 #define REQ_TIMEOUT 6

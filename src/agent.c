@@ -258,7 +258,7 @@ static void simple_agent_reply(DBusPendingCall *call, void *user_data)
 		error("Agent replied with an error: %s, %s",
 				err.name, err.message);
 
-#ifdef __SAMSUNG_PATCH__
+#ifdef __TIZEN_PATCH__
 		if (strcmp(err.message, "CanceledbyUser") == 0)
 		{
 			set_cancel_from_authentication_req(req->user_data);
@@ -373,7 +373,7 @@ static void pincode_reply(DBusPendingCall *call, void *user_data)
 		error("Agent %s replied with an error: %s, %s",
 				agent->path, err.name, err.message);
 
-#ifdef __SAMSUNG_PATCH__
+#ifdef __TIZEN_PATCH__
 		if (strcmp(err.message, "CanceledbyUser") == 0)
 		{
 			set_cancel_from_authentication_req(req->user_data);
@@ -545,7 +545,7 @@ static void passkey_reply(DBusPendingCall *call, void *user_data)
 	if (dbus_set_error_from_message(&err, message)) {
 		error("Agent replied with an error: %s, %s",
 						err.name, err.message);
-#ifdef __SAMSUNG_PATCH__
+#ifdef __TIZEN_PATCH__
 		if (strcmp(err.message, "CanceledbyUser") == 0)
 		{
 			set_cancel_from_authentication_req(req->user_data);

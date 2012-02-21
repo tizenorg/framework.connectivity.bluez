@@ -417,7 +417,7 @@ static DBusMessage *set_powered(DBusConnection *conn, DBusMessage *msg,
 	struct btd_adapter *adapter = data;
 	uint8_t mode;
 	int err;
-#ifdef __SAMSUNG_PATCH__
+#ifdef __TIZEN_PATCH__
 	mode = powered ? get_mode(&adapter->bdaddr, "on") : MODE_OFF;
 #else
 	if (powered) {

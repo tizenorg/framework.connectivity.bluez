@@ -250,7 +250,7 @@ int bnep_add_to_bridge(const char *devname, const char *bridge)
 	if (sk < 0)
 		return -1;
 
-#ifdef  __SAMSUNG_PATCH__
+#ifdef  __TIZEN_PATCH__
 	err = ioctl(sk, SIOCBRADDBR, bridge);
 	if (err < 0)
 	{

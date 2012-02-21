@@ -68,7 +68,7 @@ struct uart_t {
 	int  (*init) (int fd, struct uart_t *u, struct termios *ti);
 	int  (*post) (int fd, struct uart_t *u, struct termios *ti);
 
-/* __SAMSUNG_PATCH__ */
+/* __TIZEN_PATCH__ */
 #ifdef __TI_PATCH__
 	uint16_t device_param;
 #endif
@@ -1009,7 +1009,7 @@ static int bcm2035(int fd, struct uart_t *u, struct termios *ti)
 	memset(cmd, 0, sizeof(cmd));
 	memset(resp, 0, sizeof(resp));
 
-/* __SAMSUNG_PATCH__ */
+/* __TIZEN_PATCH__ */
 #ifndef __BROADCOM_PATCH__
 	cmd[0] = HCI_COMMAND_PKT;
 	cmd[1] = 0x18;
@@ -1117,7 +1117,7 @@ struct uart_t uart[] = {
 	{ "swave",      0x0000, 0x0000, HCI_UART_H4,   115200, 115200,
 				FLOW_CTL, DISABLE_PM, NULL, swave    },
 
-/* __SAMSUNG_PATCH__ */
+/* __TIZEN_PATCH__ */
 #ifdef __TI_PATCH__
 	/* Texas Instruments BRF63xx modules */
 	{ "texas",      0x0000, 0x0000, HCI_UART_LL,   115200,3000000, FLOW_CTL, NULL, texas,    NULL/*texas_continue_script*/,    BRF_DEEP_SLEEP_OPCODE},
@@ -1227,7 +1227,7 @@ static int init_uart(char *dev, struct uart_t *u, int send_break, int raw)
 	int fd, i;
 	unsigned long flags = 0;
 
-/* __SAMSUNG_PATCH__ */
+/* __TIZEN_PATCH__ */
 #if defined(__TI_PATCH__) || defined(__BROADCOM_PATCH__)
 	int power;
 #endif
@@ -1249,7 +1249,7 @@ static int init_uart(char *dev, struct uart_t *u, int send_break, int raw)
 
 	cfmakeraw(&ti);
 
-/* __SAMSUNG_PATCH__ */
+/* __TIZEN_PATCH__ */
 #ifndef __BROADCOM_PATCH__
 	ti.c_cflag |= CLOCAL;
 	if (u->flags & FLOW_CTL)
@@ -1276,7 +1276,7 @@ static int init_uart(char *dev, struct uart_t *u, int send_break, int raw)
 		usleep(500000);
 	}
 
-/* __SAMSUNG_PATCH__ */
+/* __TIZEN_PATCH__ */
 #if defined(__TI_PATCH__) || defined(__BROADCOM_PATCH__)
 	/* Power up the BRF chip */
 	power = 1;
@@ -1325,7 +1325,7 @@ static void usage(void)
 	printf("hciattach - HCI UART driver initialization utility\n");
 	printf("Usage:\n");
 
-/* __SAMSUNG_PATCH__ */
+/* __TIZEN_PATCH__ */
 #ifdef __TI_PATCH__
 	printf("\thciattach [-n] [-p] [-b] [-g device_param] [-r] [-f] [-t timeout] [-s initial_speed] <tty> <type | id> [speed] [flow|noflow] [bdaddr]\n");
 #else
@@ -1347,7 +1347,7 @@ int main(int argc, char *argv[])
 	sigset_t sigs;
 	char dev[PATH_MAX];
 
-/* __SAMSUNG_PATCH__ */
+/* __TIZEN_PATCH__ */
 #if defined(__TI_PATCH__) || defined(__BROADCOM_PATCH__)
 	int power;
 #endif
@@ -1382,7 +1382,7 @@ int main(int argc, char *argv[])
 			to = atoi(optarg);
 			break;
 
-/* __SAMSUNG_PATCH__ */
+/* __TIZEN_PATCH__ */
 #ifdef __TI_PATCH__
 		case 'g':
 			device_param = (uint16_t)strtol(optarg, NULL, 16);
@@ -1418,7 +1418,7 @@ int main(int argc, char *argv[])
 	}
 
 	n = argc - optind;
-/* __SAMSUNG_PATCH__ */
+/* __TIZEN_PATCH__ */
 #ifdef __TI_PATCH__
 	if (!reset_device || (reset_device && n < 1))
 #endif
@@ -1479,7 +1479,7 @@ int main(int argc, char *argv[])
 			break;
 		}
 	}
-/* __SAMSUNG_PATCH__ */
+/* __TIZEN_PATCH__ */
 #ifdef __TI_PATCH__
 	if (reset_device)
 	{
@@ -1582,7 +1582,7 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-/* __SAMSUNG_PATCH__ */
+/* __TIZEN_PATCH__ */
 #if defined(__TI_PATCH__) || defined(__BROADCOM_PATCH__)
 	/* Power down the BRF or BCMchip */
 	power = 0;

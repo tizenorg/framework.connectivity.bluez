@@ -166,7 +166,7 @@ struct headset {
 
 	guint dc_timer;
 
-#ifdef __SAMSUNG_PATCH__
+#ifdef __TIZEN_PATCH__
 	guint rfcomm_io_id;
 #endif
 	gboolean hfp_active;
@@ -1204,7 +1204,7 @@ static int voice_dial(struct audio_device *device, const char *buf)
 	return 0;
 }
 
-#ifdef __SAMSUNG_PATCH__
+#ifdef __TIZEN_PATCH__
 int telephony_list_phonebook_store_rsp(void *telephony_device, const char *buf, cme_error_t err)
 {
 	struct audio_device *device = telephony_device;
@@ -1551,8 +1551,8 @@ static struct event event_callbacks[] = {
 	{ "AT+BVRA", voice_dial },
 	{ "AT+XAPL", apple_command },
 	{ "AT+IPHONEACCEV", apple_command },
-#ifdef __SAMSUNG_PATCH__
-	/*SAMSUNG PATCH Starts here*/
+#ifdef __TIZEN_PATCH__
+	/*TIZEN PATCH Starts here*/
 	{ "AT+CPBS", select_phonebook_memory },
 	{ "AT+CPBR", read_phonebook_entries},
 	{ "AT+CPBF", find_phonebook_entires },
@@ -1608,7 +1608,7 @@ static gboolean rfcomm_io_cb(GIOChannel *chan, GIOCondition cond,
 		return FALSE;
 
 	hs = device->headset;
-#ifdef __SAMSUNG_PATCH__
+#ifdef __TIZEN_PATCH__
 	if (!hs)
 		return FALSE;
 #endif
@@ -1730,7 +1730,7 @@ void headset_connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 	else
 		hs->auto_dc = FALSE;
 
-#ifdef __SAMSUNG_PATCH__
+#ifdef __TIZEN_PATCH__
 	hs->rfcomm_io_id = g_io_add_watch(chan,
 				G_IO_IN | G_IO_ERR | G_IO_HUP | G_IO_NVAL,
 				(GIOFunc) rfcomm_io_cb, dev);
@@ -1958,7 +1958,7 @@ static int rfcomm_connect(struct audio_device *dev, headset_stream_cb_t cb,
 	DBG("%s: Connecting to %s channel %d", dev->path, address,
 		hs->rfcomm_ch);
 
-#ifdef __SAMSUNG_PATCH__
+#ifdef __TIZEN_PATCH__
 	if (hs->rfcomm_io_id) {
 		g_source_remove(hs->rfcomm_io_id);
 		hs->rfcomm_io_id = 0;
@@ -2492,7 +2492,7 @@ static int headset_close_rfcomm(struct audio_device *dev)
 		hs->rfcomm = NULL;
 	}
 
-#ifdef __SAMSUNG_PATCH__
+#ifdef __TIZEN_PATCH__
 	if (hs->rfcomm_io_id) {
 		g_source_remove(hs->rfcomm_io_id);
 		hs->rfcomm_io_id = 0;
