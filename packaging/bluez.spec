@@ -1,7 +1,7 @@
 
 Name:       bluez
 Summary:    Bluetooth utilities
-Version:    4.90
+Version:    4.98
 Release:    1
 Group:      Applications/System
 License:    GPLv2+
@@ -123,6 +123,7 @@ export CFLAGS="${CFLAGS} -D__TIZEN_PATCH__ -D__BROADCOM_PATCH__"
                         --disable-cups \
                         --disable-tests \
                         --disable-udevrules \
+			--enable-dbusoob \
                         --with-telephony=tizen
 
 make %{?jobs:-j%jobs}
@@ -150,6 +151,7 @@ rm -rf %{buildroot}
 %{_sbindir}/*
 %config(noreplace) %{_sysconfdir}/bluetooth/*
 %config %{_sysconfdir}/dbus-1/system.d/bluetooth.conf
+/usr/lib/udev/rules.d/97-bluetooth.rules
 #%{_localstatedir}/lib/bluetooth
 #/lib/udev/*
 
