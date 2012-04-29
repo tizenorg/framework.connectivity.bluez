@@ -417,9 +417,7 @@ static DBusMessage *set_powered(DBusConnection *conn, DBusMessage *msg,
 	struct btd_adapter *adapter = data;
 	uint8_t mode;
 	int err;
-#ifdef __TIZEN_PATCH__
-	mode = powered ? get_mode(&adapter->bdaddr, "on") : MODE_OFF;
-#else
+
 	if (powered) {
 		mode = get_mode(&adapter->bdaddr, "on");
 		return set_discoverable(conn, msg, mode == MODE_DISCOVERABLE,
@@ -427,7 +425,7 @@ static DBusMessage *set_powered(DBusConnection *conn, DBusMessage *msg,
 	}
 
 	mode = MODE_OFF;
-#endif
+
 	if (mode == adapter->mode) {
 		adapter->global_mode = mode;
 		return dbus_message_new_method_return(msg);

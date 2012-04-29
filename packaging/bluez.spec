@@ -1,13 +1,12 @@
-
 Name:       bluez
 Summary:    Bluetooth utilities
-Version:    4.98
+Version: 4.98
 Release:    1
 Group:      Applications/System
 License:    GPLv2+
 URL:        http://www.bluez.org/
 Source0:    http://www.kernel.org/pub/linux/bluetooth/%{name}-%{version}.tar.gz
-Requires:   bluez-libs = %{version}
+Patch1 :    bluez-ncurses.patch
 Requires:   dbus >= 0.60
 Requires:   usbutils
 Requires:   pciutils
@@ -16,11 +15,9 @@ BuildRequires:  pkgconfig(alsa)
 BuildRequires:  pkgconfig(udev)
 BuildRequires:  pkgconfig(sndfile)
 BuildRequires:  pkgconfig(glib-2.0)
-BuildRequires:  pkgconfig(gstreamer-plugins-base-0.10)
-BuildRequires:  pkgconfig(gstreamer-0.10)
 BuildRequires:  flex
 BuildRequires:  bison
-
+BuildRequires:  readline-devel
 
 %description
 Utilities for use in Bluetooth applications:
@@ -38,75 +35,39 @@ The BLUETOOTH trademarks are owned by Bluetooth SIG, Inc., U.S.A.
 
 
 
-%package libs
+%package -n libbluetooth3
 Summary:    Libraries for use in Bluetooth applications
 Group:      System/Libraries
 Requires:   %{name} = %{version}-%{release}
 Requires(post): /sbin/ldconfig
 Requires(postun): /sbin/ldconfig
 
-%description libs
+%description -n libbluetooth3
 Libraries for use in Bluetooth applications.
 
-%package libs-devel
+%package -n libbluetooth-devel
 Summary:    Development libraries for Bluetooth applications
 Group:      Development/Libraries
 Requires:   %{name} = %{version}-%{release}
-Requires:   bluez-libs = %{version}
+Requires:   libbluetooth3 = %{version}
 
-%description libs-devel
+%description -n libbluetooth-devel
 bluez-libs-devel contains development libraries and headers for
 use in Bluetooth applications.
 
-
-%package cups
-Summary:    CUPS printer backend for Bluetooth printers
-Group:      System/Daemons
-Requires:   %{name} = %{version}-%{release}
-Requires:   bluez-libs = %{version}
-Requires:   cups
-
-%description cups
-This package contains the CUPS backend
-
-%package alsa
-Summary:    ALSA support for Bluetooth audio devices
-Group:      System/Daemons
-Requires:   %{name} = %{version}-%{release}
-Requires:   bluez-libs = %{version}
-
-%description alsa
-This package contains ALSA support for Bluetooth audio devices
-
-%package gstreamer
-Summary:    GStreamer support for SBC audio format
-Group:      System/Daemons
-Requires:   %{name} = %{version}-%{release}
-Requires:   bluez-libs = %{version}
-
-%description gstreamer
-This package contains gstreamer plugins for the Bluetooth SBC audio format
-
-%package test
-Summary:    Test Programs for BlueZ
-Group:      Development/Tools
-Requires:   %{name} = %{version}-%{release}
-Requires:   bluez-libs = %{version}
-Requires:   dbus-python
-Requires:   pygobject2
-
-%description test
-Scripts for testing BlueZ and its functionality
-
-
 %prep
-%setup -q -n %{name}-%{version}
+%setup -q
+%patch1 -p1
 
 
 %build
 
-export CFLAGS="${CFLAGS} -D__TIZEN_PATCH__ -D__BROADCOM_PATCH__"
+export CFLAGS="${CFLAGS} -D__TIZEN_PATCH__ -D__BROADCOM_PATCH__ "
+%ifnarch %{arm}
+export LDFLAGS="${LDFLAGS} -lncurses -Wl,--as-needed "
+%endif
 %reconfigure --disable-static \
+			--sysconfdir=%{_prefix}/etc \
 			--localstatedir=/opt/var \
                         --enable-pie \
                         --enable-network \
@@ -124,57 +85,54 @@ export CFLAGS="${CFLAGS} -D__TIZEN_PATCH__ -D__BROADCOM_PATCH__"
                         --disable-tests \
                         --disable-udevrules \
 			--enable-dbusoob \
-                        --with-telephony=tizen
+			--with-telephony=tizen
 
-make %{?jobs:-j%jobs}
+make
 
 %install
 rm -rf %{buildroot}
 %make_install
 
-
-%post libs -p /sbin/ldconfig
-
-%postun libs -p /sbin/ldconfig
+install -D -m 0644 audio/audio.conf %{buildroot}%{_prefix}/etc/bluetooth/audio.conf
+install -D -m 0644 network/network.conf %{buildroot}%{_prefix}/etc/bluetooth/network.conf
 
 
-%docs_package
+%post -n libbluetooth3 -p /sbin/ldconfig
+
+%postun -n libbluetooth3 -p /sbin/ldconfig
 
 
 %files
 %defattr(-,root,root,-)
+%{_prefix}/etc/bluetooth/audio.conf
+%{_prefix}/etc/bluetooth/main.conf
+%{_prefix}/etc/bluetooth/network.conf
+%{_prefix}/etc/bluetooth/rfcomm.conf
+%{_prefix}/etc/dbus-1/system.d/bluetooth.conf
+%{_datadir}/man/*/*
+%{_sbindir}/bluetoothd
+%{_sbindir}/hciconfig
+%{_sbindir}/hciattach
 %{_bindir}/ciptool
-%{_bindir}/hcitool
 %{_bindir}/l2ping
-%{_bindir}/rfcomm
 %{_bindir}/sdptool
-%{_sbindir}/*
-%config(noreplace) %{_sysconfdir}/bluetooth/*
-%config %{_sysconfdir}/dbus-1/system.d/bluetooth.conf
-/usr/lib/udev/rules.d/97-bluetooth.rules
-#%{_localstatedir}/lib/bluetooth
-#/lib/udev/*
+%{_bindir}/gatttool
+%{_bindir}/rfcomm
+%{_bindir}/hcitool
+%dir %{_libdir}/bluetooth/plugins
+%dir /opt/var/lib/bluetooth
+%exclude /lib/udev/rules.d/97-bluetooth.rules
 
 
-%files libs
+%files -n libbluetooth3
 %defattr(-,root,root,-)
 %{_libdir}/libbluetooth.so.*
-%doc COPYING
 
-%files libs-devel
+
+%files -n libbluetooth-devel
 %defattr(-, root, root)
-%{_libdir}/libbluetooth.so
-%dir %{_includedir}/bluetooth
 %{_includedir}/bluetooth/*
+%{_libdir}/libbluetooth.so
 %{_libdir}/pkgconfig/bluez.pc
 
-
-%files alsa
-%defattr(-,root,root,-)
-#%{_libdir}/alsa-lib/*.so
-#%{_datadir}/alsa/bluetooth.conf
-
-%files gstreamer
-%defattr(-,root,root,-)
-%{_libdir}/gstreamer-*/*.so
 

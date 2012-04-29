@@ -239,11 +239,7 @@ static void init_defaults(void)
 {
 	/* Default HCId settings */
 	memset(&main_opts, 0, sizeof(main_opts));
-#ifdef __TIZEN_PATCH__
-	main_opts.mode	= MODE_DISCOVERABLE;
-#else
 	main_opts.mode	= MODE_CONNECTABLE;
-#endif
 	main_opts.name	= g_strdup("BlueZ");
 	main_opts.discovto	= DEFAULT_DISCOVERABLE_TIMEOUT;
 	main_opts.autoto = DEFAULT_AUTO_CONNECT_TIMEOUT;

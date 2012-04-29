@@ -1,3 +1,11 @@
+bluez (4.98-slp2+1-3) unstable; urgency=low
+
+  * Release Tizen 1.0
+  * Git: pkgs/b/bluez
+  * Tag: bluez_4.98-slp2+1-3
+
+ -- DoHyun Pyun <dh79.pyun@samsung.com>  Tue, 20 Mar 2012 17:32:01 +0900
+
 bluez (4.98-slp2+1-2) unstable; urgency=low
 
   * Change "SAMSUNG_PATCH" -> "TIZEN_PATCH"

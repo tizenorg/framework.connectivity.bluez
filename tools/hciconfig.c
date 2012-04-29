@@ -622,9 +622,9 @@ static void cmd_name(int ctl, int hdev, char *opt)
 			if ((unsigned char) name[i] < 32 || name[i] == 127)
 				name[i] = '.';
 		}
-
+#ifndef __TIZEN_PATCH__
 		name[248] = '\0';
-
+#endif
 		print_dev_hdr(&di);
 		printf("\tName: '%s'\n", name);
 	}
