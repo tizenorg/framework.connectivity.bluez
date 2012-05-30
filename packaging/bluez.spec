@@ -6,6 +6,7 @@ Group:      Applications/System
 License:    GPLv2+
 URL:        http://www.bluez.org/
 Source0:    http://www.kernel.org/pub/linux/bluetooth/%{name}-%{version}.tar.gz
+Source1001: packaging/bluez.manifest 
 Patch1 :    bluez-ncurses.patch
 Requires:   dbus >= 0.60
 Requires:   usbutils
@@ -61,6 +62,7 @@ use in Bluetooth applications.
 
 
 %build
+cp %{SOURCE1001} .
 
 export CFLAGS="${CFLAGS} -D__TIZEN_PATCH__ -D__BROADCOM_PATCH__ "
 %ifnarch %{arm}
@@ -103,6 +105,7 @@ install -D -m 0644 network/network.conf %{buildroot}%{_prefix}/etc/bluetooth/net
 
 
 %files
+%manifest bluez.manifest
 %defattr(-,root,root,-)
 %{_prefix}/etc/bluetooth/audio.conf
 %{_prefix}/etc/bluetooth/main.conf
@@ -125,11 +128,13 @@ install -D -m 0644 network/network.conf %{buildroot}%{_prefix}/etc/bluetooth/net
 
 
 %files -n libbluetooth3
+%manifest bluez.manifest
 %defattr(-,root,root,-)
 %{_libdir}/libbluetooth.so.*
 
 
 %files -n libbluetooth-devel
+%manifest bluez.manifest
 %defattr(-, root, root)
 %{_includedir}/bluetooth/*
 %{_libdir}/libbluetooth.so
