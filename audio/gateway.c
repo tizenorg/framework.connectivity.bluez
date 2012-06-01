@@ -182,8 +182,16 @@ static gboolean agent_sendfd(struct hf_agent *agent, int fd,
 					DBUS_TYPE_UINT16, &gw->version,
 					DBUS_TYPE_INVALID);
 
+#ifdef __TIZEN_PATCH__
+	if (dbus_connection_send_with_reply(dev->conn, msg,
+							&call, -1) == FALSE) {
+		dbus_message_unref(msg);
+		return FALSE;
+	}
+#else
 	if (dbus_connection_send_with_reply(dev->conn, msg, &call, -1) == FALSE)
 		return FALSE;
+#endif
 
 	dbus_pending_call_set_notify(call, notify, dev, NULL);
 	dbus_pending_call_unref(call);
@@ -255,7 +263,7 @@ static void sco_connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 
 	if (err) {
 		error("sco_connect_cb(): %s", err->message);
-		gateway_close(dev);
+		gateway_suspend_stream(dev);
 		return;
 	}
 
@@ -501,6 +509,7 @@ static void get_record_cb(sdp_list_t *recs, int err, gpointer user_data)
 	io = bt_io_connect(BT_IO_RFCOMM, rfcomm_connect_cb, dev, NULL, &gerr,
 				BT_IO_OPT_SOURCE_BDADDR, &dev->src,
 				BT_IO_OPT_DEST_BDADDR, &dev->dst,
+				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_MEDIUM,
 				BT_IO_OPT_CHANNEL, ch,
 				BT_IO_OPT_INVALID);
 	if (!io) {
@@ -593,14 +602,21 @@ static DBusMessage *ag_disconnect(DBusConnection *conn, DBusMessage *msg,
 
 	if (!device->conn)
 		return NULL;
+#ifdef __TIZEN_PATCH__
+	if (!gw->rfcomm)
+		return  btd_error_not_connected(msg);
 
+	reply = dbus_message_new_method_return(msg);
+	if (!reply)
+		return NULL;
+#else
 	reply = dbus_message_new_method_return(msg);
 	if (!reply)
 		return NULL;
 
 	if (!gw->rfcomm)
 		return  btd_error_not_connected(msg);
-
+#endif
 	gateway_close(device);
 	ba2str(&device->dst, gw_addr);
 	DBG("Disconnected from %s, %s", gw_addr, device->path);
@@ -847,6 +863,7 @@ unsigned int gateway_request_stream(struct audio_device *dev,
 		io = bt_io_connect(BT_IO_SCO, sco_connect_cb, dev, NULL, &err,
 				BT_IO_OPT_SOURCE_BDADDR, &dev->src,
 				BT_IO_OPT_DEST_BDADDR, &dev->dst,
+				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_MEDIUM,
 				BT_IO_OPT_INVALID);
 		if (!io) {
 			error("%s", err->message);

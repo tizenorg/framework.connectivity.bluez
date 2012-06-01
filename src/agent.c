@@ -715,10 +715,10 @@ int agent_display_passkey(struct agent *agent, struct btd_device *device,
 				DBUS_TYPE_INVALID);
 
 	if (!g_dbus_send_message(connection, message)) {
+		error("D-Bus send failed");
 #ifndef __TIZEN_PATCH__
 		dbus_message_unref(message);
 #endif
-		error("D-Bus send failed");
 		return -1;
 	}
 

@@ -33,6 +33,7 @@
 #include "btio.h"
 
 #define DEFAULT_ACCEPT_TIMEOUT 2
+static gint opt_update_sec = 0;
 
 struct io_data {
 	guint ref;

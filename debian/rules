@@ -57,7 +57,6 @@ config.status: configure
 			--disable-cups \
 			--disable-test \
 			--enable-health \
-			--disable-udevrules \
 			--enable-dbusoob \
 			--with-telephony=tizen
 

@@ -901,6 +901,9 @@ static gboolean parse_set_opts(struct mcap_mdl_cb *mdl_cb, GError **err,
 		default:
 			g_set_error(err, MCAP_ERROR, MCAP_ERROR_INVALID_ARGS,
 						"Unknown option %d", cb);
+#ifdef __TIZEN_PATCH__
+			g_free(c);
+#endif
 			return FALSE;
 		}
 		cb = va_arg(args, int);

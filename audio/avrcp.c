@@ -790,8 +790,11 @@ static uint8_t avrcp_handle_set_player_value(struct avrcp_player *player,
 
 	if (len) {
 		pdu->params_len = 0;
-
+#ifdef __TIZEN_PATCH__
+		return AVC_CTYPE_ACCEPTED;
+#else
 		return AVC_CTYPE_STABLE;
+#endif
 	}
 
 err:
@@ -799,6 +802,101 @@ err:
 	pdu->params[0] = E_INVALID_PARAM;
 	return AVC_CTYPE_REJECTED;
 }
+
+#ifdef __TIZEN_PATCH__
+
+static const char *attr_to_str(uint8_t attr)
+{
+	switch (attr) {
+	case AVRCP_ATTRIBUTE_EQUALIZER:
+		return "Equalizer";
+	case AVRCP_ATTRIBUTE_REPEAT_MODE:
+		return "Repeat";
+	case AVRCP_ATTRIBUTE_SHUFFLE:
+		return "Shuffle";
+	case AVRCP_ATTRIBUTE_SCAN:
+		return "Scan";
+	}
+
+	return NULL;
+}
+
+static uint8_t avrcp_handle_get_player_attribute_text(struct avrcp_player *player,
+						struct avrcp_header *pdu,
+						uint8_t transaction)
+{
+	uint16_t len = ntohs(pdu->params_len);
+	uint8_t *settings = NULL;
+	unsigned int i = 0;
+	uint8_t no_of_attr = 0;
+	const char *attstr = NULL;
+
+	if (player == NULL || len <= 1 || pdu->params[0] != len - 1)
+		goto err;
+
+	/*
+	 * Save a copy of requested settings because we can override them
+	 * while responding
+	 */
+	settings = g_memdup(&pdu->params[1], pdu->params[0]);
+	len = 0;
+
+	/*
+	 * From sec. 5.7 of AVRCP 1.3 spec, we should ignore non-existent IDs
+	 * and send a response with the existent ones.
+	 */
+	for (i = 0; i < pdu->params[0]; i++) {
+
+		if (settings[i] < AVRCP_ATTRIBUTE_EQUALIZER ||
+					settings[i] > AVRCP_ATTRIBUTE_SCAN) {
+			DBG("Ignoring %u", settings[i]);
+			continue;
+		}
+
+		if (player_get_attribute(player, settings[i]) < 0)
+			continue;
+
+		/*
+		 * No of attributes that are supported by the player
+		 */
+		no_of_attr++;
+		pdu->params[++len] = settings[i];
+
+		/*
+		 * As per the MIBenum defined in IANA character set
+		 * document the value of displayable UTF-8 charater set
+		 * value is 0x006A
+		 */
+		pdu->params[++len] = 0x00;
+		pdu->params[++len] = 0x6A;
+		attstr = attr_to_str(settings[i]);
+
+		if (NULL != attstr) {
+			pdu->params[++len] = strlen(attstr);
+			len = len + 1;
+			strncpy((char *) (pdu->params + len), attstr, strlen(attstr));
+			len = len + strlen(attstr);
+		}
+	}
+
+	g_free(settings);
+
+	if (len) {
+		pdu->params[0] = no_of_attr;
+		pdu->params_len = htons(len + 1);
+
+		return AVC_CTYPE_STABLE;
+	}
+
+	error("No valid attributes in request");
+
+err:
+	pdu->params_len = htons(1);
+	pdu->params[0] = E_INVALID_PARAM;
+	return AVC_CTYPE_REJECTED;
+}
+
+#endif
 
 static uint8_t avrcp_handle_displayable_charset(struct avrcp_player *player,
 						struct avrcp_header *pdu,
@@ -960,8 +1058,11 @@ static uint8_t avrcp_handle_request_continuing(struct avrcp_player *player,
 	}
 
 	pdu->params_len = htons(len);
-
+#ifdef __TIZEN_PATCH__
+	return AVC_CTYPE_ACCEPTED;
+#else
 	return AVC_CTYPE_STABLE;
+#endif
 err:
 	pdu->params_len = htons(1);
 	pdu->params[0] = E_INVALID_PARAM;
@@ -986,7 +1087,11 @@ static uint8_t avrcp_handle_abort_continuing(struct avrcp_player *player,
 	player_abort_pending_pdu(player);
 	pdu->params_len = 0;
 
+#ifdef __TIZEN_PATCH__
+	return AVC_CTYPE_ACCEPTED;
+#else
 	return AVC_CTYPE_STABLE;
+#endif
 
 err:
 	pdu->params_len = htons(1);
@@ -1014,8 +1119,13 @@ static struct pdu_handler {
 					avrcp_handle_get_current_player_value },
 		{ AVRCP_SET_PLAYER_VALUE, AVC_CTYPE_CONTROL,
 					avrcp_handle_set_player_value },
+#ifdef __TIZEN_PATCH__
+		{ AVRCP_GET_PLAYER_ATTRIBUTE_TEXT, AVC_CTYPE_STATUS,
+					avrcp_handle_get_player_attribute_text },
+#else
 		{ AVRCP_GET_PLAYER_ATTRIBUTE_TEXT, AVC_CTYPE_STATUS,
 					NULL },
+#endif
 		{ AVRCP_GET_PLAYER_VALUE_TEXT, AVC_CTYPE_STATUS,
 					NULL },
 		{ AVRCP_DISPLAYABLE_CHARSET, AVC_CTYPE_STATUS,

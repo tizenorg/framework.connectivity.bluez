@@ -127,6 +127,11 @@ Methods		void Connect()
 
 			Possible Errors: org.bluez.Error.DoesNotExist
 					 org.bluez.Error.InvalidArguments
+__TIZEN_PATCH__
+		void SetVoiceDial(boolean)
+
+			Sends enable/disable Voice Recognition to headset.
+__TIZEN_PATCH__
 
 Signals		void AnswerRequested()
 

@@ -166,9 +166,6 @@ struct headset {
 
 	guint dc_timer;
 
-#ifdef __TIZEN_PATCH__
-	guint rfcomm_io_id;
-#endif
 	gboolean hfp_active;
 	gboolean search_hfp;
 	gboolean rfcomm_initiator;
@@ -1256,7 +1253,6 @@ int telephony_read_phonebook_store_rsp(void *telephony_device, char* pb_store, u
 static int select_phonebook_memory(struct audio_device *device, const char *buf)
 {
 	struct headset *hs = device->headset;
-	int err;
 
 	if (NULL != buf) {
 		if (strlen(buf) < 9)
@@ -1332,8 +1328,6 @@ int telephony_read_phonebook_rsp(void *telephony_device, const char *data,
 
 static int read_phonebook_entries(struct audio_device *device, const char *buf)
 {
-	struct headset *hs = device->headset;
-	int err;
 
 	if (NULL != buf) {
 		if (strlen(buf) < 8)
@@ -1378,8 +1372,6 @@ int telephony_find_phonebook_entry_properties_rsp(void *telephony_device,
 
 static int find_phonebook_entires(struct audio_device *device, const char *buf)
 {
-	struct headset *hs = device->headset;
-	int err;
 
 	if (NULL != buf)  {
 		if (strlen(buf) < 8)
@@ -1446,7 +1438,6 @@ int telephony_get_preffered_store_capacity_rsp(void *telephony_device,
 static int preffered_message_storage(struct audio_device *device, const char *buf)
 {
 	struct headset *hs = device->headset;
-	int err;
 
 	if (NULL != buf) {
 		if (strlen(buf) < 9)
@@ -1497,7 +1488,7 @@ int telephony_supported_character_generic_rsp(void *telephony_device,
 static int select_character_set(struct audio_device *device, const char *buf)
 {
 	struct headset *hs = device->headset;
-	int err;
+
 	if (NULL != buf) {
 		if (strlen(buf) < 9)
 			return -EINVAL;
@@ -1519,6 +1510,59 @@ static int select_character_set(struct audio_device *device, const char *buf)
 	return 0;
 
 }
+
+int telephony_battery_charge_status_rsp(void *telephony_device,
+						int32_t bcs,
+						int32_t bcl,
+						cme_error_t err)
+{
+	struct audio_device *device = telephony_device;
+
+	if (err == CME_ERROR_NONE) {
+		send_foreach_headset(active_devices, hfp_cmp,
+					"\r\n+CBC: %d,%d\r\n", bcs, bcl);
+	}
+
+	return telephony_generic_rsp(device, err);
+}
+
+static int get_battery_charge_status(struct audio_device *device, const char *buf)
+{
+	if (strlen(buf) < 8)
+		return -EINVAL;
+
+	if (buf[7] == '?')
+		telephony_get_battery_property(device);
+
+	return 0;
+}
+
+int telephony_signal_quality_rsp(void *telephony_device,
+						int32_t rssi,
+						int32_t ber,
+						cme_error_t err)
+{
+	struct audio_device *device = telephony_device;
+
+	if (err == CME_ERROR_NONE) {
+		send_foreach_headset(active_devices, hfp_cmp,
+					"\r\n+CSQ: %d,%d\r\n", rssi, ber);
+	}
+	return telephony_generic_rsp(device,err);
+}
+
+static int get_signal_quality(struct audio_device *device, const char *buf)
+{
+	if (strlen(buf) < 8)
+		return -EINVAL;
+
+	if (buf[7] == '?')
+		telephony_get_signal_quality(device);
+
+	return 0;
+
+}
+
 #endif
 
 static int apple_command(struct audio_device *device, const char *buf)
@@ -1558,6 +1602,8 @@ static struct event event_callbacks[] = {
 	{ "AT+CPBF", find_phonebook_entires },
 	{ "AT+CPMS", preffered_message_storage },
 	{ "AT+CSCS", select_character_set },
+	{ "AT+CSQ", get_signal_quality },
+	{ "AT+CBC", get_battery_charge_status },
 #endif
 	{ 0 }
 };
@@ -1608,10 +1654,6 @@ static gboolean rfcomm_io_cb(GIOChannel *chan, GIOCondition cond,
 		return FALSE;
 
 	hs = device->headset;
-#ifdef __TIZEN_PATCH__
-	if (!hs)
-		return FALSE;
-#endif
 	slc = hs->slc;
 
 	if (cond & (G_IO_ERR | G_IO_HUP)) {
@@ -1730,14 +1772,8 @@ void headset_connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 	else
 		hs->auto_dc = FALSE;
 
-#ifdef __TIZEN_PATCH__
-	hs->rfcomm_io_id = g_io_add_watch(chan,
-				G_IO_IN | G_IO_ERR | G_IO_HUP | G_IO_NVAL,
-				(GIOFunc) rfcomm_io_cb, dev);
-#else
 	g_io_add_watch(chan, G_IO_IN | G_IO_ERR | G_IO_HUP| G_IO_NVAL,
 			(GIOFunc) rfcomm_io_cb, dev);
-#endif
 
 	DBG("%s: Connected to %s", dev->path, hs_address);
 
@@ -1803,9 +1839,15 @@ static int headset_set_channel(struct headset *headset,
 
 	if (svc == HANDSFREE_SVCLASS_ID) {
 		headset->hfp_handle = record->handle;
+#ifdef __TIZEN_PATCH__
+		headset->hsp_handle = 0;
+#endif
 		DBG("Discovered Handsfree service on channel %d", ch);
 	} else {
 		headset->hsp_handle = record->handle;
+#ifdef __TIZEN_PATCH__
+		headset->hfp_handle = 0;
+#endif
 		DBG("Discovered Headset service on channel %d", ch);
 	}
 
@@ -1958,17 +2000,12 @@ static int rfcomm_connect(struct audio_device *dev, headset_stream_cb_t cb,
 	DBG("%s: Connecting to %s channel %d", dev->path, address,
 		hs->rfcomm_ch);
 
-#ifdef __TIZEN_PATCH__
-	if (hs->rfcomm_io_id) {
-		g_source_remove(hs->rfcomm_io_id);
-		hs->rfcomm_io_id = 0;
-	}
-#endif
 	hs->tmp_rfcomm = bt_io_connect(BT_IO_RFCOMM, headset_connect_cb, dev,
 					NULL, &err,
 					BT_IO_OPT_SOURCE_BDADDR, &dev->src,
 					BT_IO_OPT_DEST_BDADDR, &dev->dst,
 					BT_IO_OPT_CHANNEL, hs->rfcomm_ch,
+					BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_MEDIUM,
 					BT_IO_OPT_INVALID);
 
 	hs->rfcomm_ch = -1;
@@ -2399,6 +2436,47 @@ static DBusMessage *hs_set_property(DBusConnection *conn,
 	return btd_error_invalid_args(msg);
 }
 
+#ifdef __TIZEN_PATCH__
+static DBusMessage *hs_set_voice_dial(DBusConnection *conn, DBusMessage *msg,
+						void *data)
+{
+	struct audio_device *device = data;
+	struct headset *hs = device->headset;
+	struct headset_slc *slc = hs->slc;
+	DBusMessage *reply;
+	int err;
+	dbus_bool_t enable;
+
+	if (hs->state < HEADSET_STATE_CONNECTED)
+		return btd_error_not_connected(msg);
+
+	if (!(slc->hf_features & HF_FEATURE_VOICE_RECOGNITION)) {
+		DBG("Voice Recognition is not supported by HF \n");
+		return btd_error_not_supported(msg);
+	}
+
+	if (!dbus_message_get_args(msg, NULL, DBUS_TYPE_BOOLEAN, &enable,
+						DBUS_TYPE_INVALID))
+		return NULL;
+
+	DBG("hs_set_voice_dial = %d \n", enable);
+
+	reply = dbus_message_new_method_return(msg);
+
+	if (!reply)
+		return NULL;
+
+	err = headset_send(hs, "\r\n+BVRA: %d\r\n", enable);
+
+	if (err < 0) {
+		dbus_message_unref(reply);
+		return btd_error_failed(msg, strerror(-err));
+	}
+
+	return reply;
+}
+#endif
+
 static GDBusMethodTable headset_methods[] = {
 	{ "Connect",		"",	"",	hs_connect,
 						G_DBUS_METHOD_FLAG_ASYNC },
@@ -2422,6 +2500,9 @@ static GDBusMethodTable headset_methods[] = {
 						G_DBUS_METHOD_FLAG_DEPRECATED },
 	{ "GetProperties",	"",	"a{sv}",hs_get_properties },
 	{ "SetProperty",	"sv",	"",	hs_set_property },
+#ifdef __TIZEN_PATCH__
+	{ "SetVoiceDial",	"b",	"",	hs_set_voice_dial},
+#endif
 	{ NULL, NULL, NULL, NULL }
 };
 
@@ -2492,12 +2573,6 @@ static int headset_close_rfcomm(struct audio_device *dev)
 		hs->rfcomm = NULL;
 	}
 
-#ifdef __TIZEN_PATCH__
-	if (hs->rfcomm_io_id) {
-		g_source_remove(hs->rfcomm_io_id);
-		hs->rfcomm_io_id = 0;
-	}
-#endif
 	g_free(hs->slc);
 	hs->slc = NULL;
 

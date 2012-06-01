@@ -1335,7 +1335,9 @@ static gboolean gst_avdtp_sink_transport_acquire(GstAvdtpSink *self)
 
 	reply = dbus_connection_send_with_reply_and_block(self->data->conn,
 							msg, -1, &err);
-
+#ifdef __TIZEN_PATCH__
+	dbus_message_unref(msg);
+#endif
 	if (dbus_error_is_set(&err))
 		goto fail;
 
@@ -1362,8 +1364,11 @@ fail:
 	dbus_error_free(&err);
 
 	if (reply)
+#ifdef __TIZEN_PATCH__
+		dbus_message_unref(reply);
+#else
 		dbus_message_unref(msg);
-
+#endif
 	return FALSE;
 }
 
