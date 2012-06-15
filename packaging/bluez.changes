@@ -1,0 +1,3 @@
+* Fri Jun 15 2012 Chris Leech <christopher.leech@linux.intel.com> - 4.99
+- change sysconfdir from /usr/etc to /etc
+

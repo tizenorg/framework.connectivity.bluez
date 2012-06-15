@@ -67,7 +67,7 @@ cp %{SOURCE1001} .
 export CFLAGS="${CFLAGS} -D__TIZEN_PATCH__ -D__BROADCOM_PATCH__ "
 export LDFLAGS=" -lncurses -Wl,--as-needed "
 %reconfigure --disable-static \
-			--sysconfdir=%{_prefix}/etc \
+			--sysconfdir=%{_sysconfdir} \
 			--localstatedir=/opt/var \
                         --enable-pie \
                         --enable-network \
@@ -93,8 +93,8 @@ make
 rm -rf %{buildroot}
 %make_install
 
-install -D -m 0644 audio/audio.conf %{buildroot}%{_prefix}/etc/bluetooth/audio.conf
-install -D -m 0644 network/network.conf %{buildroot}%{_prefix}/etc/bluetooth/network.conf
+install -D -m 0644 audio/audio.conf %{buildroot}%{_sysconfdir}/bluetooth/audio.conf
+install -D -m 0644 network/network.conf %{buildroot}%{_sysconfdir}/bluetooth/network.conf
 
 
 %post -n libbluetooth3 -p /sbin/ldconfig
@@ -105,11 +105,11 @@ install -D -m 0644 network/network.conf %{buildroot}%{_prefix}/etc/bluetooth/net
 %files
 %manifest bluez.manifest
 %defattr(-,root,root,-)
-%{_prefix}/etc/bluetooth/audio.conf
-%{_prefix}/etc/bluetooth/main.conf
-%{_prefix}/etc/bluetooth/network.conf
-%{_prefix}/etc/bluetooth/rfcomm.conf
-%{_prefix}/etc/dbus-1/system.d/bluetooth.conf
+%{_sysconfdir}/bluetooth/audio.conf
+%{_sysconfdir}/bluetooth/main.conf
+%{_sysconfdir}/bluetooth/network.conf
+%{_sysconfdir}/bluetooth/rfcomm.conf
+%{_sysconfdir}/dbus-1/system.d/bluetooth.conf
 %{_datadir}/man/*/*
 %{_sbindir}/bluetoothd
 %{_sbindir}/hciconfig
