@@ -1,3 +1,7 @@
+* Mon Jun 18 2012 William Douglas <william.douglas@intel.com> - 4.99
+- change exclude lib to exclude %{_libdir} for rules file
+
 * Fri Jun 15 2012 Chris Leech <christopher.leech@linux.intel.com> - 4.99
 - change sysconfdir from /usr/etc to /etc
+
 

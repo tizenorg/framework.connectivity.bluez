@@ -122,7 +122,7 @@ install -D -m 0644 network/network.conf %{buildroot}%{_sysconfdir}/bluetooth/net
 %{_bindir}/hcitool
 %dir %{_libdir}/bluetooth/plugins
 %dir /opt/var/lib/bluetooth
-%exclude /lib/udev/rules.d/97-bluetooth.rules
+%exclude %{_libdir}/udev/rules.d/97-bluetooth.rules
 
 
 %files -n libbluetooth3
