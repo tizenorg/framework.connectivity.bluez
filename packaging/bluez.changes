@@ -1,7 +1,33 @@
-* Mon Jun 18 2012 William Douglas <william.douglas@intel.com> - 4.99
-- change exclude lib to exclude %{_libdir} for rules file
+* Tue Jul 03 2012 Anas Nashif <anas.nashif@intel.com> 1e360a6
+- make it work with new dbus
 
-* Fri Jun 15 2012 Chris Leech <christopher.leech@linux.intel.com> - 4.99
+* Mon Jun 18 2012 William Douglas <william.douglas@intel.com> 47a68a3
+- Fix spec file exclude to _libdir instead of lib for rule
+
+* Fri Jun 15 2012 Chris Leech <christopher.leech@linux.intel.com> 0be1073
 - change sysconfdir from /usr/etc to /etc
 
+* Fri Jun 01 2012 DoHyun Pyun <dh79.pyun@samsung.com> 56f83d4
+- Merge with private git
+
+* Wed May 30 2012 Ryan Ware <ryan.r.ware@intel.com> 274fcc3
+- Add default Smack manifest for bluez.spec
+
+* Sun Apr 29 2012 Kim Kibum <kb0929.kim@samsung.com> d2d9d56
+- upload tizen1.0 source
+
+* Wed Mar 14 2012 Yan Yin <yan.yin@intel.com> 94cb765
+- update for beta universally
+
+* Tue Feb 21 2012 DoHyun Pyun <dh79.pyun@samsung.com> 124ef4d
+- Upload the version
+- __SAMSUNG_PATCH__ --> __TIZEN_PATCH__
+
+* Thu Feb 09 2012 DoHyun Pyun <dh79.pyun@samsung.com> 6065845
+- Merge with lastest private git
+
+* Fri Jan 06 2012 Kibum Kim <kb0929.kim@samsung.com> 30466bb
+- Git init
+[ Eunkyoung Kim ]
+- Initial empty repository
 
