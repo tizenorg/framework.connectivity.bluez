@@ -860,7 +860,7 @@ done:
 
 static int __other_bdaddr(int dd, int dev_id, long arg)
 {
-	struct hci_dev_info di = { dev_id: dev_id };
+	struct hci_dev_info di = { .dev_id = dev_id };
 
 	if (ioctl(dd, HCIGETDEVINFO, (void *) &di))
 		return 0;
@@ -873,7 +873,7 @@ static int __other_bdaddr(int dd, int dev_id, long arg)
 
 static int __same_bdaddr(int dd, int dev_id, long arg)
 {
-	struct hci_dev_info di = { dev_id: dev_id };
+	struct hci_dev_info di = { .dev_id = dev_id };
 
 	if (ioctl(dd, HCIGETDEVINFO, (void *) &di))
 		return 0;
@@ -1417,8 +1417,13 @@ int hci_read_local_name(int dd, int len, char *name, int to)
 		return -1;
 	}
 
+#ifdef __TIZEN_PATCH__
+	strncpy(name, (char *) rp.name, len - 1);
+	name[len - 1] = '\0';
+#else
 	rp.name[247] = '\0';
 	strncpy(name, (char *) rp.name, len);
+#endif
 	return 0;
 }
 
@@ -2829,7 +2834,7 @@ int hci_le_set_advertise_enable(int dd, uint8_t enable, int to)
 int hci_le_create_conn(int dd, uint16_t interval, uint16_t window,
 		uint8_t initiator_filter, uint8_t peer_bdaddr_type,
 		bdaddr_t peer_bdaddr, uint8_t own_bdaddr_type,
-		uint16_t min_interval, 	uint16_t max_interval,
+		uint16_t min_interval, uint16_t max_interval,
 		uint16_t latency, uint16_t supervision_timeout,
 		uint16_t min_ce_length, uint16_t max_ce_length,
 		uint16_t *handle, int to)

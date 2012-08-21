@@ -42,7 +42,6 @@
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
 
-#include "glib-compat.h"
 #include "sdp-client.h"
 #include "device.h"
 #include "gateway.h"
@@ -50,10 +49,6 @@
 #include "error.h"
 #include "btio.h"
 #include "dbus-common.h"
-
-#ifndef DBUS_TYPE_UNIX_FD
-#define DBUS_TYPE_UNIX_FD -1
-#endif
 
 struct hf_agent {
 	char *name;	/* Bus id */
@@ -182,8 +177,11 @@ static gboolean agent_sendfd(struct hf_agent *agent, int fd,
 					DBUS_TYPE_UINT16, &gw->version,
 					DBUS_TYPE_INVALID);
 
-	if (dbus_connection_send_with_reply(dev->conn, msg, &call, -1) == FALSE)
+	if (dbus_connection_send_with_reply(dev->conn, msg,
+							&call, -1) == FALSE) {
+		dbus_message_unref(msg);
 		return FALSE;
+	}
 
 	dbus_pending_call_set_notify(call, notify, dev, NULL);
 	dbus_pending_call_unref(call);
@@ -255,7 +253,7 @@ static void sco_connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 
 	if (err) {
 		error("sco_connect_cb(): %s", err->message);
-		gateway_close(dev);
+		gateway_suspend_stream(dev);
 		return;
 	}
 
@@ -501,6 +499,7 @@ static void get_record_cb(sdp_list_t *recs, int err, gpointer user_data)
 	io = bt_io_connect(BT_IO_RFCOMM, rfcomm_connect_cb, dev, NULL, &gerr,
 				BT_IO_OPT_SOURCE_BDADDR, &dev->src,
 				BT_IO_OPT_DEST_BDADDR, &dev->dst,
+				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_MEDIUM,
 				BT_IO_OPT_CHANNEL, ch,
 				BT_IO_OPT_INVALID);
 	if (!io) {
@@ -594,12 +593,12 @@ static DBusMessage *ag_disconnect(DBusConnection *conn, DBusMessage *msg,
 	if (!device->conn)
 		return NULL;
 
+	if (!gw->rfcomm)
+		return btd_error_not_connected(msg);
+
 	reply = dbus_message_new_method_return(msg);
 	if (!reply)
 		return NULL;
-
-	if (!gw->rfcomm)
-		return  btd_error_not_connected(msg);
 
 	gateway_close(device);
 	ba2str(&device->dst, gw_addr);
@@ -709,18 +708,23 @@ done:
 	return dbus_message_new_method_return(msg);
 }
 
-static GDBusMethodTable gateway_methods[] = {
-	{ "Connect", "", "", ag_connect, G_DBUS_METHOD_FLAG_ASYNC },
-	{ "Disconnect", "", "", ag_disconnect, G_DBUS_METHOD_FLAG_ASYNC },
-	{ "GetProperties", "", "a{sv}", ag_get_properties },
-	{ "RegisterAgent", "o", "", register_agent },
-	{ "UnregisterAgent", "o", "", unregister_agent },
-	{ NULL, NULL, NULL, NULL }
+static const GDBusMethodTable gateway_methods[] = {
+	{ GDBUS_ASYNC_METHOD("Connect", NULL, NULL, ag_connect) },
+	{ GDBUS_ASYNC_METHOD("Disconnect", NULL, NULL, ag_disconnect) },
+	{ GDBUS_METHOD("GetProperties",
+			NULL, GDBUS_ARGS({ "properties", "a{sv}" }),
+			ag_get_properties) },
+	{ GDBUS_METHOD("RegisterAgent",
+			GDBUS_ARGS({ "agent", "o" }), NULL, register_agent) },
+	{ GDBUS_METHOD("UnregisterAgent",
+			GDBUS_ARGS({ "agent", "o" }), NULL, unregister_agent) },
+	{ }
 };
 
-static GDBusSignalTable gateway_signals[] = {
-	{ "PropertyChanged", "sv" },
-	{ NULL, NULL }
+static const GDBusSignalTable gateway_signals[] = {
+	{ GDBUS_SIGNAL("PropertyChanged",
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" })) },
+	{ }
 };
 
 static void path_unregister(void *data)
@@ -747,9 +751,6 @@ void gateway_unregister(struct audio_device *dev)
 
 struct gateway *gateway_init(struct audio_device *dev)
 {
-	if (DBUS_TYPE_UNIX_FD < 0)
-		return NULL;
-
 	if (!g_dbus_register_interface(dev->conn, dev->path,
 					AUDIO_GATEWAY_INTERFACE,
 					gateway_methods, gateway_signals,
@@ -835,11 +836,8 @@ unsigned int gateway_request_stream(struct audio_device *dev,
 				gateway_stream_cb_t cb, void *user_data)
 {
 	struct gateway *gw = dev->gateway;
-	unsigned int id;
 	GError *err = NULL;
 	GIOChannel *io;
-
-	id = connect_cb_new(gw, cb, user_data);
 
 	if (!gw->rfcomm)
 		get_records(dev);
@@ -847,6 +845,7 @@ unsigned int gateway_request_stream(struct audio_device *dev,
 		io = bt_io_connect(BT_IO_SCO, sco_connect_cb, dev, NULL, &err,
 				BT_IO_OPT_SOURCE_BDADDR, &dev->src,
 				BT_IO_OPT_DEST_BDADDR, &dev->dst,
+				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_MEDIUM,
 				BT_IO_OPT_INVALID);
 		if (!io) {
 			error("%s", err->message);
@@ -856,7 +855,7 @@ unsigned int gateway_request_stream(struct audio_device *dev,
 	} else
 		g_idle_add(request_stream_cb, dev);
 
-	return id;
+	return connect_cb_new(gw, cb, user_data);
 }
 
 int gateway_config_stream(struct audio_device *dev, gateway_stream_cb_t cb,

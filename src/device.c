@@ -44,7 +44,6 @@
 #include <gdbus.h>
 
 #include "log.h"
-#include "textfile.h"
 
 #include "att.h"
 #include "hcid.h"
@@ -54,7 +53,6 @@
 #include "device.h"
 #include "dbus-common.h"
 #include "error.h"
-#include "glib-compat.h"
 #include "glib-helper.h"
 #include "sdp-client.h"
 #include "gatt.h"
@@ -73,6 +71,8 @@
 /* When all services should trust a remote device */
 #define GLOBAL_TRUST "[all]"
 
+#define APPEARANCE_CHR_UUID 0x2a01
+
 struct btd_disconnect_data {
 	guint id;
 	disconnect_watch watch;
@@ -83,10 +83,9 @@ struct btd_disconnect_data {
 struct bonding_req {
 	DBusConnection *conn;
 	DBusMessage *msg;
-	GIOChannel *io;
 	guint listener_id;
 #ifdef __TIZEN_PATCH__
-	guint cancel_by_user;
+	gboolean cancel_by_user;
 #endif
 	struct btd_device *device;
 };
@@ -97,14 +96,13 @@ struct authentication_req {
 	struct agent *agent;
 	struct btd_device *device;
 	uint32_t passkey;
+	char *pincode;
 	gboolean secure;
 };
 
 struct browse_req {
 	DBusConnection *conn;
 	DBusMessage *msg;
-	GIOChannel *io;
-	GAttrib *attrib;
 	struct btd_device *device;
 	GSList *match_uuids;
 	GSList *profiles_added;
@@ -122,12 +120,22 @@ struct attio_data {
 	gpointer user_data;
 };
 
+typedef void (*attio_error_cb) (const GError *gerr, gpointer user_data);
+typedef void (*attio_success_cb) (gpointer user_data);
+
+struct att_callbacks {
+	attio_error_cb error;		/* Callback for error */
+	attio_success_cb success;	/* Callback for success */
+	gpointer user_data;
+};
+
 struct btd_device {
 	bdaddr_t	bdaddr;
-	addr_type_t	type;
+	uint8_t		bdaddr_type;
 	gchar		*path;
 	char		name[MAX_NAME_LENGTH + 1];
 	char		*alias;
+	uint16_t	vendor_src;
 	uint16_t	vendor;
 	uint16_t	product;
 	uint16_t	version;
@@ -163,6 +171,9 @@ struct btd_device {
 
 	gboolean	authorizing;
 	gint		ref;
+
+	GIOChannel      *att_io;
+	guint		cleanup_id;
 };
 
 static uint16_t uuid_list[] = {
@@ -174,17 +185,10 @@ static uint16_t uuid_list[] = {
 
 static GSList *device_drivers = NULL;
 
-static void browse_request_free(struct browse_req *req, gboolean shutdown)
+static void browse_request_free(struct browse_req *req)
 {
 	if (req->listener_id)
 		g_dbus_remove_watch(req->conn, req->listener_id);
-	if (req->attrib)
-		g_attrib_unref(req->attrib);
-	if (req->io) {
-		if (shutdown)
-			g_io_channel_shutdown(req->io, FALSE, NULL);
-		g_io_channel_unref(req->io);
-	}
 	if (req->msg)
 		dbus_message_unref(req->msg);
 	if (req->conn)
@@ -197,6 +201,30 @@ static void browse_request_free(struct browse_req *req, gboolean shutdown)
 		sdp_list_free(req->records, (sdp_free_func_t) sdp_record_free);
 
 	g_free(req);
+}
+
+static void att_cleanup(struct btd_device *device)
+{
+	if (device->attachid) {
+		attrib_channel_detach(device->attrib, device->attachid);
+		device->attachid = 0;
+	}
+
+	if (device->cleanup_id) {
+		g_source_remove(device->cleanup_id);
+		device->cleanup_id = 0;
+	}
+
+	if (device->att_io) {
+		g_io_channel_shutdown(device->att_io, FALSE, NULL);
+		g_io_channel_unref(device->att_io);
+		device->att_io = NULL;
+	}
+
+	if (device->attrib) {
+		g_attrib_unref(device->attrib);
+		device->attrib = NULL;
+	}
 }
 
 static void browse_request_cancel(struct browse_req *req)
@@ -212,8 +240,10 @@ static void browse_request_cancel(struct browse_req *req)
 
 	bt_cancel_discovery(&src, &device->bdaddr);
 
+	att_cleanup(device);
+
 	device->browse = NULL;
-	browse_request_free(req, TRUE);
+	browse_request_free(req);
 }
 
 static void device_free(gpointer user_data)
@@ -235,7 +265,7 @@ static void device_free(gpointer user_data)
 	g_slist_free_full(device->attios, g_free);
 	g_slist_free_full(device->attios_offline, g_free);
 
-	g_attrib_unref(device->attrib);
+	att_cleanup(device);
 
 	if (device->tmp_records)
 		sdp_list_free(device->tmp_records,
@@ -252,6 +282,8 @@ static void device_free(gpointer user_data)
 
 	DBG("%p", device);
 
+	if (device->authr)
+		g_free(device->authr->pincode);
 	g_free(device->authr);
 	g_free(device->path);
 	g_free(device->alias);
@@ -260,12 +292,12 @@ static void device_free(gpointer user_data)
 
 gboolean device_is_bredr(struct btd_device *device)
 {
-	return (device->type == ADDR_TYPE_BREDR);
+	return (device->bdaddr_type == BDADDR_BREDR);
 }
 
 gboolean device_is_le(struct btd_device *device)
 {
-	return (device->type != ADDR_TYPE_BREDR);
+	return (device->bdaddr_type != BDADDR_BREDR);
 }
 
 gboolean device_is_paired(struct btd_device *device)
@@ -294,9 +326,10 @@ static DBusMessage *get_properties(DBusConnection *conn,
 	bdaddr_t src;
 	char name[MAX_NAME_LENGTH + 1], srcaddr[18], dstaddr[18];
 	char **str;
-	const char *ptr;
+	const char *ptr, *icon = NULL;
 	dbus_bool_t boolean;
 	uint32_t class;
+	uint16_t app;
 	int i;
 	GSList *l;
 
@@ -338,19 +371,25 @@ static DBusMessage *get_properties(DBusConnection *conn,
 
 	/* Class */
 	if (read_remote_class(&src, &device->bdaddr, &class) == 0) {
-		const char *icon = class_to_icon(class);
+		icon = class_to_icon(class);
 
 		dict_append_entry(&dict, "Class", DBUS_TYPE_UINT32, &class);
+	} else if (read_remote_appearance(&src, &device->bdaddr,
+						device->bdaddr_type, &app) == 0)
+		/* Appearance */
+		icon = gap_appearance_to_icon(app);
 
-		if (icon)
-			dict_append_entry(&dict, "Icon",
-						DBUS_TYPE_STRING, &icon);
-	}
+	dict_append_entry(&dict, "Icon", DBUS_TYPE_STRING, &icon);
 
 	/* Vendor */
 	if (device->vendor)
 		dict_append_entry(&dict, "Vendor", DBUS_TYPE_UINT16,
 							&device->vendor);
+
+	/* Vendor Source*/
+	if (device->vendor_src)
+		dict_append_entry(&dict, "VendorSource", DBUS_TYPE_UINT16,
+							&device->vendor_src);
 
 	/* Product */
 	if (device->product)
@@ -358,7 +397,7 @@ static DBusMessage *get_properties(DBusConnection *conn,
 							&device->product);
 
 	/* Version */
-	if (device->product)
+	if (device->version)
 		dict_append_entry(&dict, "Version", DBUS_TYPE_UINT16,
 							&device->version);
 
@@ -478,7 +517,8 @@ static gboolean do_disconnect(gpointer user_data)
 
 	device->disconn_timer = 0;
 
-	btd_adapter_disconnect_device(device->adapter, &device->bdaddr);
+	btd_adapter_disconnect_device(device->adapter, &device->bdaddr,
+							device->bdaddr_type);
 
 	return FALSE;
 }
@@ -498,7 +538,8 @@ int device_block(DBusConnection *conn, struct btd_device *device,
 	g_slist_foreach(device->drivers, (GFunc) driver_remove, device);
 
 	if (!update_only)
-		err = btd_adapter_block_address(device->adapter, &device->bdaddr);
+		err = btd_adapter_block_address(device->adapter,
+					&device->bdaddr, device->bdaddr_type);
 
 	if (err < 0)
 		return err;
@@ -529,7 +570,8 @@ int device_unblock(DBusConnection *conn, struct btd_device *device,
 		return 0;
 
 	if (!update_only)
-		err = btd_adapter_unblock_address(device->adapter, &device->bdaddr);
+		err = btd_adapter_unblock_address(device->adapter,
+					&device->bdaddr, device->bdaddr_type);
 
 	if (err < 0)
 		return err;
@@ -837,20 +879,26 @@ static DBusMessage *disconnect(DBusConnection *conn, DBusMessage *msg,
 	return NULL;
 }
 
-static GDBusMethodTable device_methods[] = {
-	{ "GetProperties",	"",	"a{sv}",	get_properties	},
-	{ "SetProperty",	"sv",	"",		set_property	},
-	{ "DiscoverServices",	"s",	"a{us}",	discover_services,
-						G_DBUS_METHOD_FLAG_ASYNC},
-	{ "CancelDiscovery",	"",	"",		cancel_discover	},
-	{ "Disconnect",		"",	"",		disconnect,
-						G_DBUS_METHOD_FLAG_ASYNC},
+static const GDBusMethodTable device_methods[] = {
+	{ GDBUS_METHOD("GetProperties",
+				NULL, GDBUS_ARGS({ "properties", "a{sv}" }),
+				get_properties) },
+	{ GDBUS_METHOD("SetProperty",
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" }), NULL,
+			set_property) },
+	{ GDBUS_ASYNC_METHOD("DiscoverServices",
+			GDBUS_ARGS({ "pattern", "s" }),
+			GDBUS_ARGS({ "services", "a{us}" }),
+			discover_services) },
+	{ GDBUS_METHOD("CancelDiscovery", NULL, NULL, cancel_discover) },
+	{ GDBUS_ASYNC_METHOD("Disconnect", NULL, NULL, disconnect) },
 	{ }
 };
 
-static GDBusSignalTable device_signals[] = {
-	{ "PropertyChanged",		"sv"	},
-	{ "DisconnectRequested",	""	},
+static const GDBusSignalTable device_signals[] = {
+	{ GDBUS_SIGNAL("PropertyChanged",
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" })) },
+	{ GDBUS_SIGNAL("DisconnectRequested", NULL) },
 	{ }
 };
 
@@ -955,6 +1003,19 @@ static void device_set_vendor(struct btd_device *device, uint16_t value)
 				DBUS_TYPE_UINT16, &value);
 }
 
+static void device_set_vendor_src(struct btd_device *device, uint16_t value)
+{
+	DBusConnection *conn = get_dbus_connection();
+
+	if (device->vendor_src == value)
+		return;
+
+	device->vendor_src = value;
+
+	emit_property_changed(conn, device->path, DEVICE_INTERFACE,
+				"VendorSource", DBUS_TYPE_UINT16, &value);
+}
+
 static void device_set_product(struct btd_device *device, uint16_t value)
 {
 	DBusConnection *conn = get_dbus_connection();
@@ -983,7 +1044,7 @@ static void device_set_version(struct btd_device *device, uint16_t value)
 
 struct btd_device *device_create(DBusConnection *conn,
 				struct btd_adapter *adapter,
-				const gchar *address, addr_type_t type)
+				const gchar *address, uint8_t bdaddr_type)
 {
 	gchar *address_up;
 	struct btd_device *device;
@@ -1012,7 +1073,7 @@ struct btd_device *device_create(DBusConnection *conn,
 
 	str2ba(address, &device->bdaddr);
 	device->adapter = adapter;
-	device->type = type;
+	device->bdaddr_type = bdaddr_type;
 	adapter_get_address(adapter, &src);
 	ba2str(&src, srcaddr);
 	read_device_name(srcaddr, address, device->name);
@@ -1024,6 +1085,12 @@ struct btd_device *device_create(DBusConnection *conn,
 		device_block(conn, device, FALSE);
 
 	if (read_link_key(&src, &device->bdaddr, NULL, NULL) == 0) {
+		device_set_paired(device, TRUE);
+		device_set_bonded(device, TRUE);
+	}
+
+	if (device_is_le(device) && has_longtermkeys(&src, &device->bdaddr,
+							device->bdaddr_type)) {
 		device_set_paired(device, TRUE);
 		device_set_bonded(device, TRUE);
 	}
@@ -1069,6 +1136,11 @@ uint16_t btd_device_get_vendor(struct btd_device *device)
 	return device->vendor;
 }
 
+uint16_t btd_device_get_vendor_src(struct btd_device *device)
+{
+	return device->vendor_src;
+}
+
 uint16_t btd_device_get_product(struct btd_device *device)
 {
 	return device->product;
@@ -1082,23 +1154,33 @@ uint16_t btd_device_get_version(struct btd_device *device)
 static void device_remove_stored(struct btd_device *device)
 {
 	bdaddr_t src;
-	char addr[18];
+	char key[20];
 	DBusConnection *conn = get_dbus_connection();
 
 	adapter_get_address(device->adapter, &src);
-	ba2str(&device->bdaddr, addr);
+	ba2str(&device->bdaddr, key);
+
+	/* key: address only */
+	delete_entry(&src, "profiles", key);
+	delete_entry(&src, "trusts", key);
 
 	if (device_is_bonded(device)) {
-		delete_entry(&src, "linkkeys", addr);
-		delete_entry(&src, "aliases", addr);
+		delete_entry(&src, "linkkeys", key);
+		delete_entry(&src, "aliases", key);
+
+		/* key: address#type */
+		sprintf(&key[17], "#%hhu", device->bdaddr_type);
+
+		delete_entry(&src, "longtermkeys", key);
+
 		device_set_bonded(device, FALSE);
 		device->paired = FALSE;
-		btd_adapter_remove_bonding(device->adapter, &device->bdaddr);
+		btd_adapter_remove_bonding(device->adapter, &device->bdaddr,
+							device->bdaddr_type);
 	}
-	delete_entry(&src, "profiles", addr);
-	delete_entry(&src, "trusts", addr);
+
 	delete_all_records(&src, &device->bdaddr);
-	delete_device_service(&src, &device->bdaddr);
+	delete_device_service(&src, &device->bdaddr, device->bdaddr_type);
 
 	if (device->blocked)
 		device_unblock(conn, device, TRUE, FALSE);
@@ -1496,7 +1578,7 @@ GSList *device_services_from_record(struct btd_device *device, GSList *profiles)
 	for (l = profiles; l; l = l->next) {
 		const char *profile_uuid = l->data;
 		const sdp_record_t *rec;
-		struct att_primary *prim;
+		struct gatt_primary *prim;
 		uint16_t start = 0, end = 0, psm = 0;
 		uuid_t prim_uuid;
 
@@ -1510,9 +1592,9 @@ GSList *device_services_from_record(struct btd_device *device, GSList *profiles)
 		if (!gatt_parse_record(rec, &prim_uuid, &psm, &start, &end))
 			continue;
 
-		prim = g_new0(struct att_primary, 1);
-		prim->start = start;
-		prim->end = end;
+		prim = g_new0(struct gatt_primary, 1);
+		prim->range.start = start;
+		prim->range.end = end;
 		sdp_uuid2strn(&prim_uuid, prim->uuid, sizeof(prim->uuid));
 
 		prim_list = g_slist_append(prim_list, prim);
@@ -1604,7 +1686,7 @@ cleanup:
 	}
 
 	device->browse = NULL;
-	browse_request_free(req, FALSE);
+	browse_request_free(req);
 }
 
 static void browse_cb(sdp_list_t *recs, int err, gpointer user_data)
@@ -1665,13 +1747,13 @@ static char *primary_list_to_string(GSList *primary_list)
 	services = g_string_new(NULL);
 
 	for (l = primary_list; l; l = l->next) {
-		struct att_primary *primary = l->data;
+		struct gatt_primary *primary = l->data;
 		char service[64];
 
 		memset(service, 0, sizeof(service));
 
 		snprintf(service, sizeof(service), "%04X#%04X#%s ",
-				primary->start, primary->end, primary->uuid);
+				primary->range.start, primary->range.end, primary->uuid);
 
 		services = g_string_append(services, service);
 	}
@@ -1688,7 +1770,7 @@ static void store_services(struct btd_device *device)
 	adapter_get_address(adapter, &sba);
 	device_get_address(device, &dba, NULL);
 
-	write_device_services(&sba, &dba, str);
+	write_device_services(&sba, &dba, device->bdaddr_type, str);
 
 	g_free(str);
 }
@@ -1719,137 +1801,196 @@ static void att_connect_dispatched(gpointer user_data)
 
 static gboolean att_connect(gpointer user_data);
 
-static void attrib_disconnected(gpointer user_data)
+static gboolean attrib_disconnected_cb(GIOChannel *io, GIOCondition cond,
+							gpointer user_data)
 {
 	struct btd_device *device = user_data;
-	GIOChannel *io;
 	int sock, err = 0;
 	socklen_t len;
 
-	io = g_attrib_get_channel(device->attrib);
+	if (device->browse)
+		goto done;
+
 	sock = g_io_channel_unix_get_fd(io);
 	len = sizeof(err);
 	getsockopt(sock, SOL_SOCKET, SO_ERROR, &err, &len);
 
 	g_slist_foreach(device->attios, attio_disconnected, NULL);
 
-	attrib_channel_detach(device->attrib, device->attachid);
-	g_attrib_unref(device->attrib);
-	device->attrib = NULL;
-
-	if (device->auto_connect == FALSE)
-		return;
-
-	if (err != ETIMEDOUT)
-		return;
+	if (device->auto_connect == FALSE || err != ETIMEDOUT)
+		goto done;
 
 	device->auto_id = g_timeout_add_seconds_full(G_PRIORITY_DEFAULT_IDLE,
 						AUTO_CONNECTION_INTERVAL,
 						att_connect, device,
 						att_connect_dispatched);
+
+done:
+	att_cleanup(device);
+
+	return FALSE;
+}
+
+static void appearance_cb(guint8 status, const guint8 *pdu, guint16 plen,
+							gpointer user_data)
+{
+	struct btd_device *device = user_data;
+	struct btd_adapter *adapter = device->adapter;
+	struct att_data_list *list =  NULL;
+	uint16_t app;
+	bdaddr_t src;
+	uint8_t *atval;
+
+	if (status != 0) {
+		DBG("Read characteristics by UUID failed: %s\n",
+							att_ecode2str(status));
+		goto done;
+	}
+
+	list = dec_read_by_type_resp(pdu, plen);
+	if (list == NULL)
+		goto done;
+
+	if (list->len != 4) {
+		DBG("Appearance value: invalid data");
+		goto done;
+	}
+
+	/* A device shall have only one instance of the
+	Appearance characteristic. */
+	atval = list->data[0] + 2; /* skip handle value */
+	app = att_get_u16(atval);
+
+	adapter_get_address(adapter, &src);
+	write_remote_appearance(&src, &device->bdaddr, device->bdaddr_type,
+									app);
+
+done:
+	att_data_list_free(list);
+	if (device->attios == NULL && device->attios_offline == NULL)
+		att_cleanup(device);
 }
 
 static void primary_cb(GSList *services, guint8 status, gpointer user_data)
 {
 	struct browse_req *req = user_data;
 	struct btd_device *device = req->device;
+	struct gatt_primary *gap_prim = NULL;
 	GSList *l, *uuids = NULL;
-	gboolean shutdown;
 
 	if (status) {
-		DBusMessage *reply;
-		reply = btd_error_failed(req->msg, att_ecode2str(status));
-		g_dbus_send_message(req->conn, reply);
-		shutdown = TRUE;
+		if (req->msg) {
+			DBusMessage *reply;
+			reply = btd_error_failed(req->msg,
+							att_ecode2str(status));
+			g_dbus_send_message(req->conn, reply);
+		}
 		goto done;
 	}
 
 	device_set_temporary(device, FALSE);
 
 	for (l = services; l; l = l->next) {
-		struct att_primary *prim = l->data;
+		struct gatt_primary *prim = l->data;
+
+		if (strcmp(prim->uuid, GAP_SVC_UUID) == 0)
+			gap_prim = prim;
+
 		uuids = g_slist_append(uuids, prim->uuid);
 	}
-
-	/*
-	 * Profiles may register attio callbacks in the probing callback.
-	 * GAttrib reference can be released if the registered callbacks
-	 * list is emtpy.
-	 */
-	device->attrib = g_attrib_ref(req->attrib);
 
 	device_register_services(req->conn, device, g_slist_copy(services), -1);
 	device_probe_drivers(device, uuids);
 
-	if (device->attios == NULL && device->attios_offline == NULL) {
-		attrib_channel_detach(device->attrib, device->attachid);
-		g_attrib_unref(device->attrib);
-		device->attrib = NULL;
-	} else
-		g_attrib_set_disconnect_function(device->attrib,
-						attrib_disconnected, device);
+	if (gap_prim) {
+		/* Read appearance characteristic */
+		bt_uuid_t uuid;
+
+		bt_uuid16_create(&uuid, APPEARANCE_CHR_UUID);
+
+		gatt_read_char_by_uuid(device->attrib, gap_prim->range.start,
+			gap_prim->range.end, &uuid, appearance_cb, device);
+	} else if (device->attios == NULL && device->attios_offline == NULL)
+		att_cleanup(device);
 
 	g_slist_free(uuids);
 
 	services_changed(device);
-	create_device_reply(device, req);
+	if (req->msg)
+		create_device_reply(device, req);
 
 	store_services(device);
-	shutdown = FALSE;
 
 done:
 	device->browse = NULL;
-	browse_request_free(req, shutdown);
+	browse_request_free(req);
 }
 
 static void att_connect_cb(GIOChannel *io, GError *gerr, gpointer user_data)
 {
-	struct btd_device *device = user_data;
-	struct browse_req *req = device->browse;
+	struct att_callbacks *attcb = user_data;
+	struct btd_device *device = attcb->user_data;
 	GAttrib *attrib;
 
-	if (gerr) {
-		DBusMessage *reply;
+	g_io_channel_unref(device->att_io);
+	device->att_io = NULL;
 
+	if (gerr) {
 		DBG("%s", gerr->message);
 
-		if (req) {
-			reply = btd_error_failed(req->msg, gerr->message);
-			g_dbus_send_message(req->conn, reply);
+		if (attcb->error)
+			attcb->error(gerr, user_data);
 
-			device->browse = NULL;
-			browse_request_free(req, TRUE);
-		} else if (device->auto_connect)
-			device->auto_id = g_timeout_add_seconds_full(
-						G_PRIORITY_DEFAULT_IDLE,
+		goto done;
+	}
+
+	attrib = g_attrib_new(io);
+	device->attachid = attrib_channel_attach(attrib);
+	if (device->attachid == 0)
+		error("Attribute server attach failure!");
+
+	device->attrib = attrib;
+	device->cleanup_id = g_io_add_watch(io, G_IO_HUP,
+					attrib_disconnected_cb, device);
+
+	if (attcb->success)
+		attcb->success(user_data);
+done:
+	g_free(attcb);
+}
+
+static void att_error_cb(const GError *gerr, gpointer user_data)
+{
+	struct att_callbacks *attcb = user_data;
+	struct btd_device *device = attcb->user_data;
+
+	if (device->auto_connect == FALSE)
+		return;
+
+	device->auto_id = g_timeout_add_seconds_full(G_PRIORITY_DEFAULT_IDLE,
 						AUTO_CONNECTION_INTERVAL,
 						att_connect, device,
 						att_connect_dispatched);
 
+	DBG("Enabling automatic connections");
+}
+
+static void att_success_cb(gpointer user_data)
+{
+	struct att_callbacks *attcb = user_data;
+	struct btd_device *device = attcb->user_data;
+
+	if (device->attios == NULL)
 		return;
-	}
 
-	attrib = g_attrib_new(io);
-	device->attachid = attrib_channel_attach(attrib, TRUE);
-	if (device->attachid == 0)
-		error("Attribute server attach failure!");
-
-	if (req) {
-		req->attrib = attrib;
-		gatt_discover_primary(req->attrib, NULL, primary_cb, req);
-	} else if (device->attios) {
-		device->attrib = attrib;
-		g_attrib_set_disconnect_function(device->attrib,
-						attrib_disconnected, device);
-		g_slist_foreach(device->attios, attio_connected,
-							device->attrib);
-	}
+	g_slist_foreach(device->attios, attio_connected, device->attrib);
 }
 
 static gboolean att_connect(gpointer user_data)
 {
 	struct btd_device *device = user_data;
 	struct btd_adapter *adapter = device->adapter;
+	struct att_callbacks *attcb;
 	GIOChannel *io;
 	GError *gerr = NULL;
 	char addr[18];
@@ -1860,9 +2001,14 @@ static gboolean att_connect(gpointer user_data)
 
 	DBG("Connection attempt to: %s", addr);
 
+	attcb = g_new0(struct att_callbacks, 1);
+	attcb->error = att_error_cb;
+	attcb->success = att_success_cb;
+	attcb->user_data = device;
+
 	if (device_is_bredr(device)) {
 		io = bt_io_connect(BT_IO_L2CAP, att_connect_cb,
-					device, NULL, &gerr,
+					attcb, NULL, &gerr,
 					BT_IO_OPT_SOURCE_BDADDR, &sba,
 					BT_IO_OPT_DEST_BDADDR, &device->bdaddr,
 					BT_IO_OPT_PSM, ATT_PSM,
@@ -1870,29 +2016,58 @@ static gboolean att_connect(gpointer user_data)
 					BT_IO_OPT_INVALID);
 	} else {
 		io = bt_io_connect(BT_IO_L2CAP, att_connect_cb,
-					device, NULL, &gerr,
-					BT_IO_OPT_SOURCE_BDADDR, &sba,
-					BT_IO_OPT_DEST_BDADDR, &device->bdaddr,
-					BT_IO_OPT_CID, ATT_CID,
-					BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_MEDIUM,
-					BT_IO_OPT_INVALID);
+				attcb, NULL, &gerr,
+				BT_IO_OPT_SOURCE_BDADDR, &sba,
+				BT_IO_OPT_DEST_BDADDR, &device->bdaddr,
+				BT_IO_OPT_DEST_TYPE, device->bdaddr_type,
+				BT_IO_OPT_CID, ATT_CID,
+				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_MEDIUM,
+				BT_IO_OPT_INVALID);
 	}
 
 	if (io == NULL) {
 		error("ATT bt_io_connect(%s): %s", addr, gerr->message);
 		g_error_free(gerr);
+		g_free(attcb);
 		return FALSE;
 	}
 
-	g_io_channel_unref(io);
+	device->att_io = io;
 
 	return FALSE;
+}
+
+static void att_browse_error_cb(const GError *gerr, gpointer user_data)
+{
+	struct att_callbacks *attcb = user_data;
+	struct btd_device *device = attcb->user_data;
+	struct browse_req *req = device->browse;
+
+	if (req->msg) {
+		DBusMessage *reply;
+
+		reply = btd_error_failed(req->msg, gerr->message);
+		g_dbus_send_message(req->conn, reply);
+	}
+
+	device->browse = NULL;
+	browse_request_free(req);
+}
+
+static void att_browse_cb(gpointer user_data)
+{
+	struct att_callbacks *attcb = user_data;
+	struct btd_device *device = attcb->user_data;
+
+	gatt_discover_primary(device->attrib, NULL, primary_cb,
+							device->browse);
 }
 
 int device_browse_primary(struct btd_device *device, DBusConnection *conn,
 				DBusMessage *msg, gboolean secure)
 {
 	struct btd_adapter *adapter = device->adapter;
+	struct att_callbacks *attcb;
 	struct browse_req *req;
 	BtIOSecLevel sec_level;
 	bdaddr_t src;
@@ -1900,28 +2075,53 @@ int device_browse_primary(struct btd_device *device, DBusConnection *conn,
 	if (device->browse)
 		return -EBUSY;
 
+	/* FIXME: GATT service updates (implemented in update_services() for
+	 * SDP) are not supported yet. It will be supported once client side
+	 * "Services Changed" characteristic handling is implemented. */
+	if (device->primaries) {
+		error("Could not update GATT services");
+		return -ENOSYS;
+	}
+
 	req = g_new0(struct browse_req, 1);
 	req->device = btd_device_ref(device);
-
 	adapter_get_address(adapter, &src);
+
+	device->browse = req;
+
+	if (device->attrib) {
+		gatt_discover_primary(device->attrib, NULL, primary_cb, req);
+		goto done;
+	}
 
 	sec_level = secure ? BT_IO_SEC_HIGH : BT_IO_SEC_LOW;
 
-	req->io = bt_io_connect(BT_IO_L2CAP, att_connect_cb,
-				device, NULL, NULL,
+	attcb = g_new0(struct att_callbacks, 1);
+	attcb->error = att_browse_error_cb;
+	attcb->success = att_browse_cb;
+	attcb->user_data = device;
+
+	device->att_io = bt_io_connect(BT_IO_L2CAP, att_connect_cb,
+				attcb, NULL, NULL,
 				BT_IO_OPT_SOURCE_BDADDR, &src,
 				BT_IO_OPT_DEST_BDADDR, &device->bdaddr,
+				BT_IO_OPT_DEST_TYPE, device->bdaddr_type,
 				BT_IO_OPT_CID, ATT_CID,
 				BT_IO_OPT_SEC_LEVEL, sec_level,
 				BT_IO_OPT_INVALID);
 
-	if (req->io == NULL) {
-		browse_request_free(req, FALSE);
+	if (device->att_io == NULL) {
+		device->browse = NULL;
+		browse_request_free(req);
+		g_free(attcb);
 		return -EIO;
 	}
 
+done:
+	if (conn == NULL)
+		conn = get_dbus_connection();
+
 	req->conn = dbus_connection_ref(conn);
-	device->browse = req;
 
 	if (msg) {
 		const char *sender = dbus_message_get_sender(msg);
@@ -1966,7 +2166,7 @@ int device_browse_sdp(struct btd_device *device, DBusConnection *conn,
 
 	err = bt_search_service(&src, &device->bdaddr, &uuid, cb, req, NULL);
 	if (err < 0) {
-		browse_request_free(req, FALSE);
+		browse_request_free(req);
 		return err;
 	}
 
@@ -2000,11 +2200,24 @@ struct btd_adapter *device_get_adapter(struct btd_device *device)
 }
 
 void device_get_address(struct btd_device *device, bdaddr_t *bdaddr,
-							addr_type_t *type)
+							uint8_t *bdaddr_type)
 {
 	bacpy(bdaddr, &device->bdaddr);
-	if (type != NULL)
-		*type = device->type;
+	if (bdaddr_type != NULL)
+		*bdaddr_type = device->bdaddr_type;
+}
+
+void device_set_addr_type(struct btd_device *device, uint8_t bdaddr_type)
+{
+	if (device == NULL)
+		return;
+
+	device->bdaddr_type = bdaddr_type;
+}
+
+uint8_t device_get_addr_type(struct btd_device *device)
+{
+	return device->bdaddr_type;
 }
 
 const gchar *device_get_path(struct btd_device *device)
@@ -2097,7 +2310,10 @@ static gboolean start_discovery(gpointer user_data)
 {
 	struct btd_device *device = user_data;
 
-	device_browse_sdp(device, NULL, NULL, NULL, TRUE);
+	if (device_is_bredr(device))
+		device_browse_sdp(device, NULL, NULL, NULL, TRUE);
+	else
+		device_browse_primary(device, NULL, NULL, FALSE);
 
 	device->discov_timer = 0;
 
@@ -2181,9 +2397,6 @@ static void bonding_request_free(struct bonding_req *bonding)
 	if (bonding->conn)
 		dbus_connection_unref(bonding->conn);
 
-	if (bonding->io)
-		g_io_channel_unref(bonding->io);
-
 	device = bonding->device;
 	g_free(bonding);
 
@@ -2208,7 +2421,8 @@ void device_set_paired(struct btd_device *device, gboolean value)
 		return;
 
 	if (!value)
-		btd_adapter_remove_bonding(device->adapter, &device->bdaddr);
+		btd_adapter_remove_bonding(device->adapter, &device->bdaddr,
+							device->bdaddr_type);
 
 	device->paired = value;
 
@@ -2240,7 +2454,6 @@ static struct bonding_req *bonding_request_new(DBusConnection *conn,
 {
 	struct bonding_req *bonding;
 	const char *name = dbus_message_get_sender(msg);
-	struct agent *agent;
 	char addr[18];
 
 	ba2str(&device->bdaddr, addr);
@@ -2249,16 +2462,10 @@ static struct bonding_req *bonding_request_new(DBusConnection *conn,
 	if (!agent_path)
 		goto proceed;
 
-	agent = agent_create(device->adapter, name, agent_path,
+	device->agent = agent_create(device->adapter, name, agent_path,
 					capability,
 					device_agent_removed,
 					device);
-	if (!agent) {
-		error("Unable to create a new agent");
-		return NULL;
-	}
-
-	device->agent = agent;
 
 	DBG("Temporary agent registered for %s at %s:%s",
 			addr, name, agent_path);
@@ -2288,17 +2495,6 @@ static void create_bond_req_exit(DBusConnection *conn, void *user_data)
 		device_request_disconnect(device, NULL);
 	}
 }
-#ifdef __TIZEN_PATCH__
-void set_cancel_from_authentication_req(void *user_data)
-{
-	struct authentication_req *auth = (struct authentication_req *)user_data;
-
-	if (auth && auth->device && auth->device->bonding)
-	{
-		auth->device->bonding->cancel_by_user = 1;
-	}
-}
-#endif
 
 DBusMessage *device_create_bonding(struct btd_device *device,
 					DBusConnection *conn,
@@ -2306,40 +2502,53 @@ DBusMessage *device_create_bonding(struct btd_device *device,
 					const char *agent_path,
 					uint8_t capability)
 {
-	char filename[PATH_MAX + 1];
-	char *str, srcaddr[18], dstaddr[18];
 	struct btd_adapter *adapter = device->adapter;
 	struct bonding_req *bonding;
-	bdaddr_t src;
 	int err;
-
-	adapter_get_address(adapter, &src);
-	ba2str(&src, srcaddr);
-	ba2str(&device->bdaddr, dstaddr);
 
 	if (device->bonding)
 		return btd_error_in_progress(msg);
 
-	/* check if a link key already exists */
-	create_name(filename, PATH_MAX, STORAGEDIR, srcaddr,
-			"linkkeys");
-
-	str = textfile_caseget(filename, dstaddr);
-	if (str) {
-		free(str);
+	if (device_is_bonded(device))
 		return btd_error_already_exists(msg);
+
+	if (device_is_le(device)) {
+		struct att_callbacks *attcb;
+		GError *gerr = NULL;
+		bdaddr_t sba;
+
+		adapter_get_address(adapter, &sba);
+
+		attcb = g_new0(struct att_callbacks, 1);
+		attcb->user_data = device;
+
+		device->att_io = bt_io_connect(BT_IO_L2CAP, att_connect_cb,
+				attcb, NULL, &gerr,
+				BT_IO_OPT_SOURCE_BDADDR, &sba,
+				BT_IO_OPT_DEST_BDADDR, &device->bdaddr,
+				BT_IO_OPT_DEST_TYPE, device->bdaddr_type,
+				BT_IO_OPT_CID, ATT_CID,
+				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_LOW,
+				BT_IO_OPT_INVALID);
+
+		if (device->att_io == NULL) {
+			DBusMessage *reply = btd_error_failed(msg,
+								gerr->message);
+
+			error("Bonding bt_io_connect(): %s", gerr->message);
+			g_error_free(gerr);
+			g_free(attcb);
+			return reply;
+		}
 	}
 
-	err = adapter_create_bonding(adapter, &device->bdaddr, capability);
+	err = adapter_create_bonding(adapter, &device->bdaddr,
+					device->bdaddr_type, capability);
 	if (err < 0)
 		return btd_error_failed(msg, strerror(-err));
 
 	bonding = bonding_request_new(conn, msg, device, agent_path,
 					capability);
-	if (!bonding) {
-		adapter_cancel_bonding(adapter, &device->bdaddr);
-		return NULL;
-	}
 
 	bonding->listener_id = g_dbus_add_disconnect_watch(conn,
 						dbus_message_get_sender(msg),
@@ -2356,12 +2565,15 @@ void device_simple_pairing_complete(struct btd_device *device, uint8_t status)
 {
 	struct authentication_req *auth = device->authr;
 
-	if (auth && auth->type == AUTH_TYPE_NOTIFY && auth->agent)
+	if (auth && (auth->type == AUTH_TYPE_NOTIFY_PASSKEY
+		     || auth->type == AUTH_TYPE_NOTIFY_PINCODE) && auth->agent)
 		agent_cancel(auth->agent);
 }
 
 static void device_auth_req_free(struct btd_device *device)
 {
+	if (device->authr)
+		g_free(device->authr->pincode);
 	g_free(device->authr);
 	device->authr = NULL;
 }
@@ -2373,7 +2585,8 @@ void device_bonding_complete(struct btd_device *device, uint8_t status)
 
 	DBG("bonding %p status 0x%02x", bonding, status);
 
-	if (auth && auth->type == AUTH_TYPE_NOTIFY && auth->agent)
+	if (auth && (auth->type == AUTH_TYPE_NOTIFY_PASSKEY
+		     || auth->type == AUTH_TYPE_NOTIFY_PINCODE) && auth->agent)
 		agent_cancel(auth->agent);
 
 	if (status) {
@@ -2403,8 +2616,12 @@ void device_bonding_complete(struct btd_device *device, uint8_t status)
 			device->discov_timer = 0;
 		}
 
-		device_browse_sdp(device, bonding->conn, bonding->msg,
-				NULL, FALSE);
+		if (device_is_bredr(device))
+			device_browse_sdp(device, bonding->conn, bonding->msg,
+								NULL, FALSE);
+		else
+			device_browse_primary(device, bonding->conn,
+							bonding->msg, FALSE);
 
 		bonding_request_free(bonding);
 	} else {
@@ -2474,12 +2691,10 @@ void device_cancel_bonding(struct btd_device *device, uint8_t status)
 		device_cancel_authentication(device, FALSE);
 
 #ifdef __TIZEN_PATCH__
-	if (bonding->cancel_by_user)
-	{
+	if (bonding->cancel_by_user) {
 		info("Bonding Cancel by user");
 		reply = new_authentication_return(bonding->msg, 0x2a);
-	}
-	else
+	} else
 #endif
 	reply = new_authentication_return(bonding->msg, status);
 	g_dbus_send_message(bonding->conn, reply);
@@ -2495,10 +2710,18 @@ static void pincode_cb(struct agent *agent, DBusError *err,
 	struct btd_device *device = auth->device;
 	struct btd_adapter *adapter = device_get_adapter(device);
 	struct agent *adapter_agent = adapter_get_agent(adapter);
+#ifdef __TIZEN_PATCH__
+	struct bonding_req *bonding = device->bonding;
 
+	if (err == NULL)
+		goto done;
+
+	if (g_str_equal(DBUS_ERROR_UNKNOWN_METHOD, err->name) ||
+			g_str_equal(DBUS_ERROR_NO_REPLY, err->name)) {
+#else
 	if (err && (g_str_equal(DBUS_ERROR_UNKNOWN_METHOD, err->name) ||
 				g_str_equal(DBUS_ERROR_NO_REPLY, err->name))) {
-
+#endif
 		if (auth->agent == adapter_agent || adapter_agent == NULL)
 			goto done;
 
@@ -2509,6 +2732,11 @@ static void pincode_cb(struct agent *agent, DBusError *err,
 		auth->agent = adapter_agent;
 		return;
 	}
+
+#ifdef __TIZEN_PATCH__
+	if (bonding)
+		bonding->cancel_by_user = TRUE;
+#endif
 
 done:
 	/* No need to reply anything if the authentication already failed */
@@ -2527,10 +2755,18 @@ static void confirm_cb(struct agent *agent, DBusError *err, void *data)
 	struct btd_device *device = auth->device;
 	struct btd_adapter *adapter = device_get_adapter(device);
 	struct agent *adapter_agent = adapter_get_agent(adapter);
+#ifdef __TIZEN_PATCH__
+	struct bonding_req *bonding = device->bonding;
 
+	if (err == NULL)
+		goto done;
+
+	if (g_str_equal(DBUS_ERROR_UNKNOWN_METHOD, err->name) ||
+			g_str_equal(DBUS_ERROR_NO_REPLY, err->name)) {
+#else
 	if (err && (g_str_equal(DBUS_ERROR_UNKNOWN_METHOD, err->name) ||
 				g_str_equal(DBUS_ERROR_NO_REPLY, err->name))) {
-
+#endif
 		if (auth->agent == adapter_agent || adapter_agent == NULL)
 			goto done;
 
@@ -2542,6 +2778,11 @@ static void confirm_cb(struct agent *agent, DBusError *err, void *data)
 		auth->agent = adapter_agent;
 		return;
 	}
+
+#ifdef __TIZEN_PATCH__
+	if (bonding)
+		bonding->cancel_by_user = TRUE;
+#endif
 
 done:
 	/* No need to reply anything if the authentication already failed */
@@ -2561,9 +2802,18 @@ static void passkey_cb(struct agent *agent, DBusError *err,
 	struct btd_device *device = auth->device;
 	struct btd_adapter *adapter = device_get_adapter(device);
 	struct agent *adapter_agent = adapter_get_agent(adapter);
+#ifdef __TIZEN_PATCH__
+	struct bonding_req *bonding = device->bonding;
 
+	if (err == NULL)
+		goto done;
+
+	if (g_str_equal(DBUS_ERROR_UNKNOWN_METHOD, err->name) ||
+			g_str_equal(DBUS_ERROR_NO_REPLY, err->name)) {
+#else
 	if (err && (g_str_equal(DBUS_ERROR_UNKNOWN_METHOD, err->name) ||
 				g_str_equal(DBUS_ERROR_NO_REPLY, err->name))) {
+#endif
 
 		if (auth->agent == adapter_agent || adapter_agent == NULL)
 			goto done;
@@ -2576,6 +2826,11 @@ static void passkey_cb(struct agent *agent, DBusError *err,
 		return;
 	}
 
+#ifdef __TIZEN_PATCH__
+	if (bonding)
+		bonding->cancel_by_user = TRUE;
+#endif
+
 done:
 	/* No need to reply anything if the authentication already failed */
 	if (auth->cb == NULL)
@@ -2587,8 +2842,60 @@ done:
 	device->authr->agent = NULL;
 }
 
+static void display_pincode_cb(struct agent *agent, DBusError *err, void *data)
+{
+	struct authentication_req *auth = data;
+	struct btd_device *device = auth->device;
+	struct btd_adapter *adapter = device_get_adapter(device);
+	struct agent *adapter_agent = adapter_get_agent(adapter);
+#ifdef __TIZEN_PATCH__
+	struct bonding_req *bonding = device->bonding;
+
+	if (err == NULL)
+		goto done;
+
+	if (g_str_equal(DBUS_ERROR_UNKNOWN_METHOD, err->name) ||
+			g_str_equal(DBUS_ERROR_NO_REPLY, err->name)) {
+#else
+	if (err && (g_str_equal(DBUS_ERROR_UNKNOWN_METHOD, err->name) ||
+				g_str_equal(DBUS_ERROR_NO_REPLY, err->name))) {
+#endif
+
+		/* Request a pincode if we fail to display one */
+		if (auth->agent == adapter_agent || adapter_agent == NULL) {
+			if (agent_request_pincode(agent, device, pincode_cb,
+						auth->secure, auth, NULL) < 0)
+				goto done;
+			return;
+		}
+
+		if (agent_display_pincode(adapter_agent, device, auth->pincode,
+					display_pincode_cb, auth, NULL) < 0)
+			goto done;
+
+		auth->agent = adapter_agent;
+		return;
+	}
+#ifdef __TIZEN_PATCH__
+	if (bonding)
+		bonding->cancel_by_user = TRUE;
+#endif
+
+done:
+	/* No need to reply anything if the authentication already failed */
+	if (auth->cb == NULL)
+		return;
+
+	((agent_pincode_cb) auth->cb)(agent, err, auth->pincode, device);
+
+	g_free(device->authr->pincode);
+	device->authr->pincode = NULL;
+	device->authr->cb = NULL;
+	device->authr->agent = NULL;
+}
+
 int device_request_authentication(struct btd_device *device, auth_type_t type,
-				uint32_t passkey, gboolean secure, void *cb)
+					void *data, gboolean secure, void *cb)
 {
 	struct authentication_req *auth;
 	struct agent *agent;
@@ -2614,7 +2921,6 @@ int device_request_authentication(struct btd_device *device, auth_type_t type,
 	auth->device = device;
 	auth->cb = cb;
 	auth->type = type;
-	auth->passkey = passkey;
 	auth->secure = secure;
 	device->authr = auth;
 
@@ -2628,11 +2934,18 @@ int device_request_authentication(struct btd_device *device, auth_type_t type,
 								auth, NULL);
 		break;
 	case AUTH_TYPE_CONFIRM:
-		err = agent_request_confirmation(agent, device, passkey,
+		auth->passkey = *((uint32_t *) data);
+		err = agent_request_confirmation(agent, device, auth->passkey,
 						confirm_cb, auth, NULL);
 		break;
-	case AUTH_TYPE_NOTIFY:
-		err = agent_display_passkey(agent, device, passkey);
+	case AUTH_TYPE_NOTIFY_PASSKEY:
+		auth->passkey = *((uint32_t *) data);
+		err = agent_display_passkey(agent, device, auth->passkey);
+		break;
+	case AUTH_TYPE_NOTIFY_PINCODE:
+		auth->pincode = g_strdup((const char *) data);
+		err = agent_display_pincode(agent, device, auth->pincode,
+						display_pincode_cb, auth, NULL);
 		break;
 	default:
 		err = -EINVAL;
@@ -2671,8 +2984,11 @@ static void cancel_authentication(struct authentication_req *auth)
 	case AUTH_TYPE_PASSKEY:
 		((agent_passkey_cb) auth->cb)(agent, &err, 0, device);
 		break;
-	case AUTH_TYPE_NOTIFY:
+	case AUTH_TYPE_NOTIFY_PASSKEY:
 		/* User Notify doesn't require any reply */
+		break;
+	case AUTH_TYPE_NOTIFY_PINCODE:
+		((agent_pincode_cb) auth->cb)(agent, &err, NULL, device);
 		break;
 	}
 
@@ -2853,13 +3169,15 @@ guint btd_device_add_attio_callback(struct btd_device *device,
 		device->attios_offline = g_slist_append(device->attios_offline,
 									attio);
 		g_idle_add(notify_attios, device);
-	} else {
+		return attio->id;
+	}
+
+	device->attios = g_slist_append(device->attios, attio);
+
+	if (device->auto_id == 0)
 		device->auto_id = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
 						att_connect, device,
 						att_connect_dispatched);
-
-		device->attios = g_slist_append(device->attios, attio);
-	}
 
 	return attio->id;
 }
@@ -2898,15 +3216,22 @@ gboolean btd_device_remove_attio_callback(struct btd_device *device, guint id)
 	if (device->attios != NULL || device->attios_offline != NULL)
 		return TRUE;
 
-	if (device->attachid) {
-		attrib_channel_detach(device->attrib, device->attachid);
-		device->attachid = 0;
+	if (device->auto_id) {
+		g_source_remove(device->auto_id);
+		device->auto_id = 0;
 	}
 
-	if (device->attrib) {
-		g_attrib_unref(device->attrib);
-		device->attrib = NULL;
-	}
+	att_cleanup(device);
 
 	return TRUE;
+}
+
+void device_set_pnpid(struct btd_device *device, uint8_t vendor_id_src,
+			uint16_t vendor_id, uint16_t product_id,
+			uint16_t product_ver)
+{
+	device_set_vendor(device, vendor_id);
+	device_set_vendor_src(device, vendor_id_src);
+	device_set_product(device, product_id);
+	device_set_version(device, product_ver);
 }

@@ -35,21 +35,8 @@
 #include <bluetooth/hci.h>
 #include <bluetooth/sdp.h>
 
-#include "glib-compat.h"
 #include "glib-helper.h"
 #include "eir.h"
-
-#define EIR_FLAGS                   0x01  /* flags */
-#define EIR_UUID16_SOME             0x02  /* 16-bit UUID, more available */
-#define EIR_UUID16_ALL              0x03  /* 16-bit UUID, all listed */
-#define EIR_UUID32_SOME             0x04  /* 32-bit UUID, more available */
-#define EIR_UUID32_ALL              0x05  /* 32-bit UUID, all listed */
-#define EIR_UUID128_SOME            0x06  /* 128-bit UUID, more available */
-#define EIR_UUID128_ALL             0x07  /* 128-bit UUID, all listed */
-#define EIR_NAME_SHORT              0x08  /* shortened local name */
-#define EIR_NAME_COMPLETE           0x09  /* complete local name */
-#define EIR_TX_POWER                0x0A  /* transmit power level */
-#define EIR_DEVICE_ID               0x10  /* device ID */
 
 void eir_data_free(struct eir_data *eir)
 {
@@ -119,7 +106,7 @@ int eir_parse(struct eir_data *eir, uint8_t *eir_data, uint8_t eir_len)
 
 	while (len < eir_len - 1) {
 		uint8_t field_len = eir_data[0];
-		uint8_t name_len;
+		uint8_t data_len, *data = &eir_data[2];
 
 		/* Check for the end of EIR */
 		if (field_len == 0)
@@ -127,50 +114,59 @@ int eir_parse(struct eir_data *eir, uint8_t *eir_data, uint8_t eir_len)
 
 		len += field_len + 1;
 
-		/* Bail out if got incorrect length */
-		if (len > eir_len) {
-			eir_data_free(eir);
-			return -EINVAL;
-		}
+		/* Do not continue EIR Data parsing if got incorrect length */
+		if (len > eir_len)
+			break;
+
+		data_len = field_len - 1;
 
 		switch (eir_data[1]) {
 		case EIR_UUID16_SOME:
 		case EIR_UUID16_ALL:
-			eir_parse_uuid16(eir, &eir_data[2], field_len);
+			eir_parse_uuid16(eir, data, data_len);
 			break;
 
 		case EIR_UUID32_SOME:
 		case EIR_UUID32_ALL:
-			eir_parse_uuid32(eir, &eir_data[2], field_len);
+			eir_parse_uuid32(eir, data, data_len);
 			break;
 
 		case EIR_UUID128_SOME:
 		case EIR_UUID128_ALL:
-			eir_parse_uuid128(eir, &eir_data[2], field_len);
+			eir_parse_uuid128(eir, data, data_len);
 			break;
 
 		case EIR_FLAGS:
-			eir->flags = eir_data[2];
+			if (data_len > 0)
+				eir->flags = *data;
 			break;
 
 		case EIR_NAME_SHORT:
 		case EIR_NAME_COMPLETE:
 			/* Some vendors put a NUL byte terminator into
 			 * the name */
-			name_len = field_len - 1;
+			while (data_len > 0 && data[data_len - 1] == '\0')
+				data_len--;
 
-			while (name_len > 0 && eir_data[name_len - 1] == '\0')
-				name_len--;
-
-			if (!g_utf8_validate((char *) &eir_data[2],
-								name_len, NULL))
+			if (!g_utf8_validate((char *) data, data_len, NULL))
 				break;
 
 			g_free(eir->name);
 
-			eir->name = g_strndup((char *) &eir_data[2],
-								field_len - 1);
+			eir->name = g_strndup((char *) data, data_len);
 			eir->name_complete = eir_data[1] == EIR_NAME_COMPLETE;
+			break;
+
+		case EIR_CLASS_OF_DEV:
+			if (data_len < 3)
+				break;
+			memcpy(eir->dev_class, data, 3);
+			break;
+
+		case EIR_GAP_APPEARANCE:
+			if (data_len < 2)
+				break;
+			eir->appearance = bt_get_le16(data);
 			break;
 		}
 
@@ -240,7 +236,7 @@ static void eir_generate_uuid128(GSList *list, uint8_t *ptr, uint16_t *eir_len)
 
 void eir_create(const char *name, int8_t tx_power, uint16_t did_vendor,
 			uint16_t did_product, uint16_t did_version,
-			GSList *uuids, uint8_t *data)
+			uint16_t did_source, GSList *uuids, uint8_t *data)
 {
 	GSList *l;
 	uint8_t *ptr = data;
@@ -277,11 +273,10 @@ void eir_create(const char *name, int8_t tx_power, uint16_t did_vendor,
 	}
 
 	if (did_vendor != 0x0000) {
-		uint16_t source = 0x0002;
 		*ptr++ = 9;
 		*ptr++ = EIR_DEVICE_ID;
-		*ptr++ = (source & 0x00ff);
-		*ptr++ = (source & 0xff00) >> 8;
+		*ptr++ = (did_source & 0x00ff);
+		*ptr++ = (did_source & 0xff00) >> 8;
 		*ptr++ = (did_vendor & 0x00ff);
 		*ptr++ = (did_vendor & 0xff00) >> 8;
 		*ptr++ = (did_product & 0x00ff);
@@ -342,12 +337,12 @@ void eir_create(const char *name, int8_t tx_power, uint16_t did_vendor,
 		eir_generate_uuid128(uuids, ptr, &eir_len);
 }
 
-gboolean eir_has_complete_name(uint8_t *data, size_t len)
+gboolean eir_has_data_type(uint8_t *data, size_t len, uint8_t type)
 {
 	uint8_t field_len;
-	size_t parsed;
+	size_t parsed = 0;
 
-	for (parsed = 0; parsed < len - 1; parsed += field_len) {
+	while (parsed < len - 1) {
 		field_len = data[0];
 
 		if (field_len == 0)
@@ -358,11 +353,45 @@ gboolean eir_has_complete_name(uint8_t *data, size_t len)
 		if (parsed > len)
 			break;
 
-		if (data[1] == EIR_NAME_COMPLETE)
+		if (data[1] == type)
 			return TRUE;
 
 		data += field_len + 1;
 	}
 
 	return FALSE;
+}
+
+size_t eir_append_data(uint8_t *eir, size_t eir_len, uint8_t type,
+						uint8_t *data, size_t data_len)
+{
+	eir[eir_len++] = sizeof(type) + data_len;
+	eir[eir_len++] = type;
+	memcpy(&eir[eir_len], data, data_len);
+	eir_len += data_len;
+
+	return eir_len;
+}
+
+size_t eir_length(uint8_t *eir, size_t maxlen)
+{
+	uint8_t field_len;
+	size_t parsed = 0, length = 0;
+
+	while (parsed < maxlen - 1) {
+		field_len = eir[0];
+
+		if (field_len == 0)
+			break;
+
+		parsed += field_len + 1;
+
+		if (parsed > maxlen)
+			break;
+
+		length = parsed;
+		eir += field_len + 1;
+	}
+
+	return length;
 }

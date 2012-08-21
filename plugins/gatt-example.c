@@ -37,6 +37,8 @@
 #include "gattrib.h"
 #include "gatt-service.h"
 #include "att.h"
+#include "gatt.h"
+#include "att-database.h"
 #include "attrib-server.h"
 
 /* FIXME: Not defined by SIG? UUID128? */
@@ -92,7 +94,8 @@ static gint adapter_cmp(gconstpointer a, gconstpointer b)
 	return -1;
 }
 
-static uint8_t battery_state_read(struct attribute *a, gpointer user_data)
+static uint8_t battery_state_read(struct attribute *a,
+				  struct btd_device *device, gpointer user_data)
 {
 	struct btd_adapter *adapter = user_data;
 	uint8_t value;
@@ -105,8 +108,11 @@ static uint8_t battery_state_read(struct attribute *a, gpointer user_data)
 
 static gboolean register_battery_service(struct btd_adapter *adapter)
 {
-	return gatt_service_add(adapter, GATT_PRIM_SVC_UUID,
-			BATTERY_STATE_SVC_UUID,
+	bt_uuid_t uuid;
+
+	bt_uuid16_create(&uuid, BATTERY_STATE_SVC_UUID);
+
+	return gatt_service_add(adapter, GATT_PRIM_SVC_UUID, &uuid,
 			/* battery state characteristic */
 			GATT_OPT_CHR_UUID, BATTERY_STATE_UUID,
 			GATT_OPT_CHR_PROPS, ATT_CHAR_PROPER_READ |
@@ -129,7 +135,8 @@ static void register_termometer_service(struct gatt_example_adapter *adapter,
 	bt_uuid_t uuid;
 	int len;
 
-	start_handle = attrib_db_find_avail(adapter->adapter, svc_size);
+	bt_uuid16_create(&uuid, THERM_HUMIDITY_SVC_UUID);
+	start_handle = attrib_db_find_avail(adapter->adapter, &uuid, svc_size);
 	if (start_handle == 0) {
 		error("Not enough free handles to register service");
 		return;
@@ -226,10 +233,10 @@ static void register_termometer_service(struct gatt_example_adapter *adapter,
 	bt_uuid16_create(&uuid, GATT_CHARAC_USER_DESC_UUID);
 	len = strlen(desc_out_hum);
 	strncpy((char *) atval, desc_out_hum, len);
-	attrib_db_add(adapter->adapter, h++, &uuid, ATT_NONE, ATT_NOT_PERMITTED,
+	attrib_db_add(adapter->adapter, h, &uuid, ATT_NONE, ATT_NOT_PERMITTED,
 								atval, len);
 
-	g_assert(h - start_handle == svc_size);
+	g_assert(h - start_handle + 1 == svc_size);
 
 	/* Add an SDP record for the above service */
 	sdp_handle = attrib_create_sdp(adapter->adapter, start_handle,
@@ -250,7 +257,8 @@ static void register_manuf1_service(struct gatt_example_adapter *adapter,
 	bt_uuid_t uuid;
 	int len;
 
-	start_handle = attrib_db_find_avail(adapter->adapter, svc_size);
+	bt_uuid16_create(&uuid, MANUFACTURER_SVC_UUID);
+	start_handle = attrib_db_find_avail(adapter->adapter, &uuid, svc_size);
 	if (start_handle == 0) {
 		error("Not enough free handles to register service");
 		return;
@@ -293,10 +301,10 @@ static void register_manuf1_service(struct gatt_example_adapter *adapter,
 	bt_uuid16_create(&uuid, MANUFACTURER_SERIAL_UUID);
 	len = strlen(serial1);
 	strncpy((char *) atval, serial1, len);
-	attrib_db_add(adapter->adapter, h++, &uuid, ATT_NONE, ATT_NOT_PERMITTED,
+	attrib_db_add(adapter->adapter, h, &uuid, ATT_NONE, ATT_NOT_PERMITTED,
 								atval, len);
 
-	g_assert(h - start_handle == svc_size);
+	g_assert(h - start_handle + 1 == svc_size);
 
 	range[0] = start_handle;
 	range[1] = start_handle + svc_size - 1;
@@ -313,7 +321,8 @@ static void register_manuf2_service(struct gatt_example_adapter *adapter,
 	bt_uuid_t uuid;
 	int len;
 
-	start_handle = attrib_db_find_avail(adapter->adapter, svc_size);
+	bt_uuid16_create(&uuid, MANUFACTURER_SVC_UUID);
+	start_handle = attrib_db_find_avail(adapter->adapter, &uuid, svc_size);
 	if (start_handle == 0) {
 		error("Not enough free handles to register service");
 		return;
@@ -356,10 +365,10 @@ static void register_manuf2_service(struct gatt_example_adapter *adapter,
 	bt_uuid16_create(&uuid, MANUFACTURER_SERIAL_UUID);
 	len = strlen(serial2);
 	strncpy((char *) atval, serial2, len);
-	attrib_db_add(adapter->adapter, h++, &uuid, ATT_NONE, ATT_NOT_PERMITTED,
+	attrib_db_add(adapter->adapter, h, &uuid, ATT_NONE, ATT_NOT_PERMITTED,
 								atval, len);
 
-	g_assert(h - start_handle == svc_size);
+	g_assert(h - start_handle + 1 == svc_size);
 
 	range[0] = start_handle;
 	range[1] = start_handle + svc_size - 1;
@@ -373,7 +382,8 @@ static void register_vendor_service(struct gatt_example_adapter *adapter,
 	uint8_t atval[256];
 	bt_uuid_t uuid;
 
-	start_handle = attrib_db_find_avail(adapter->adapter, svc_size);
+	bt_uuid16_create(&uuid, VENDOR_SPECIFIC_SVC_UUID);
+	start_handle = attrib_db_find_avail(adapter->adapter, &uuid, svc_size);
 	if (start_handle == 0) {
 		error("Not enough free handles to register service");
 		return;
@@ -405,10 +415,10 @@ static void register_vendor_service(struct gatt_example_adapter *adapter,
 	atval[3] = 0x64;
 	atval[4] = 0x6F;
 	atval[5] = 0x72;
-	attrib_db_add(adapter->adapter, h++, &uuid, ATT_NONE, ATT_NOT_PERMITTED,
+	attrib_db_add(adapter->adapter, h, &uuid, ATT_NONE, ATT_NOT_PERMITTED,
 								atval, 6);
 
-	g_assert(h - start_handle == svc_size);
+	g_assert(h - start_handle + 1 == svc_size);
 
 	range[0] = start_handle;
 	range[1] = start_handle + svc_size - 1;
@@ -424,7 +434,7 @@ static void register_weight_service(struct gatt_example_adapter *adapter,
 	const uint128_t prim_weight_uuid_btorder = {
 		.data = { 0x4F, 0x0A, 0xC0, 0x96, 0x35, 0xD4, 0x49, 0x11,
 			  0x96, 0x31, 0xDE, 0xA8, 0xDC, 0x74, 0xEE, 0xFE } };
-	uint128_t char_weight_uuid;
+	uint128_t prim_weight_uuid, char_weight_uuid;
 	uint16_t start_handle, h;
 	const int svc_size = 6;
 	uint32_t sdp_handle;
@@ -433,8 +443,9 @@ static void register_weight_service(struct gatt_example_adapter *adapter,
 	int len;
 
 	btoh128(&char_weight_uuid_btorder, &char_weight_uuid);
-
-	start_handle = attrib_db_find_avail(adapter->adapter, svc_size);
+	btoh128(&prim_weight_uuid_btorder, &prim_weight_uuid);
+	bt_uuid128_create(&uuid, prim_weight_uuid);
+	start_handle = attrib_db_find_avail(adapter->adapter, &uuid, svc_size);
 	if (start_handle == 0) {
 		error("Not enough free handles to register service");
 		return;
@@ -492,10 +503,9 @@ static void register_weight_service(struct gatt_example_adapter *adapter,
 	bt_uuid16_create(&uuid, GATT_CHARAC_USER_DESC_UUID);
 	len = strlen(desc_weight);
 	strncpy((char *) atval, desc_weight, len);
-	attrib_db_add(adapter->adapter, h++, &uuid, ATT_NONE, ATT_NOT_PERMITTED,
+	attrib_db_add(adapter->adapter, h, &uuid, ATT_NONE, ATT_NOT_PERMITTED,
 								atval, len);
-
-	g_assert(h - start_handle == svc_size);
+	g_assert(h - start_handle + 1 == svc_size);
 
 	/* Add an SDP record for the above service */
 	sdp_handle = attrib_create_sdp(adapter->adapter, start_handle,
@@ -553,8 +563,8 @@ static struct btd_adapter_driver gatt_example_adapter_driver = {
 
 static int gatt_example_init(void)
 {
-	if (!main_opts.attrib_server) {
-		DBG("Attribute server is disabled");
+	if (!main_opts.gatt_enabled) {
+		DBG("GATT is disabled");
 		return -ENOTSUP;
 	}
 
@@ -563,7 +573,7 @@ static int gatt_example_init(void)
 
 static void gatt_example_exit(void)
 {
-	if (!main_opts.attrib_server)
+	if (!main_opts.gatt_enabled)
 		return;
 
 	btd_unregister_adapter_driver(&gatt_example_adapter_driver);

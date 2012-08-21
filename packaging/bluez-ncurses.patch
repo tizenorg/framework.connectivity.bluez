@@ -1,13 +1,13 @@
-Index: bluez-4.98/Makefile.tools
+Index: bluez-4.99/Makefile.tools
 ===================================================================
---- bluez-4.98.orig/Makefile.tools	2012-03-14 18:30:05.595203885 +0900
-+++ bluez-4.98/Makefile.tools	2012-03-14 19:39:16.815200856 +0900
-@@ -60,7 +60,7 @@
+--- bluez-4.99.org/Makefile.tools	2012-05-07 19:36:32.000000000 +0530
++++ bluez-4.99/Makefile.tools	2012-05-07 19:37:09.000000000 +0530
+@@ -75,7 +75,7 @@
  				attrib/gattrib.c btio/btio.c \
  				attrib/gatttool.h attrib/interactive.c \
- 				attrib/utils.c
+ 				attrib/utils.c src/log.c
 -attrib_gatttool_LDADD = lib/libbluetooth-private.la @GLIB_LIBS@ @READLINE_LIBS@
 +attrib_gatttool_LDADD = lib/libbluetooth-private.la @GLIB_LIBS@ @READLINE_LIBS@ -lncurses
  endif
- 
+
  dist_man_MANS += tools/rfcomm.1 tools/l2ping.8 \

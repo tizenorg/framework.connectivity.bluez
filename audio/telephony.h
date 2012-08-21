@@ -165,6 +165,63 @@ void telephony_nr_and_ec_req(void *telephony_device, gboolean enable);
 void telephony_voice_dial_req(void *telephony_device, gboolean enable);
 void telephony_key_press_req(void *telephony_device, const char *keys);
 
+#ifdef __TIZEN_PATCH__
+void telephony_select_phonebook_memory_status(void *telephony_device);
+void telephony_select_phonebook_memory_list(void *telephony_device);
+void telephony_select_phonebook_memory(void *telephony_device, const gchar *path);
+void telephony_read_phonebook_entries_list(void *telephony_device);
+void telephony_read_phonebook_entries(void *telephony_device, const char *cmd);
+void telephony_find_phonebook_entries_status(void *telephony_device);
+void telephony_find_phonebook_entries(void *telephony_device, const char *cmd);
+void telephony_get_preffered_store_capacity(void *telephony_device);
+void telephony_list_preffered_store(void *telephony_device);
+void telephony_get_character_set(void *telephony_device);
+void telephony_list_supported_character(void *telephony_device);
+void telephony_get_battery_property(void *telephony_device);
+void telephony_get_signal_quality(void *telephony_device);
+
+int telephony_select_phonebook_memory_status_rsp(void *telephony_device, const gchar *path,
+					uint32_t total, uint32_t used,
+					cme_error_t err);
+int telephony_select_phonebook_memory_list_rsp(void *telephony_device, const char *buf,
+					cme_error_t err);
+int telephony_select_phonebook_memory_rsp(void *telephony_device, cme_error_t err);
+int telephony_read_phonebook_entries_list_rsp(void *telephony_device,
+					uint32_t used,
+					uint32_t number_length,
+					uint32_t name_length,
+					cme_error_t err);
+int telephony_find_phonebook_entries_status_rsp(void *telephony_device,
+						cme_error_t err);
+int telephony_read_phonebook_entries_rsp(void *telephony_device,
+					cme_error_t err);
+int telephony_find_phonebook_entries_rsp(void *telephony_device,
+					cme_error_t err);
+int telephony_list_preffered_store_rsp(void *telephony_device,
+					char *prefrd_list, cme_error_t err);
+int telephony_get_preffered_store_capacity_rsp(void *telephony_device,
+						uint32_t store_capacity,
+						cme_error_t err);
+int telephony_supported_character_generic_rsp(void *telephony_device,
+						char *character_set_list,
+						cme_error_t err);
+int telephony_battery_charge_status_rsp(void *telephony_device,
+						int32_t bcs,
+						int32_t bcl,
+						cme_error_t err);
+int telephony_signal_quality_rsp(void *telephony_device,
+						int32_t rssi,
+						int32_t ber,
+						cme_error_t err);
+
+int telephony_read_phonebook_entries_ind(const char *name, const char *number,
+					uint32_t handle);
+int telephony_find_phonebook_entries_status_ind( uint32_t number_length,
+					uint32_t name_length);
+int telephony_find_phonebook_entries_ind(const char *name, const char *number,
+					uint32_t handle);
+#endif
+
 /* AG responses to HF requests. These are implemented by headset.c */
 int telephony_event_reporting_rsp(void *telephony_device, cme_error_t err);
 int telephony_response_and_hold_rsp(void *telephony_device, cme_error_t err);

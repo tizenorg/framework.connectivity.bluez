@@ -27,23 +27,34 @@
 #include "adapter.h"
 #include "device.h"
 #include "att.h"
+#include "gattrib.h"
+#include "gatt.h"
 #include "thermometer.h"
 #include "manager.h"
 
-#define HEALTH_THERMOMETER_UUID		"00001809-0000-1000-8000-00805f9b34fb"
-
 static DBusConnection *connection = NULL;
+
+static gint primary_uuid_cmp(gconstpointer a, gconstpointer b)
+{
+	const struct gatt_primary *prim = a;
+	const char *uuid = b;
+
+	return g_strcmp0(prim->uuid, uuid);
+}
 
 static int thermometer_driver_probe(struct btd_device *device, GSList *uuids)
 {
-	struct att_primary *tattr;
-	GSList *list;
+	struct gatt_primary *tattr;
+	GSList *primaries, *l;
 
-	list = device_services_from_record(device, uuids);
-	if (list == NULL)
+	primaries = btd_device_get_primaries(device);
+
+	l = g_slist_find_custom(primaries, HEALTH_THERMOMETER_UUID,
+							primary_uuid_cmp);
+	if (l == NULL)
 		return -EINVAL;
 
-	tattr = list->data;
+	tattr = l->data;
 
 	return thermometer_register(connection, device, tattr);
 }

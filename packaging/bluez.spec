@@ -1,19 +1,15 @@
 Name:       bluez
 Summary:    Bluetooth utilities
-Version: 4.98
-Release:    1
+Version:    4.101
+Release:    2
 Group:      Applications/System
 License:    GPLv2+
 URL:        http://www.bluez.org/
 Source0:    http://www.kernel.org/pub/linux/bluetooth/%{name}-%{version}.tar.gz
 Patch1 :    bluez-ncurses.patch
 Requires:   dbus >= 0.60
-Requires:   usbutils
 Requires:   pciutils
 BuildRequires:  pkgconfig(dbus-1)
-BuildRequires:  pkgconfig(alsa)
-BuildRequires:  pkgconfig(udev)
-BuildRequires:  pkgconfig(sndfile)
 BuildRequires:  pkgconfig(glib-2.0)
 BuildRequires:  flex
 BuildRequires:  bison
@@ -63,9 +59,7 @@ use in Bluetooth applications.
 %build
 
 export CFLAGS="${CFLAGS} -D__TIZEN_PATCH__ -D__BROADCOM_PATCH__ "
-%ifnarch %{arm}
-export LDFLAGS="${LDFLAGS} -lncurses -Wl,--as-needed "
-%endif
+export LDFLAGS=" -lncurses -Wl,--as-needed "
 %reconfigure --disable-static \
 			--sysconfdir=%{_prefix}/etc \
 			--localstatedir=/opt/var \
@@ -79,15 +73,14 @@ export LDFLAGS="${LDFLAGS} -lncurses -Wl,--as-needed "
                         --enable-pcmcia=no \
                         --enable-hid2hci=no \
                         --enable-alsa=no \
-                        --enable-gstreamer \
+                        --enable-gstreamer=no \
                         --disable-dfutool \
                         --disable-cups \
-                        --disable-tests \
-                        --disable-udevrules \
+			--enable-health \
 			--enable-dbusoob \
-			--with-telephony=tizen
+                        --with-telephony=tizen
 
-make
+make %{?jobs:-j%jobs}
 
 %install
 rm -rf %{buildroot}
@@ -121,7 +114,7 @@ install -D -m 0644 network/network.conf %{buildroot}%{_prefix}/etc/bluetooth/net
 %{_bindir}/hcitool
 %dir %{_libdir}/bluetooth/plugins
 %dir /opt/var/lib/bluetooth
-%exclude /lib/udev/rules.d/97-bluetooth.rules
+%{_datadir}/dbus-1/system-services/org.bluez.service
 
 
 %files -n libbluetooth3
@@ -134,5 +127,3 @@ install -D -m 0644 network/network.conf %{buildroot}%{_prefix}/etc/bluetooth/net
 %{_includedir}/bluetooth/*
 %{_libdir}/libbluetooth.so
 %{_libdir}/pkgconfig/bluez.pc
-
-

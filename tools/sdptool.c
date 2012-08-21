@@ -226,6 +226,11 @@ static struct attrib_def audio_attrib_names[] = {
 	{ 0x302, "Remote audio volume control", NULL, 0 },
 };
 
+/* Name of the various GOEP attributes. See BT assigned numbers */
+static struct attrib_def goep_attrib_names[] = {
+	{ 0x200, "GoepL2capPsm", NULL, 0 },
+};
+
 /* Same for the UUIDs. See BT assigned numbers */
 static struct uuid_def uuid16_names[] = {
 	/* -- Protocols -- */
@@ -261,8 +266,10 @@ static struct uuid_def uuid16_names[] = {
 	{ 0x1102, "LANAccessUsingPPP", NULL, 0 },
 	{ 0x1103, "DialupNetworking (DUN)", NULL, 0 },
 	{ 0x1104, "IrMCSync", NULL, 0 },
-	{ 0x1105, "OBEXObjectPush", NULL, 0 },
-	{ 0x1106, "OBEXFileTransfer", NULL, 0 },
+	{ 0x1105, "OBEXObjectPush",
+		goep_attrib_names, sizeof(goep_attrib_names)/sizeof(struct attrib_def) },
+	{ 0x1106, "OBEXFileTransfer",
+		goep_attrib_names, sizeof(goep_attrib_names)/sizeof(struct attrib_def) },
 	{ 0x1107, "IrMCSyncCommand", NULL, 0 },
 	{ 0x1108, "Headset",
 		audio_attrib_names, sizeof(audio_attrib_names)/sizeof(struct attrib_def) },
@@ -1141,20 +1148,6 @@ typedef struct {
 	uint8_t network;
 } svc_info_t;
 
-static void add_lang_attr(sdp_record_t *r)
-{
-	sdp_lang_attr_t base_lang;
-	sdp_list_t *langs = 0;
-
-	/* UTF-8 MIBenum (http://www.iana.org/assignments/character-sets) */
-	base_lang.code_ISO639 = (0x65 << 8) | 0x6e;
-	base_lang.encoding = 106;
-	base_lang.base_offset = SDP_PRIMARY_LANG_BASE;
-	langs = sdp_list_append(0, &base_lang);
-	sdp_set_lang_attr(r, langs);
-	sdp_list_free(langs, 0);
-}
-
 static int add_sp(sdp_session_t *session, svc_info_t *si)
 {
 	sdp_list_t *svclass_id, *apseq, *proto[2], *profiles, *root, *aproto;
@@ -1196,7 +1189,7 @@ static int add_sp(sdp_session_t *session, svc_info_t *si)
 	aproto = sdp_list_append(0, apseq);
 	sdp_set_access_protos(&record, aproto);
 
-	add_lang_attr(&record);
+	sdp_add_lang_attr(&record);
 
 	sdp_set_info_attr(&record, "Serial Port", "BlueZ", "COM Port");
 
@@ -2305,7 +2298,7 @@ static int add_hid_keyb(sdp_session_t *session, svc_info_t *si)
 	root = sdp_list_append(0, &root_uuid);
 	sdp_set_browse_groups(&record, root);
 
-	add_lang_attr(&record);
+	sdp_add_lang_attr(&record);
 
 	sdp_uuid16_create(&hidkb_uuid, HID_SVCLASS_ID);
 	svclass_id = sdp_list_append(0, &hidkb_uuid);
@@ -2483,7 +2476,7 @@ static int add_hid_wiimote(sdp_session_t *session, svc_info_t *si)
 	aproto = sdp_list_append(0, apseq);
 	sdp_set_add_access_protos(&record, aproto);
 
-	add_lang_attr(&record);
+	sdp_add_lang_attr(&record);
 
 	sdp_set_info_attr(&record, "Nintendo RVL-CNT-01",
 					"Nintendo", "Nintendo RVL-CNT-01");
@@ -3475,7 +3468,7 @@ static int add_gatt(sdp_session_t *session, svc_info_t *si)
 
 	ret = sdp_device_record_register(session, &interface, &record,
 							SDP_RECORD_PERSIST);
-	if (ret	< 0)
+	if (ret < 0)
 		printf("Service Record registration failed\n");
 	else
 		printf("Generic Attribute Profile Service registered\n");

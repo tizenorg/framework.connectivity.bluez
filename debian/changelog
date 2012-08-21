@@ -1,51 +1,718 @@
-bluez (4.98-slp2+1-3) unstable; urgency=low
+bluez (4.101-slp2+2) unstable; urgency=low
 
-  * Release Tizen 1.0
-  * Git: pkgs/b/bluez
-  * Tag: bluez_4.98-slp2+1-3
+  * Increase version for package upload
+  * Git: framework/connectivity/bluez
+  * Tag: bluez_4.101-slp2+2
 
- -- DoHyun Pyun <dh79.pyun@samsung.com>  Tue, 20 Mar 2012 17:32:01 +0900
+ -- DoHyun Pyun <dh79.pyun@samsung.com>  Mon, 20 Aug 2012 14:51:40 +0900
 
-bluez (4.98-slp2+1-2) unstable; urgency=low
+bluez (4.101-slp2+1) unstable; urgency=low
 
-  * Change "SAMSUNG_PATCH" -> "TIZEN_PATCH"
-  * Git: pkgs/b/bluez
-  * Tag: bluez_4.98-slp2+1-2
+  * Increase version for package upload
+  * Git: framework/connectivity/bluez
+  * Tag: bluez_4.101-slp2+1
 
- -- DoHyun Pyun <dh79.pyun@samsung.com>  Tue, 21 Feb 2012 18:03:00 +0900
+ -- Jaganath K <jaganath.k@samsung.com>  Mon, 13 Aug 2012 19:16:04 +0530
 
-bluez (4.98-slp2+1-1) unstable; urgency=low
+bluez (4.99-slp2+8) unstable; urgency=low
 
-  * Merge with lastest private git
-  * Git: pkgs/b/bluez
-  * Tag: bluez_4.98-slp2+1-1
+  * Increase version for package upload
+  * Git: slp/pkgs/b/bluez
+  * Tag: bluez_4.99-slp2+8
 
- -- DoHyun Pyun <dh79.pyun@samsung.com>  Thu, 09 Feb 2012 14:31:53 +0900
+ -- DoHyun Pyun <dh79.pyun@samsung.com>  Wed, 08 Aug 2012 12:25:20 +0900
 
-bluez (4.90-slp2+18-2) unstable; urgency=low
+bluez (4.99-slp2+7) unstable; urgency=low
 
-  * Change "SAMSUNG_PATCH" -> "TIZEN_PATCH"
-  * Git: pkgs/b/bluez
-  * Tag: bluez_4.90-slp2+18-2
+  * Increase version for package upload
+  * Git: slp/pkgs/b/bluez
+  * Tag: bluez_4.99-slp2+7
 
- -- Hocheol Seo <hocheol.seo@samsung.com>  Fri, 23 Dec 2011 11:26:09 +0900
+ -- Divya yadav <divya.yadav@samsung.com>  Mon, 06 Aug 2012 15:23:20 +0530
 
-bluez (4.90-slp2+18-1) unstable; urgency=low
+bluez (4.99-slp2+6) unstable; urgency=low
 
-  * Change "com.samsung" -> "org.tizen"
-  * Git: pkgs/b/bluez
-  * Tag: bluez_4.90-slp2+18-1
+  * Enable OOB profile
+  * Git: slp/pkgs/b/bluez
+  * Tag: bluez_4.99-slp2+6
 
- -- DoHyun Pyun <dh79.pyun@samsung.com>  Thu, 22 Dec 2011 18:03:02 +0900
+ -- DoHyun Pyun <dh79.pyun@samsung.com>  Thu, 26 Jul 2012 11:28:58 +0900
+
+bluez (4.99-slp2+5) unstable; urgency=low
+
+  * Increase version for package upload
+  * Git: slp/pkgs/b/bluez
+  * Tag: bluez_4.99-slp2+5
+
+ -- DoHyun Pyun <dh79.pyun@samsung.com>  Wed, 18 Jul 2012 12:55:39 +0900
+
+bluez (4.99-slp2+4) unstable; urgency=low
+
+  * Increase version for package upload
+  * Git: slp/pkgs/b/bluez
+  * Tag: bluez_4.99-slp2+4
+
+ -- Girish Ashok Joshi <girish.joshi@samsung.com>  Tue, 05 Jun 2012 12:37:12 +0530
+
+bluez (4.99-slp2+3) unstable; urgency=low
+
+  * Increase version for package upload
+  * Git: slp/pkgs/b/bluez
+  * Tag: bluez_4.99-slp2+3
+
+ -- Chethan T N <chethan.tn@samsung.com>  Tue, 22 May 2012 11:36:35 +0530
+
+bluez (4.99-slp2+2) unstable; urgency=low
+
+  * Increase version for package upload
+  * Git: slp/pkgs/b/bluez
+  * Tag: bluez_4.99-slp2+2
+
+ -- Divya yadav <divya.yadav@samsung.com>  Tue, 15 May 2012 15:51:58 +0530
+
+bluez (4.99-slp2+1) unstable; urgency=low
+
+  * Upgrade bluez and package upload.
+  * Git: slp/pkgs/b/bluez
+  * Tag: bluez_4.99-slp2+1
+
+ -- Chethan T N <chethan.tn@samsung.com>  Mon, 07 May 2012 14:01:34 +0530
+
+bluez (4.98-slp2+3) unstable; urgency=low
+
+  * Increase version for package upload.
+  * Git: slp/pkgs/b/bluez
+  * Tag: bluez_4.98-slp2+3
+
+ -- Syam Sidhardhan <s.syam@samsung.com>  Thu, 19 Apr 2012 11:30:40 +0530
+
+bluez (4.98-slp2+2) unstable; urgency=low
+
+  * Increase version for package upload.
+  * Git: slp/pkgs/b/bluez
+  * Tag: bluez_4.98-slp2+2
+
+ -- Sunil Kumar Behera <sunil.behera@samsung.com>  Mon, 16 Apr 2012 19:32:14 +0530
+
+bluez (4.98-slp2+1) unstable; urgency=low
+
+  * Upgrade the bluez and upload the package
+  * Git: slp/pkgs/b/bluez
+  * Tag: bluez_4.98-slp2+1
+
+ -- Syam Sidhardhan <s.syam@samsung.com>  Wed, 08 Feb 2012 15:38:55 +0530
 
 bluez (4.90-slp2+18) unstable; urgency=low
 
-  * Update Version for build
+  * Remove gstreamer dpkg from bluez dpkgs
+  * Git: 165.213.180.234:slp/pkgs/b/bluez
+  * Tag: bluez_4.90-slp2+18
 
- -- Chanyeol Park <chanyeol.park@samsung.com>  Thu, 15 Dec 2011 12:56:21 +0900
+ -- Chanyeol Park <chanyeol.park@samsung.com>  Mon, 05 Dec 2011 15:17:40 +0900
+
+bluez (4.90-slp2+17) unstable; urgency=low
+
+  * Remove the samsung path about service list
+  * Git: 165.213.180.234:slp/pkgs/b/bluez
+  * Tag: bluez_4.90-slp2+17
+
+ -- DoHyun Pyun <dh79.pyun@samsung.com>  Thu, 17 Nov 2011 09:13:45 +0900
+
+bluez (4.90-slp2+16) unstable; urgency=low
+
+  * Remove samsung dbus avrcp
+  * Git: 165.213.180.234:slp/pkgs/b/bluez
+  * Tag: bluez_4.90-slp2+16
+
+ -- Chanyeol Park <chanyeol.park@samsung.com>  Sat, 15 Oct 2011 15:35:53 +0900
+
+bluez (4.90-slp2+15) unstable; urgency=low
+
+  * Upload the package
+  * Git: 165.213.180.234:slp/pkgs/b/bluez
+  * Tag: bluez_4.90-slp2+15
+
+ -- Chethan T N <chethan.tn@samsung.com>  Mon, 10 Oct 2011 14:30:36 +0530
+
+bluez (4.90-slp2+14) unstable; urgency=low
+
+  * Upload packages for the changes
+  * Git: 165.213.180.234:slp/pkgs/b/bluez
+  * Tag: bluez_4.90-slp2+14
+
+ -- Syam Sidhardhan <s.syam@samsung.com>  Tue, 27 Sep 2011 12:36:09 +0530
+
+bluez (4.90-slp2+13) unstable; urgency=low
+
+  * Fix the headset connection problem
+  * Git: 165.213.180.234:slp/pkgs/b/bluez
+  * Tag: bluez_4.90-slp2+13
+
+ -- DoHyun Pyun <dh79.pyun@samsung.com>  Tue, 20 Sep 2011 20:04:28 +0900
+
+bluez (4.90-slp2+12) unstable; urgency=low
+
+  * Reduce A2DP SBC bitpool from 53 to 32
+  * Git: 165.213.180.234:slp/pkgs/b/bluez
+  * Tag: bluez_4.90-slp2+12
+
+ -- Chanyeol Park <chanyeol.park@samsung.com>  Sat, 17 Sep 2011 16:59:58 +0900
+
+bluez (4.90-slp2+11) unstable; urgency=low
+
+  * Upload Package
+  * Git: 165.213.180.234:slp/pkgs/b/bluez
+  * Tag: bluez_4.90-slp2+11
+
+ -- DoHyun Pyun <dh79.pyun@samsung.com>  Fri, 09 Sep 2011 15:01:21 +0900
+
+bluez (4.90-slp2+10) unstable; urgency=low
+
+  * Enable bluez avrcp
+  * Git: 165.213.180.234:slp/pkgs/b/bluez
+  * Tag: bluez_4.90-slp2+10
+
+ -- Chanyeol Park <chanyeol.park@samsung.com>  Thu, 01 Sep 2011 17:35:11 +0900
+
+bluez (4.90-slp2+9) unstable; urgency=low
+
+  * Upload Package
+  * Git: 165.213.180.234:slp/pkgs/b/bluez
+  * Tag: bluez_4.90-slp2+9
+
+ -- Jaganath K <jaganath.k@samsung.com>  Tue, 23 Aug 2011 16:34:32 +0530
+
+bluez (4.90-slp2+8) unstable; urgency=low
+
+  * Upload Package
+  * Git: 165.213.180.234:slp/pkgs/b/bluez
+  * Tag: bluez_4.90-slp2+8
+
+ -- Jaganath K <jaganath.k@samsung.com>  Tue, 23 Aug 2011 11:16:42 +0530
+
+bluez (4.90-slp2+7) unstable; urgency=low
+
+  * Upgrade bluez audio from 4.90 to 4.96
+  * Git: 165.213.180.234:slp/pkgs/b/bluez
+  * Tag: bluez_4.90-slp2+7
+
+ -- Chanyeol Park <chanyeol.park@samsung.com>  Tue, 23 Aug 2011 09:24:03 +0900
+
+bluez (4.90-slp2+6) unstable; urgency=low
+
+  * Upload Package
+  * Git: 165.213.180.234:slp/pkgs/b/bluez
+  * Tag: bluez_4.90-slp2+6
+
+ -- Jaganath K <jaganath.k@samsung.com>  Tue, 02 Aug 2011 17:42:12 +0530
+
+bluez (4.90-slp2+5) unstable; urgency=low
+
+  * Print dbus method call message
+  * Git: 165.213.180.234:slp/pkgs/b/bluez
+  * Tag: bluez_4.90-slp2+5
+
+ -- Chanyeol Park <chanyeol.park@samsung.com>  Tue, 12 Jul 2011 20:21:10 +0900
+
+bluez (4.90-slp2+4) unstable; urgency=low
+
+  * Upload Package
+  * Git: 165.213.180.234:slp/pkgs/b/bluez
+  * Tag: bluez_4.90-slp2+4
+
+ -- Chethan T N <chethan.tn@samsung.com>  Fri, 08 Jul 2011 15:11:07 +0530
+
+bluez (4.90-slp2+3) unstable; urgency=low
+
+  * Upload Package
+  * Git: 165.213.180.234:slp/pkgs/b/bluez
+  * Tag: bluez_4.90-slp2+3
+
+ -- Jaganath K <jaganath.k@samsung.com>  Thu, 07 Jul 2011 13:54:04 +0530
+
+bluez (4.90-slp2+2) unstable; urgency=low
+
+  * BlueZ Upgrade 4.90 Merged from 4.90 branch
+  * Git: 165.213.180.234:slp/pkgs/b/bluez
+  * Tag: bluez_4.90-slp2+2
+
+ -- Chanyeol Park <chanyeol.park@samsung.com>  Tue, 21 Jun 2011 21:44:48 +0900
 
 bluez (4.90-slp2+1) unstable; urgency=low
 
-  * Initial Release
+  * Migrated from Bluez 4.69 to Bluez 4.90
+  * Git: 165.213.180.234:slp/pkgs/b/bluez
+  * Tag: bluez_4.90-slp2+1
 
- -- Chanyeol Park <chanyeol.park@samsung.com>  Wed, 07 Dec 2011 12:53:10 +0900
+ -- Syam Sidhardhan <s.syam@samsung.com>  Thu, 05 May 2011 13:46:04 +0900
+
+bluez (4.69-slp2+22) unstable; urgency=low
+
+  * Fix pairing B/S(root cause)		
+  * Git: 165.213.180.234:slp/pkgs/b/bluez		
+  * Tag: bluez_4.69-slp2+22		
+
+ -- Chanyeol Park <chanyeol.park@samsung.com>  Mon, 23 May 2011 15:03:34 +0900		
+
+bluez (4.69-slp2+21) unstable; urgency=low
+
+  * Fix pairing B/S		
+  * Git: 165.213.180.234:slp/pkgs/b/bluez		
+  * Tag: bluez_4.69-slp2+21		
+
+bluez (4.69-slp2+20) unstable; urgency=low
+
+  * Fix autogen bug by Mike
+  * Fix AVDTP crash
+  * Git: 165.213.180.234:slp/pkgs/b/bluez
+  * Tag: bluez_4.69-slp2+20
+
+ -- ChanYeol Park <chanyeol.park@samsung.com>  Mon, 11 Apr 2011 13:46:04 +0900
+
+bluez (4.69-slp2+19) unstable; urgency=low
+
+  * Modify the bluetooth.conf file caused by dbus security
+  * Git: 165.213.180.234:slp/pkgs/b/bluez
+  * Tag: bluez_4.69-slp2+19 
+
+ -- DoHyun Pyun <dh79.pyun@samsung.com>  Wed, 26 Jan 2011 16:21:29 +0900
+
+bluez (4.69-slp2+18) unstable; urgency=low
+
+  * Change localstatedir from /usr/var to /opt/var because /usr would be
+    RO(read only)
+  * Git: 165.213.180.234:slp/pkgs/b/bluez
+  * Tag: bluez_4.69-slp2+18
+
+ -- ChanYeol Park <chanyeol.park@samsung.com>  Thu, 13 Jan 2011 10:03:05 +0900
+
+bluez (4.69-slp2+17) unstable; urgency=low
+
+  * Fix the A2DP bug
+  * Git: 165.213.180.234:/git/slp/pkgs/bluez
+  * Tag: bluez_4.69-slp2+17
+
+ -- DoHyun Pyun <dh79.pyun@samsung.com>  Thu, 25 Nov 2010 20:53:03 +0900
+
+bluez (4.69-slp2+16) unstable; urgency=low
+
+  * Remove the dependency of the ALSA
+  * Git: 165.213.180.234:/git/slp/pkgs/bluez
+  * Tag: bluez_4.69-slp2+16
+
+ -- DoHyun Pyun <dh79.pyun@samsung.com>  Fri, 19 Nov 2010 11:10:28 +0900
+
+bluez (4.69-slp2+15) unstable; urgency=low
+
+  * Disable the test setting
+  * Git: 165.213.180.234:/git/slp/pkgs/bluez
+  * Tag: bluez_4.69-slp2+15 
+
+ -- DoHyun Pyun <dh79.pyun@samsung.com>  Fri, 12 Nov 2010 11:16:27 +0900
+
+bluez (4.69-slp2+14) unstable; urgency=low
+
+  * Fix the bug about visibility
+  * Git: 165.213.180.234:/git/slp/pkgs/bluez
+  * Tag: bluez_4.69-slp2+14
+
+ -- DoHyun Pyun <dh79.pyun@samsung.com>  Thu, 11 Nov 2010 11:31:05 +0900
+
+bluez (4.69-slp2+13) unstable; urgency=low
+
+  * Add the homepage filed in control file
+  * Git: 165.213.180.234:/git/slp/pkgs/bluez
+  * Tag: bluez_4.69-slp2+13
+
+ -- DoHyun Pyun <dh79.pyun@samsung.com>  Fri, 29 Oct 2010 17:18:12 +0900
+
+bluez (4.69-slp2+12) unstable; urgency=low
+
+  * Fix the memory leak with the service watch
+  * Git: 165.213.180.234:/git/slp/pkgs/bluez
+  * Tag: bluez_4.69-slp2+12 
+
+ -- Syam Sidhardhan <s.syam@samsung.com>  Mon, 18 Oct 2010 17:44:34 +0530
+
+bluez (4.69-slp2+11) unstable; urgency=low
+
+  * Fix the bug about custom visibility
+  * Git: 165.213.180.234:/git/slp/pkgs/bluez
+  * Tag: bluez_4.69-slp2+11 
+
+ -- DoHyun Pyun <dh79.pyunamsung.com>  Fri, 15 Oct 2010 11:47:55 +0900
+
+bluez (4.69-slp2+10) unstable; urgency=low
+
+  * Since the bluetooth and bluetooth-frwk is directly accessing the linkkey file, Given the permission to the group.
+  * Git: 165.213.180.234:/git/slp/pkgs/bluez
+  * Tag: bluez_4.69-slp2+10
+
+ -- Syam Sidhardhan <s.syam@samsung.com>  Mon, 11 Oct 2010 09:30:07 +0530
+
+bluez (4.69-slp2+9) unstable; urgency=low
+
+  * Fixed the bluetoothd crash due to undefined reference symbol
+  * Git: 165.213.180.234:/git/slp/pkgs/bluez
+  * Tag: bluez_4.69-slp2+9 
+
+ -- Sunil Kumar Behera <sunil.behera@samsung.com>  Sat, 09 Oct 2010 16:04:55 +0530
+
+bluez (4.69-slp2+8) unstable; urgency=low
+
+  * Fixed the bluetoothd crash due to undefined reference symbol
+  * Git: 165.213.180.234:/git/slp/pkgs/bluez
+  * Tag: bluez_4.69-slp2+8
+
+ -- Syam Sidhardhan <s.syam@samsung.com>  Sat, 09 Oct 2010 15:44:26 +0530
+
+bluez (4.69-slp2+7) unstable; urgency=low
+
+  * Apply the proyo patch
+  * Git: 165.213.180.234:/git/slp/pkgs/bluez
+  * Tag: bluez_4.69-slp2+7
+
+ -- DoHyun Pyun <dh79.pyun@samsung.com>  Fri, 17 Sep 2010 10:41:15 +0900
+
+bluez (4.69-slp2+6) unstable; urgency=low
+
+  * Add the apt-x codes in A2DP
+  * Patch the android code (adapter, device)
+  * Git: 165.213.180.234:/git/slp/pkgs/bluez
+  * Tag: bluez_4.69-slp2+6
+
+ -- DoHyun Pyun <dh79.pyun@samsung.com>  Fri, 10 Sep 2010 19:34:44 +0900
+
+bluez (4.69-slp2+5) unstable; urgency=low
+
+  * Code cleanup
+  * Git: 165.213.180.234:/git/slp/pkgs/bluez
+  * Tag: bluez_4.69-slp2+5
+
+ -- DoHyun Pyun <dh79.pyun@samsung.com>  Mon, 30 Aug 2010 13:33:19 +0900
+
+bluez (4.69-slp2+4) unstable; urgency=low
+
+  * Implement the NAP service
+  * Git: 165.213.180.234:/git/slp/pkgs/bluez
+  * Tag: bluez_4.69-slp2+4
+
+ -- DoHyun Pyun <dh79.pyun@samsung.com>  Wed, 04 Aug 2010 22:05:47 +0900
+
+bluez (4.69-slp2+3) unstable; urgency=low
+
+  * Add HS UART patch for BRCM chip 3M mode
+  * Git: 165.213.180.234:/git/slp/pkgs/bluez
+  * Tag: bluez_4.69-slp2+3
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Tue, 03 Aug 2010 17:23:25 +0900
+
+bluez (4.69-slp2+2) unstable; urgency=low
+
+  * Fix dbus policy conf file for DAC to allow any user use dbus interface
+  * Git: 165.213.180.234:/git/slp/pkgs/bluez
+  * Tag: bluez_4.69-slp2+2
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Fri, 30 Jul 2010 11:16:09 +0900
+
+bluez (4.69-slp2+1) unstable; urgency=low
+
+  * Migrated from Bluez4.58 to Bluez4.69. Also removed the depricated files
+    in the Bluez4.69 from Git
+  * Git: 165.213.180.234:/git/slp/pkgs/bluez/
+  * Tag: bluez_4.69-slp2+1
+
+ -- Syam Sidhardhan <s.syam@samsung.com>  Thu, 22 Jul 2010 17:35:55 +0530
+
+bluez (4.58-slp2+20) unstable; urgency=low
+
+  * Modify the maintainer list
+  * Git: 165.213.180.234:/git/slp2.0/slp2.0-pkgs/bluez-4/
+  * Tag: bluez_4.58-slp2+20
+
+ -- DoHyun Pyun <dh79.pyun@samsung.com>  Thu, 08 Jul 2010 10:25:32 +0900
+
+bluez (4.58-slp2+19) unstable; urgency=low
+
+  * Add doc option flag
+  * Git: 165.213.180.234:/git/slp2.0/slp2.0-pkgs/bluez-4/
+  * Tag: bluez_4.58-slp2+19
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Mon, 05 Jul 2010 19:04:32 +0900
+
+bluez (4.58-slp2+18) unstable; urgency=low
+
+  * FIx BlueZ SDP bug in the original src 
+  * Git: 165.213.180.234:/git/slp2.0/slp2.0-pkgs/bluez-4/
+  * Tag: bluez_4.58-slp2+18
+
+ -- chanyeol.park <chanyeol.park@samsung.com>  Mon, 14 Jun 2010 22:06:04 +0900
+
+bluez (4.58-slp2+17) unstable; urgency=low
+
+  * Enable serial build option
+  * Git: 165.213.180.234:/git/slp2.0/slp2.0-pkgs/bluez-4/
+  * Tag: bluez_4.58-slp2+17
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Fri, 28 May 2010 21:23:56 +0900
+
+bluez (4.58-slp2+16) unstable; urgency=low
+
+  * Fix done for resolving the service search issues 
+  * Git: 165.213.180.234:/git/slp2.0/slp2.0-pkgs/bluez-4/
+  * Tag: bluez_4.58-slp2+16
+
+ -- Syam Sidhardhan <s.syam@samsung.com>  Wed, 26 May 2010 16:51:27 +0530
+
+bluez (4.58-slp2+15) unstable; urgency=low
+
+  * Removed the unwanted #ifdef SISO_BLUETOOTHD_SOCKET_INTERFACE.
+  * Git: 165.213.180.234:/git/slp2.0/slp2.0-pkgs/bluez-4/
+  * Tag: bluez_4.58-slp2+15
+
+ -- Syam Sidhardhan <s.syam@samsung.com>  Tue, 18 May 2010 17:42:52 +0530
+
+bluez (4.58-slp2+14) unstable; urgency=low
+
+  * Add bonding error code for reject by agent useraction
+  * Git: 165.213.180.234:/git/slp2.0/slp2.0-pkgs/bluez-4/
+  * Tag: bluez_4.58-slp2+14
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Tue, 18 May 2010 09:38:06 +0900
+
+bluez (4.58-slp2+13) unstable; urgency=low
+
+  * Temporarly reverting back the automatic service search just after pairing
+   fix, because of the A2dp issue. 
+  * Git: 165.213.180.234:/git/slp2.0/slp2.0-pkgs/bluez-4/
+  * Tag: bluez_4.58-slp2+13
+
+ -- Syam Sidhardhan <s.syam@samsung.com>  Fri, 14 May 2010 16:59:24 +0530
+
+bluez (4.58-slp2+12) unstable; urgency=low
+
+  *Fix to come out of the sdp loop in the case of sdp error (JSR82). 
+  * Git: 165.213.180.234:/git/slp2.0/slp2.0-pkgs/bluez-4/
+  * Tag: bluez_4.58-slp2+12
+
+ -- Syam Sidhardhan <s.syam@samsung.com>  Thu, 06 May 2010 09:49:01 +0530
+
+bluez (4.58-slp2+11) unstable; urgency=low
+
+  * Fixed the issues related to automatic service search just after pairing.
+  * Git: 165.213.180.234:/git/slp2.0/slp2.0-pkgs/bluez-4/
+  * Tag: bluez_4.58-slp2+11
+
+ -- Syam Sidhardhan <s.syam@samsung.com>  Wed, 05 May 2010 12:14:52 +0530
+
+bluez (4.58-slp2+10) unstable; urgency=low
+
+  * Re-upload for installing verification
+  * Git: 165.213.180.234:/git/slp2.0/slp2.0-pkgs/bluez-4/
+  * Tag: bluez_4.58-slp2+10
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Fri, 23 Apr 2010 23:12:57 +0900
+
+bluez (4.58-slp2+9) unstable; urgency=low
+
+  * Fix gstbluetooth plugin bug while avdtp get capability
+  * Git: 165.213.180.234:/git/slp2.0/slp2.0-pkgs/bluez-4/
+  * Tag: bluez_4.58-slp2+9
+
+ -- chanyeol.park <chanyeol.park@samsung.com>  Fri, 23 Apr 2010 20:04:26 +0900
+
+bluez (4.58-slp2+8) unstable; urgency=low
+
+  * Fix org.bluez.Device.DiscoverServices dbus command reply bug
+  * Git: 165.213.180.234:/git/slp2.0/slp2.0-pkgs/bluez-4/
+  * Tag: bluez_4.58-slp2+8
+
+ -- chanyeol.park <chanyeol.park@samsung.com>  Tue, 13 Apr 2010 14:40:23 +0900
+
+bluez (4.58-slp2+7) unstable; urgency=low
+
+  * Fix get_property to remove GetBasicProperties and to add
+    GetVersionProperties
+  * Add NULL check for confirm cb with remote cancel case
+  * Git: 165.213.180.234:/git/slp2.0/slp2.0-pkgs/bluez-4/
+  * Tag: bluez_4.58-slp2+7
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Wed, 07 Apr 2010 15:08:10 +0900
+
+bluez (4.58-slp2+6) unstable; urgency=low
+
+  * reverted thread method and used open source method of service search
+  * Git: 165.213.180.234:/git/slp2.0/slp2.0-pkgs/bluez-4/
+  * Tag: bluez_4.58-slp2+6
+
+ -- Ankur Gandhi <a.gandhi@samsung.com>  Mon, 05 Apr 2010 13:47:42 +0530
+
+bluez (4.58-slp2+5) unstable; urgency=low
+
+  * changes for SSP between sdp connection 
+
+ -- Hathab Shajahan <hathab.s@samsung.com>  Mon, 29 Mar 2010 17:50:24 +0530
+
+bluez (4.58-slp2+4) unstable; urgency=low
+
+  * Upload for Toolchain upgrade
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Thu, 25 Mar 2010 13:43:00 +0900
+
+bluez (4.58-slp2+3) unstable; urgency=low
+
+  * Rollback to 4.58-slp2+1 because of Pairing fail issue
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Mon, 22 Mar 2010 09:16:48 +0900
+
+bluez (4.58-slp2+2) unstable; urgency=low
+
+  * ftc disconnect fix  
+
+ -- Hathab Shajahan <hathab.s@samsung.com>  Fri, 19 Mar 2010 16:42:57 +0530
+
+bluez (4.58-slp2+1) unstable; urgency=low
+
+  * Re-versioning as SCM policy
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Thu, 18 Mar 2010 22:18:37 +0900
+
+bluez (4.58-19) unstable; urgency=low
+
+  * Add all config files to install list
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Thu, 18 Mar 2010 11:21:01 +0900
+
+bluez (4.58-18) unstable; urgency=low
+
+  * New service Search Method is Added 
+
+ -- Hathab Shajahan <hathab.s@samsung.com>  Fri, 05 Mar 2010 17:54:01 +0530
+
+bluez (4.58-17) unstable; urgency=low
+
+  * Fix BS when pairing fail with weak signal device
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Tue, 02 Mar 2010 20:47:16 +0900
+
+bluez (4.58-16) unstable; urgency=low
+
+  *  unified authenticate interface for DM and JSR82 
+
+ -- Ankur Gandhi <a.gandhi@samsung.com>  Thu, 25 Feb 2010 10:26:24 +0530
+
+bluez (4.58-15) unstable; urgency=low
+
+  *  Changes for Jsr82 authorization fix in bluez   
+
+ -- Hathab Shajahan <hathab.s@samsung.com>  Wed, 24 Feb 2010 12:17:00 +0530
+
+bluez (4.58-14) unstable; urgency=low
+
+  * Modified auth interface for JSR82 and corrected delete device problem when
+    device is paired using SSP 
+
+ -- Ankur Gandhi <a.gandhi@samsung.com>  Mon, 22 Feb 2010 18:35:37 +0530
+
+bluez (4.58-13) unstable; urgency=low
+
+  *To Take N-project Changes 
+
+ -- Hathab Shajahan <hathab.s@samsung.com>  Thu, 11 Feb 2010 16:40:01 +0530
+
+bluez (4.58-12) unstable; urgency=low
+
+  * Fix A2DP gstreamer plugin for 3gp play (merge back from N code - sbc/mpeg
+    dynamic bin to sbc static)
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Fri, 05 Feb 2010 22:38:13 +0900
+
+bluez (4.58-11) unstable; urgency=low
+
+  * Bluez merged with N-project to absorb the fixes.
+
+ -- Hathab Shajahan <hathab.s@samsung.com>  Thu, 04 Feb 2010 17:14:02 +0530
+
+bluez (4.58-10) unstable; urgency=low
+
+  * Fix SDP record get after pairing crash
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Mon, 01 Feb 2010 19:53:19 +0900
+
+bluez (4.58-9) unstable; urgency=low
+
+  * Fix source file mod to 644
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Fri, 29 Jan 2010 02:02:25 +0900
+
+bluez (4.58-8) unstable; urgency=low
+
+  * Added JSR82 support 
+
+ -- Hathab Shajahan <hathab.s@samsung.com>  Thu, 28 Jan 2010 17:01:15 +0530
+
+bluez (4.58-7) unstable; urgency=low
+
+  * Added JSR82 support 
+
+ -- Ankur Gandhi <a.gandhi@samsung.com>  Thu, 28 Jan 2010 16:52:52 +0530
+
+bluez (4.58-6) unstable; urgency=low
+
+  * Add debug package having debugging symbols
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Thu, 21 Jan 2010 16:35:14 +0900
+
+bluez (4.58-5) unstable; urgency=low
+
+  * Fix cleaning rules, restore git original files
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Tue, 29 Dec 2009 19:09:13 +0900
+
+bluez (4.58-4) unstable; urgency=low
+
+  * Change Maintainer email address and Maintainers list format
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Tue, 22 Dec 2009 17:37:05 +0900
+
+bluez (4.58-3) unstable; urgency=low
+
+  * Fix install conf file and Add bluez-alsa package
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Tue, 08 Dec 2009 20:48:03 +0900
+
+bluez (4.58-2) unstable; urgency=low
+
+  * Add as-needed LDFLAGS
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Fri, 20 Nov 2009 16:31:44 +0900
+
+bluez (4.58-1) unstable; urgency=low
+
+  * Upgrade bluez-4.57 to bluez-4.58
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Thu, 19 Nov 2009 09:38:31 +0900
+
+bluez (4.57-4) unstable; urgency=low
+
+  * Fix bluez-gstreamer dependency
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Tue, 17 Nov 2009 15:35:30 +0900
+
+bluez (4.57-3) unstable; urgency=low
+
+  * Fix build break with wrong src dependency
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Tue, 17 Nov 2009 11:55:46 +0900
+
+bluez (4.57-2) unstable; urgency=low
+
+  * Delete install files
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Mon, 16 Nov 2009 15:10:46 +0900
+
+bluez (4.57-1) unstable; urgency=low
+
+  * Initial Release.
+
+ -- Seung-Woo Kim <sw0312.kim@samsung.com>  Thu, 12 Nov 2009 09:50:16 +0900

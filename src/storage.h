@@ -36,11 +36,16 @@ int write_local_name(bdaddr_t *bdaddr, const char *name);
 int read_local_name(bdaddr_t *bdaddr, char *name);
 int write_local_class(bdaddr_t *bdaddr, uint8_t *class);
 int read_local_class(bdaddr_t *bdaddr, uint8_t *class);
+int write_remote_appearance(bdaddr_t *local, bdaddr_t *peer,
+				uint8_t bdaddr_type, uint16_t appearance);
+int read_remote_appearance(bdaddr_t *local, bdaddr_t *peer, uint8_t bdaddr_type,
+							uint16_t *appearance);
 int write_remote_class(bdaddr_t *local, bdaddr_t *peer, uint32_t class);
 int read_remote_class(bdaddr_t *local, bdaddr_t *peer, uint32_t *class);
 int write_device_name(bdaddr_t *local, bdaddr_t *peer, char *name);
 int read_device_name(const char *src, const char *dst, char *name);
-int write_remote_eir(bdaddr_t *local, bdaddr_t *peer, uint8_t *data);
+int write_remote_eir(bdaddr_t *local, bdaddr_t *peer, uint8_t *data,
+							uint8_t data_len);
 int read_remote_eir(bdaddr_t *local, bdaddr_t *peer, uint8_t *data);
 int write_version_info(bdaddr_t *local, bdaddr_t *peer, uint16_t manufacturer, uint8_t lmp_ver, uint16_t lmp_subver);
 int write_features_info(bdaddr_t *local, bdaddr_t *peer, unsigned char *page1, unsigned char *page2);
@@ -73,21 +78,25 @@ gboolean read_blocked(const bdaddr_t *local, const bdaddr_t *remote);
 int write_blocked(const bdaddr_t *local, const bdaddr_t *remote,
 							gboolean blocked);
 int write_device_services(const bdaddr_t *sba, const bdaddr_t *dba,
-							const char *services);
-int delete_device_service(const bdaddr_t *sba, const bdaddr_t *dba);
-char *read_device_services(const bdaddr_t *sba, const bdaddr_t *dba);
+				uint8_t bdaddr_type, const char *services);
+int delete_device_service(const bdaddr_t *sba, const bdaddr_t *dba,
+						uint8_t bdaddr_type);
+char *read_device_services(const bdaddr_t *sba, const bdaddr_t *dba,
+							uint8_t bdaddr_type);
 int write_device_characteristics(const bdaddr_t *sba, const bdaddr_t *dba,
-					uint16_t handle, const char *chars);
+					uint8_t bdaddr_type, uint16_t handle,
+							     const char *chars);
 char *read_device_characteristics(const bdaddr_t *sba, const bdaddr_t *dba,
-							uint16_t handle);
+					uint8_t bdaddr_type, uint16_t handle);
 int write_device_attribute(const bdaddr_t *sba, const bdaddr_t *dba,
-                                        uint16_t handle, const char *chars);
+				uint8_t bdaddr_type, uint16_t handle,
+							const char *chars);
 int read_device_attributes(const bdaddr_t *sba, textfile_cb func, void *data);
-int read_device_ccc(bdaddr_t *local, bdaddr_t *peer, uint16_t handle,
-							uint16_t *value);
-int write_device_ccc(bdaddr_t *local, bdaddr_t *peer, uint16_t handle,
-							uint16_t value);
+int read_device_ccc(bdaddr_t *local, bdaddr_t *peer, uint8_t bdaddr_type,
+					uint16_t handle, uint16_t *value);
+int write_device_ccc(bdaddr_t *local, bdaddr_t *peer, uint8_t bdaddr_type,
+					uint16_t handle, uint16_t value);
 void delete_device_ccc(bdaddr_t *local, bdaddr_t *peer);
-
-#define PNP_UUID		"00001200-0000-1000-8000-00805f9b34fb"
-
+int write_longtermkeys(bdaddr_t *local, bdaddr_t *peer, uint8_t bdaddr_type,
+							const char *key);
+gboolean has_longtermkeys(bdaddr_t *local, bdaddr_t *peer, uint8_t bdaddr_type);

@@ -37,7 +37,6 @@
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
 
-#include "glib-compat.h"
 #include "log.h"
 #include "device.h"
 #include "manager.h"
@@ -884,11 +883,22 @@ static gboolean open_ind(struct avdtp *session, struct avdtp_local_sep *sep,
 				void *user_data)
 {
 	struct a2dp_sep *a2dp_sep = user_data;
+	struct a2dp_setup *setup;
 
 	if (a2dp_sep->type == AVDTP_SEP_TYPE_SINK)
 		DBG("Sink %p: Open_Ind", sep);
 	else
 		DBG("Source %p: Open_Ind", sep);
+
+	setup = find_setup_by_session(session);
+	if (!setup)
+		return TRUE;
+
+	if (setup->reconfigure)
+		setup->reconfigure = FALSE;
+
+	finalize_config(setup);
+
 	return TRUE;
 }
 
@@ -944,16 +954,21 @@ static gboolean start_ind(struct avdtp *session, struct avdtp_local_sep *sep,
 	else
 		DBG("Source %p: Start_Ind", sep);
 
-	setup = find_setup_by_session(session);
-	if (setup)
-		finalize_resume(setup);
-
 	if (!a2dp_sep->locked) {
 		a2dp_sep->session = avdtp_ref(session);
 		a2dp_sep->suspend_timer = g_timeout_add_seconds(SUSPEND_TIMEOUT,
 						(GSourceFunc) suspend_timeout,
 						a2dp_sep);
 	}
+
+	if (!a2dp_sep->starting)
+		return TRUE;
+
+	a2dp_sep->starting = FALSE;
+
+	setup = find_setup_by_session(session);
+	if (setup)
+		finalize_resume(setup);
 
 	return TRUE;
 }
@@ -969,6 +984,8 @@ static void start_cfm(struct avdtp *session, struct avdtp_local_sep *sep,
 		DBG("Sink %p: Start_Cfm", sep);
 	else
 		DBG("Source %p: Start_Cfm", sep);
+
+	a2dp_sep->starting = FALSE;
 
 	setup = find_setup_by_session(session);
 	if (!setup)
@@ -987,6 +1004,9 @@ static gboolean suspend_ind(struct avdtp *session, struct avdtp_local_sep *sep,
 				void *user_data)
 {
 	struct a2dp_sep *a2dp_sep = user_data;
+	struct a2dp_setup *setup;
+	gboolean start;
+	int start_err;
 
 	if (a2dp_sep->type == AVDTP_SEP_TYPE_SINK)
 		DBG("Sink %p: Suspend_Ind", sep);
@@ -1000,6 +1020,30 @@ static gboolean suspend_ind(struct avdtp *session, struct avdtp_local_sep *sep,
 		a2dp_sep->session = NULL;
 	}
 
+	if (!a2dp_sep->suspending)
+		return TRUE;
+
+	a2dp_sep->suspending = FALSE;
+
+	setup = find_setup_by_session(session);
+	if (!setup)
+		return TRUE;
+
+	start = setup->start;
+	setup->start = FALSE;
+
+	finalize_suspend(setup);
+
+	if (!start)
+		return TRUE;
+
+	start_err = avdtp_start(session, a2dp_sep->stream);
+	if (start_err < 0 && start_err != -EINPROGRESS) {
+		error("avdtp_start: %s (%d)", strerror(-start_err),
+								-start_err);
+		finalize_setup_errno(setup, start_err, finalize_resume);
+	}
+
 	return TRUE;
 }
 
@@ -1010,7 +1054,7 @@ static void suspend_cfm(struct avdtp *session, struct avdtp_local_sep *sep,
 	struct a2dp_sep *a2dp_sep = user_data;
 	struct a2dp_setup *setup;
 	gboolean start;
-	int perr;
+	int start_err;
 
 	if (a2dp_sep->type == AVDTP_SEP_TYPE_SINK)
 		DBG("Sink %p: Suspend_Cfm", sep);
@@ -1041,10 +1085,11 @@ static void suspend_cfm(struct avdtp *session, struct avdtp_local_sep *sep,
 		return;
 	}
 
-	perr = avdtp_start(session, a2dp_sep->stream);
-	if (perr < 0) {
-		error("Error on avdtp_start %s (%d)", strerror(-perr), -perr);
-		finalize_setup_errno(setup, -EIO, finalize_suspend, NULL);
+	start_err = avdtp_start(session, a2dp_sep->stream);
+	if (start_err < 0 && start_err != -EINPROGRESS) {
+		error("avdtp_start: %s (%d)", strerror(-start_err),
+								-start_err);
+		finalize_setup_errno(setup, start_err, finalize_suspend, NULL);
 	}
 }
 
@@ -1132,11 +1177,12 @@ static void close_cfm(struct avdtp *session, struct avdtp_local_sep *sep,
 		g_timeout_add(RECONFIGURE_TIMEOUT, a2dp_reconfigure, setup);
 }
 
-static gboolean abort_ind(struct avdtp *session, struct avdtp_local_sep *sep,
+static void abort_ind(struct avdtp *session, struct avdtp_local_sep *sep,
 				struct avdtp_stream *stream, uint8_t *err,
 				void *user_data)
 {
 	struct a2dp_sep *a2dp_sep = user_data;
+	struct a2dp_setup *setup;
 
 	if (a2dp_sep->type == AVDTP_SEP_TYPE_SINK)
 		DBG("Sink %p: Abort_Ind", sep);
@@ -1145,7 +1191,15 @@ static gboolean abort_ind(struct avdtp *session, struct avdtp_local_sep *sep,
 
 	a2dp_sep->stream = NULL;
 
-	return TRUE;
+	setup = find_setup_by_session(session);
+	if (!setup)
+		return;
+
+	finalize_setup_errno(setup, -ECONNRESET, finalize_suspend,
+							finalize_resume,
+							finalize_config);
+
+	return;
 }
 
 static void abort_cfm(struct avdtp *session, struct avdtp_local_sep *sep,
@@ -1388,9 +1442,9 @@ static struct a2dp_server *find_server(GSList *list, const bdaddr_t *src)
 
 int a2dp_register(DBusConnection *conn, const bdaddr_t *src, GKeyFile *config)
 {
-	int sbc_srcs = 1, sbc_sinks = 1;
+	int sbc_srcs = 0, sbc_sinks = 0;
 	int mpeg12_srcs = 0, mpeg12_sinks = 0;
-	gboolean source = TRUE, sink = FALSE, socket = TRUE;
+	gboolean source = TRUE, sink = FALSE, socket = FALSE;
 	gboolean delay_reporting = FALSE;
 	char *str;
 	GError *err = NULL;
@@ -1410,6 +1464,8 @@ int a2dp_register(DBusConnection *conn, const bdaddr_t *src, GKeyFile *config)
 			source = TRUE;
 		if (strstr(str, "Source"))
 			sink = TRUE;
+		if (strstr(str, "Socket"))
+			socket = TRUE;
 		g_free(str);
 	}
 
@@ -1429,18 +1485,14 @@ int a2dp_register(DBusConnection *conn, const bdaddr_t *src, GKeyFile *config)
 	}
 
 	/* Don't register any local sep if Socket is disabled */
-	if (socket == FALSE) {
-		sbc_srcs = 0;
-		sbc_sinks = 0;
-		mpeg12_srcs = 0;
-		mpeg12_sinks = 0;
+	if (socket == FALSE)
 		goto proceed;
-	}
 
 	str = g_key_file_get_string(config, "A2DP", "SBCSources", &err);
 	if (err) {
 		DBG("audio.conf: %s", err->message);
 		g_clear_error(&err);
+		sbc_srcs = 1;
 	} else {
 		sbc_srcs = atoi(str);
 		g_free(str);
@@ -1459,6 +1511,7 @@ int a2dp_register(DBusConnection *conn, const bdaddr_t *src, GKeyFile *config)
 	if (err) {
 		DBG("audio.conf: %s", err->message);
 		g_clear_error(&err);
+		sbc_sinks = 1;
 	} else {
 		sbc_sinks = atoi(str);
 		g_free(str);
@@ -1590,7 +1643,7 @@ struct a2dp_sep *a2dp_add_sep(const bdaddr_t *src, uint8_t type,
 	server = find_server(servers, src);
 	if (server == NULL) {
 		if (err)
-			*err = -EINVAL;
+			*err = -EPROTONOSUPPORT;
 		return NULL;
 	}
 
@@ -1753,11 +1806,7 @@ static uint8_t default_bitpool(uint8_t freq, uint8_t mode)
 			return 31;
 		case SBC_CHANNEL_MODE_STEREO:
 		case SBC_CHANNEL_MODE_JOINT_STEREO:
-#ifdef USE_SBC_ORIGINAL_BITPOOL
 			return 53;
-#else
-			return 32;
-#endif
 		default:
 			error("Invalid channel mode %u", mode);
 			return 53;
@@ -2184,6 +2233,7 @@ unsigned int a2dp_resume(struct avdtp *session, struct a2dp_sep *sep,
 			error("avdtp_start failed");
 			goto failed;
 		}
+		sep->starting = TRUE;
 		break;
 	case AVDTP_STATE_STREAMING:
 		if (!sep->suspending && sep->suspend_timer) {

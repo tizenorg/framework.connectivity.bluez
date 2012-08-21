@@ -38,14 +38,8 @@
 #include "att.h"
 #include "gatt.h"
 #include "thermometer.h"
-#include "glib-compat.h"
 
 #define THERMOMETER_INTERFACE "org.bluez.Thermometer"
-
-#define TEMPERATURE_MEASUREMENT_UUID	"00002a1c-0000-1000-8000-00805f9b34fb"
-#define TEMPERATURE_TYPE_UUID		"00002a1d-0000-1000-8000-00805f9b34fb"
-#define INTERMEDIATE_TEMPERATURE_UUID	"00002a1e-0000-1000-8000-00805f9b34fb"
-#define MEASUREMENT_INTERVAL_UUID	"00002a21-0000-1000-8000-00805f9b34fb"
 
 /* Temperature measurement flag fields */
 #define TEMP_UNITS		0x01
@@ -75,7 +69,7 @@ struct thermometer {
 };
 
 struct characteristic {
-	struct att_char		attr;	/* Characteristic */
+	struct gatt_char		attr;	/* Characteristic */
 	GSList			*desc;	/* Descriptors */
 	struct thermometer	*t;	/* Thermometer where the char belongs */
 };
@@ -136,12 +130,16 @@ static void destroy_watcher(gpointer user_data)
 {
 	struct watcher *watcher = user_data;
 
-	if (watcher->id > 0)
-		g_dbus_remove_watch(watcher->t->conn, watcher->id);
-
 	g_free(watcher->path);
 	g_free(watcher->srv);
 	g_free(watcher);
+}
+
+static void remove_watcher(gpointer user_data)
+{
+	struct watcher *watcher = user_data;
+
+	g_dbus_remove_watch(watcher->t->conn, watcher->id);
 }
 
 static void destroy_char(gpointer user_data)
@@ -172,7 +170,7 @@ static void destroy_thermometer(gpointer user_data)
 		g_slist_free_full(t->chars, destroy_char);
 
 	if (t->fwatchers != NULL)
-		g_slist_free_full(t->fwatchers, destroy_watcher);
+		g_slist_free_full(t->fwatchers, remove_watcher);
 
 	dbus_connection_unref(t->conn);
 	btd_device_unref(t->dev);
@@ -331,6 +329,17 @@ static void valid_range_desc_cb(guint8 status, const guint8 *pdu, guint16 len,
 	change_property(desc->ch->t, "Minimum", &min);
 }
 
+static void measurement_cb(guint8 status, const guint8 *pdu,
+						guint16 len, gpointer user_data)
+{
+	char *msg = user_data;
+
+	if (status != 0)
+		error("%s failed", msg);
+
+	g_free(msg);
+}
+
 static void process_thermometer_desc(struct descriptor *desc)
 {
 	struct characteristic *ch = desc->ch;
@@ -342,28 +351,35 @@ static void process_thermometer_desc(struct descriptor *desc)
 	if (bt_uuid_cmp(&desc->uuid, &btuuid) == 0) {
 		uint8_t atval[2];
 		uint16_t val;
+		char *msg;
 
 		if (g_strcmp0(ch->attr.uuid,
 					TEMPERATURE_MEASUREMENT_UUID) == 0) {
 			if (g_slist_length(ch->t->fwatchers) == 0)
 				return;
 
-			val = ATT_CLIENT_CHAR_CONF_INDICATION;
+			val = GATT_CLIENT_CHARAC_CFG_IND_BIT;
+			msg = g_strdup("Enable Temperature Measurement "
+								"indication");
 		} else if (g_strcmp0(ch->attr.uuid,
 					INTERMEDIATE_TEMPERATURE_UUID) == 0) {
 			if (g_slist_length(ch->t->iwatchers) == 0)
 				return;
 
-			val = ATT_CLIENT_CHAR_CONF_NOTIFICATION;
+			val = GATT_CLIENT_CHARAC_CFG_NOTIF_BIT;
+			msg = g_strdup("Enable Intermediate Temperature "
+								"notification");
 		} else if (g_strcmp0(ch->attr.uuid,
-					MEASUREMENT_INTERVAL_UUID) == 0)
-			val = ATT_CLIENT_CHAR_CONF_INDICATION;
-		else
+					MEASUREMENT_INTERVAL_UUID) == 0) {
+			val = GATT_CLIENT_CHARAC_CFG_IND_BIT;
+			msg = g_strdup("Enable Measurement Interval "
+								"indication");
+		} else
 			goto done;
 
 		att_put_u16(val, atval);
 		gatt_write_char(ch->t->attrib, desc->handle, atval, 2,
-								NULL, NULL);
+							measurement_cb, msg);
 		return;
 	}
 
@@ -504,7 +520,7 @@ static void configure_thermometer_cb(GSList *characteristics, guint8 status,
 	}
 
 	for (l = characteristics; l; l = l->next) {
-		struct att_char *c = l->data;
+		struct gatt_char *c = l->data;
 		struct characteristic *ch;
 		uint16_t start, end;
 
@@ -522,7 +538,7 @@ static void configure_thermometer_cb(GSList *characteristics, guint8 status,
 		start = c->value_handle + 1;
 
 		if (l->next != NULL) {
-			struct att_char *c = l->next->data;
+			struct gatt_char *c = l->next->data;
 			if (start == c->handle)
 				continue;
 			end = c->handle - 1;
@@ -653,17 +669,6 @@ static DBusMessage *set_property(DBusConnection *conn, DBusMessage *msg,
 	dbus_message_iter_get_basic(&sub, &value);
 
 	return write_attr_interval(t, msg, value);
-}
-
-static void measurement_cb(guint8 status, const guint8 *pdu,
-						guint16 len, gpointer user_data)
-{
-	char *msg = user_data;
-
-	if (status != 0)
-		error("%s failed", msg);
-
-	g_free(msg);
 }
 
 static void enable_final_measurement(struct thermometer *t)
@@ -807,7 +812,7 @@ static void watcher_exit(DBusConnection *conn, void *user_data)
 	remove_int_watcher(t, watcher);
 
 	t->fwatchers = g_slist_remove(t->fwatchers, watcher);
-	watcher->id = 0;
+	g_dbus_remove_watch(watcher->t->conn, watcher->id);
 
 	if (g_slist_length(t->fwatchers) == 0)
 		disable_final_measurement(t);
@@ -886,7 +891,7 @@ static DBusMessage *unregister_watcher(DBusConnection *conn, DBusMessage *msg,
 	remove_int_watcher(t, watcher);
 
 	t->fwatchers = g_slist_remove(t->fwatchers, watcher);
-	destroy_watcher(watcher);
+	g_dbus_remove_watch(watcher->t->conn, watcher->id);
 
 	if (g_slist_length(t->fwatchers) == 0)
 		disable_final_measurement(t);
@@ -949,19 +954,31 @@ static DBusMessage *disable_intermediate(DBusConnection *conn, DBusMessage *msg,
 	return dbus_message_new_method_return(msg);
 }
 
-static GDBusMethodTable thermometer_methods[] = {
-	{ "GetProperties",	"",	"a{sv}",	get_properties },
-	{ "SetProperty",	"sv",	"",		set_property,
-						G_DBUS_METHOD_FLAG_ASYNC },
-	{ "RegisterWatcher",	"o",	"",		register_watcher },
-	{ "UnregisterWatcher",	"o",	"",		unregister_watcher },
-	{ "EnableIntermediateMeasurement", "o", "", enable_intermediate },
-	{ "DisableIntermediateMeasurement","o",	"", disable_intermediate },
+static const GDBusMethodTable thermometer_methods[] = {
+	{ GDBUS_METHOD("GetProperties",
+			NULL, GDBUS_ARGS({ "properties", "a{sv}" }),
+			get_properties) },
+	{ GDBUS_ASYNC_METHOD("SetProperty",
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" }), NULL,
+			set_property) },
+	{ GDBUS_METHOD("RegisterWatcher",
+			GDBUS_ARGS({ "agent", "o" }), NULL,
+			register_watcher) },
+	{ GDBUS_METHOD("UnregisterWatcher",
+			GDBUS_ARGS({ "agent", "o" }), NULL,
+			unregister_watcher) },
+	{ GDBUS_METHOD("EnableIntermediateMeasurement",
+			GDBUS_ARGS({ "agent", "o" }), NULL,
+			enable_intermediate) },
+	{ GDBUS_METHOD("DisableIntermediateMeasurement",
+			GDBUS_ARGS({ "agent", "o" }), NULL,
+			disable_intermediate) },
 	{ }
 };
 
-static GDBusSignalTable thermometer_signals[] = {
-	{ "PropertyChanged",	"sv"	},
+static const GDBusSignalTable thermometer_signals[] = {
+	{ GDBUS_SIGNAL("PropertyChanged",
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" })) },
 	{ }
 };
 
@@ -1086,15 +1103,10 @@ static void proc_measurement(struct thermometer *t, const uint8_t *pdu,
 		type = temptype2str(pdu[index]);
 	} else if (t->has_type)
 		type = temptype2str(t->type);
-	else {
-		DBG("Can't get temperature type");
-		return;
-	}
+	else
+		type = NULL;
 
-	if (type == NULL)
-		return;
-
-	m.type = g_strdup(type);
+	m.type = type ? g_strdup(type) : NULL;
 	m.value = final ? "Final" : "Intermediate";
 
 	recv_measurement(t, &m);
@@ -1209,7 +1221,7 @@ static void attio_disconnected_cb(gpointer user_data)
 }
 
 int thermometer_register(DBusConnection *connection, struct btd_device *device,
-						struct att_primary *tattr)
+						struct gatt_primary *tattr)
 {
 	const gchar *path = device_get_path(device);
 	struct thermometer *t;
@@ -1218,8 +1230,8 @@ int thermometer_register(DBusConnection *connection, struct btd_device *device,
 	t->conn = dbus_connection_ref(connection);
 	t->dev = btd_device_ref(device);
 	t->svc_range = g_new0(struct att_range, 1);
-	t->svc_range->start = tattr->start;
-	t->svc_range->end = tattr->end;
+	t->svc_range->start = tattr->range.start;
+	t->svc_range->end = tattr->range.end;
 
 	if (!g_dbus_register_interface(t->conn, path, THERMOMETER_INTERFACE,
 				thermometer_methods, thermometer_signals,

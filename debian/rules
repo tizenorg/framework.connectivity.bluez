@@ -10,7 +10,7 @@ DEB_HOST_GNU_TYPE   ?= $(shell dpkg-architecture -qDEB_HOST_GNU_TYPE)
 DEB_BUILD_GNU_TYPE  ?= $(shell dpkg-architecture -qDEB_BUILD_GNU_TYPE)
 
 CFLAGS ?= -Wall -g
-LDFLAGS ?= 
+LDFLAGS ?=
 PREFIX ?= /usr
 DATADIR ?= /opt
 
@@ -24,7 +24,7 @@ endif
 
 MACHINE="aquila"
 BT_CHIP_CFLAGS=-D__BROADCOM_PATCH__
-CHIP_OPTIONS=--disable-bccmd 
+CHIP_OPTIONS=--disable-bccmd
 
 configure: configure.ac
 	aclocal
@@ -37,9 +37,9 @@ config.status: configure
 	dh_testdir
 
 	# Add here commands to configure the package.
-	CFLAGS="$(CFLAGS) -D__TIZEN_PATCH__ $(BT_CHIP_CFLAGS)" \
+	CFLAGS="$(CFLAGS) -D__TIZEN_PATCH__ -D__BROADCOM_PATCH__ $(BT_CHIP_CFLAGS)" \
 	LDFLAGS="$(LDFLAGS) -Wl,--warn-unresolved-symbols" \
-	./configure 	--prefix=$(PREFIX) \
+	./configure	--prefix=$(PREFIX) \
 			--sysconfdir=$(PREFIX)/etc \
 			--localstatedir=$(DATADIR)/var \
 			--enable-pie \
@@ -57,7 +57,6 @@ config.status: configure
 			--disable-cups \
 			--disable-test \
 			--enable-health \
-			--disable-udevrules \
 			--enable-dbusoob \
 			--with-telephony=tizen
 
@@ -95,7 +94,7 @@ clean:
 install: build
 	dh_testdir
 	dh_testroot
-	dh_clean -k 
+	dh_clean -k
 	dh_installdirs
 
 	# Add here commands to install the package into debian/tmp.
@@ -113,7 +112,7 @@ binary-indep: build install
 binary-arch: build install
 	dh_testdir
 	dh_testroot
-	dh_installchangelogs 
+	dh_installchangelogs
 	dh_installdocs
 	dh_installexamples
 	dh_install --sourcedir=debian/tmp
@@ -131,4 +130,4 @@ binary-arch: build install
 	dh_builddeb
 
 binary: binary-indep binary-arch
-.PHONY: build clean binary-indep binary-arch binary install 
+.PHONY: build clean binary-indep binary-arch binary install

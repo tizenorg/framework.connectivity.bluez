@@ -38,6 +38,7 @@
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
+#include <bluetooth/uuid.h>
 
 #include <glib.h>
 #include <dbus/dbus.h>
@@ -52,7 +53,6 @@
 #include "manager.h"
 #include "control.h"
 #include "avdtp.h"
-#include "glib-compat.h"
 #include "btio.h"
 #include "sink.h"
 #include "source.h"
@@ -94,7 +94,6 @@
 #else
 #define REQ_TIMEOUT 6
 #endif
-
 #define ABORT_TIMEOUT 2
 #define DISCONNECT_TIMEOUT 1
 #define STREAM_TIMEOUT 20
@@ -319,6 +318,7 @@ struct pending_req {
 	size_t data_size;
 	struct avdtp_stream *stream; /* Set if the request targeted a stream */
 	guint timeout;
+	gboolean collided;
 };
 
 struct avdtp_remote_sep {
@@ -1072,12 +1072,19 @@ static void avdtp_sep_set_state(struct avdtp *session,
 		break;
 	case AVDTP_STATE_OPEN:
 		stream->starting = FALSE;
-		if (old_state > AVDTP_STATE_OPEN && session->auto_dc)
+		if ((old_state > AVDTP_STATE_OPEN && session->auto_dc) ||
+							stream->open_acp)
 			stream->idle_timer = g_timeout_add_seconds(STREAM_TIMEOUT,
 								stream_timeout,
 								stream);
 		break;
 	case AVDTP_STATE_STREAMING:
+		if (stream->idle_timer) {
+			g_source_remove(stream->idle_timer);
+			stream->idle_timer = 0;
+		}
+		stream->open_acp = FALSE;
+		break;
 	case AVDTP_STATE_CLOSING:
 	case AVDTP_STATE_ABORTING:
 		if (stream->idle_timer) {
@@ -1525,7 +1532,7 @@ static gboolean avdtp_setconf_cmd(struct avdtp *session, uint8_t transaction,
 	case AVDTP_SEP_TYPE_SINK:
 		if (!dev->source) {
 			btd_device_add_uuid(dev->btd_dev, A2DP_SOURCE_UUID);
-			if (!dev->sink) {
+			if (!dev->source) {
 				error("Unable to get a audio source object");
 				err = AVDTP_BAD_STATE;
 				goto failed;
@@ -1639,7 +1646,76 @@ failed:
 static gboolean avdtp_reconf_cmd(struct avdtp *session, uint8_t transaction,
 					struct seid_req *req, int size)
 {
-	return avdtp_unknown_cmd(session, transaction, AVDTP_RECONFIGURE);
+	struct conf_rej rej;
+
+	rej.error = AVDTP_NOT_SUPPORTED_COMMAND;
+	rej.category = 0x00;
+
+	return avdtp_send(session, transaction, AVDTP_MSG_TYPE_REJECT,
+					AVDTP_RECONFIGURE, &rej, sizeof(rej));
+}
+
+static void check_seid_collision(struct pending_req *req, uint8_t id)
+{
+	struct seid_req *seid = req->data;
+
+	if (seid->acp_seid == id)
+		req->collided = TRUE;
+}
+
+static void check_start_collision(struct pending_req *req, uint8_t id)
+{
+	struct start_req *start = req->data;
+	struct seid *seid = &start->first_seid;
+	int count = 1 + req->data_size - sizeof(struct start_req);
+	int i;
+
+	for (i = 0; i < count; i++, seid++) {
+		if (seid->seid == id) {
+			req->collided = TRUE;
+			return;
+		}
+	}
+}
+
+static void check_suspend_collision(struct pending_req *req, uint8_t id)
+{
+	struct suspend_req *suspend = req->data;
+	struct seid *seid = &suspend->first_seid;
+	int count = 1 + req->data_size - sizeof(struct suspend_req);
+	int i;
+
+	for (i = 0; i < count; i++, seid++) {
+		if (seid->seid == id) {
+			req->collided = TRUE;
+			return;
+		}
+	}
+}
+
+static void avdtp_check_collision(struct avdtp *session, uint8_t cmd,
+					struct avdtp_stream *stream)
+{
+	struct pending_req *req = session->req;
+
+	if (req == NULL || (req->signal_id != cmd && cmd != AVDTP_ABORT))
+		return;
+
+	if (cmd == AVDTP_ABORT)
+		cmd = req->signal_id;
+
+	switch (cmd) {
+	case AVDTP_OPEN:
+	case AVDTP_CLOSE:
+		check_seid_collision(req, stream->rseid);
+		break;
+	case AVDTP_START:
+		check_start_collision(req, stream->rseid);
+		break;
+	case AVDTP_SUSPEND:
+		check_suspend_collision(req, stream->rseid);
+		break;
+	}
 }
 
 static gboolean avdtp_open_cmd(struct avdtp *session, uint8_t transaction,
@@ -1672,6 +1748,8 @@ static gboolean avdtp_open_cmd(struct avdtp *session, uint8_t transaction,
 					sep->user_data))
 			goto failed;
 	}
+
+	avdtp_check_collision(session, AVDTP_OPEN, stream);
 
 	if (!avdtp_send(session, transaction, AVDTP_MSG_TYPE_ACCEPT,
 						AVDTP_OPEN, NULL, 0))
@@ -1721,9 +1799,8 @@ static gboolean avdtp_start_cmd(struct avdtp *session, uint8_t transaction,
 
 		stream = sep->stream;
 
-		/* Also reject start cmd if we already initiated start */
-		if (sep->state != AVDTP_STATE_OPEN ||
-						stream->starting == TRUE) {
+		/* Also reject start cmd if state is not open */
+		if (sep->state != AVDTP_STATE_OPEN) {
 			err = AVDTP_BAD_STATE;
 			goto failed;
 		}
@@ -1734,6 +1811,8 @@ static gboolean avdtp_start_cmd(struct avdtp *session, uint8_t transaction,
 						sep->user_data))
 				goto failed;
 		}
+
+		avdtp_check_collision(session, AVDTP_START, stream);
 
 		avdtp_sep_set_state(session, sep, AVDTP_STATE_STREAMING);
 	}
@@ -1781,6 +1860,8 @@ static gboolean avdtp_close_cmd(struct avdtp *session, uint8_t transaction,
 					sep->user_data))
 			goto failed;
 	}
+
+	avdtp_check_collision(session, AVDTP_CLOSE, stream);
 
 	avdtp_sep_set_state(session, sep, AVDTP_STATE_CLOSING);
 
@@ -1841,6 +1922,8 @@ static gboolean avdtp_suspend_cmd(struct avdtp *session, uint8_t transaction,
 				goto failed;
 		}
 
+		avdtp_check_collision(session, AVDTP_SUSPEND, stream);
+
 		avdtp_sep_set_state(session, sep, AVDTP_STATE_OPEN);
 	}
 
@@ -1868,16 +1951,14 @@ static gboolean avdtp_abort_cmd(struct avdtp *session, uint8_t transaction,
 	}
 
 	sep = find_local_sep_by_seid(session->server, req->acp_seid);
-	if (!sep || !sep->stream) {
-		err = AVDTP_BAD_ACP_SEID;
-		goto failed;
-	}
+	if (!sep || !sep->stream)
+		return TRUE;
 
-	if (sep->ind && sep->ind->abort) {
-		if (!sep->ind->abort(session, sep, sep->stream, &err,
-					sep->user_data))
-			goto failed;
-	}
+	if (sep->ind && sep->ind->abort)
+		sep->ind->abort(session, sep, sep->stream, &err,
+							sep->user_data);
+
+	avdtp_check_collision(session, AVDTP_ABORT, sep->stream);
 
 	ret = avdtp_send(session, transaction, AVDTP_MSG_TYPE_ACCEPT,
 						AVDTP_ABORT, NULL, 0);
@@ -1885,10 +1966,6 @@ static gboolean avdtp_abort_cmd(struct avdtp *session, uint8_t transaction,
 		avdtp_sep_set_state(session, sep, AVDTP_STATE_ABORTING);
 
 	return ret;
-
-failed:
-	return avdtp_send(session, transaction, AVDTP_MSG_TYPE_REJECT,
-					AVDTP_ABORT, &err, sizeof(err));
 }
 
 static gboolean avdtp_secctl_cmd(struct avdtp *session, uint8_t transaction,
@@ -2171,6 +2248,11 @@ static gboolean session_cb(GIOChannel *chan, GIOCondition cond,
 		if (session->streams && session->dc_timer)
 			remove_disconnect_timer(session);
 
+		if (session->req && session->req->collided) {
+			DBG("Collision detected");
+			goto next;
+		}
+
 		return TRUE;
 	}
 
@@ -2221,6 +2303,7 @@ static gboolean session_cb(GIOChannel *chan, GIOCondition cond,
 		break;
 	}
 
+next:
 	pending_req_free(session->req);
 	session->req = NULL;
 
@@ -2530,6 +2613,7 @@ static GIOChannel *l2cap_connect(struct avdtp *session)
 				BT_IO_OPT_SOURCE_BDADDR, &session->server->src,
 				BT_IO_OPT_DEST_BDADDR, &session->dst,
 				BT_IO_OPT_PSM, AVDTP_PSM,
+				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_MEDIUM,
 				BT_IO_OPT_INVALID);
 	if (!io) {
 		error("%s", err->message);
@@ -3578,6 +3662,15 @@ int avdtp_start(struct avdtp *session, struct avdtp_stream *stream)
 	if (stream->lsep->state != AVDTP_STATE_OPEN)
 		return -EINVAL;
 
+	/* Recommendation 12:
+	 *  If the RD has configured and opened a stream it is also responsible
+	 *  to start the streaming via GAVDP_START.
+	 */
+	if (stream->open_acp) {
+		stream->starting = TRUE;
+		return 0;
+	}
+
 	if (stream->close_int == TRUE) {
 		error("avdtp_start: rejecting start since close is initiated");
 		return -EINVAL;
@@ -3585,7 +3678,7 @@ int avdtp_start(struct avdtp *session, struct avdtp_stream *stream)
 
 	if (stream->starting == TRUE) {
 		DBG("stream already started");
-		return -EINVAL;
+		return -EINPROGRESS;
 	}
 
 	memset(&req, 0, sizeof(req));

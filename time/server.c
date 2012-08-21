@@ -32,8 +32,10 @@
 #include <bluetooth/uuid.h>
 #include <adapter.h>
 
-#include "att.h"
 #include "gattrib.h"
+#include "att.h"
+#include "gatt.h"
+#include "att-database.h"
 #include "attrib-server.h"
 #include "gatt-service.h"
 #include "log.h"
@@ -78,7 +80,8 @@ static int encode_current_time(uint8_t value[10])
 	return 0;
 }
 
-static uint8_t current_time_read(struct attribute *a, gpointer user_data)
+static uint8_t current_time_read(struct attribute *a,
+				 struct btd_device *device, gpointer user_data)
 {
 	uint8_t value[10];
 
@@ -91,7 +94,8 @@ static uint8_t current_time_read(struct attribute *a, gpointer user_data)
 	return 0;
 }
 
-static uint8_t local_time_info_read(struct attribute *a, gpointer user_data)
+static uint8_t local_time_info_read(struct attribute *a,
+				struct btd_device *device, gpointer user_data)
 {
 	uint8_t value[2];
 
@@ -115,9 +119,13 @@ static uint8_t local_time_info_read(struct attribute *a, gpointer user_data)
 
 static void register_current_time_service(void)
 {
+	bt_uuid_t uuid;
+
+	bt_uuid16_create(&uuid, CURRENT_TIME_SVC_UUID);
+
 	/* Current Time service */
 	/* FIXME: Provide the adapter in next function */
-	gatt_service_add(NULL, GATT_PRIM_SVC_UUID, CURRENT_TIME_SVC_UUID,
+	gatt_service_add(NULL, GATT_PRIM_SVC_UUID, &uuid,
 				/* CT Time characteristic */
 				GATT_OPT_CHR_UUID, CT_TIME_CHR_UUID,
 				GATT_OPT_CHR_PROPS, ATT_CHAR_PROPER_READ |

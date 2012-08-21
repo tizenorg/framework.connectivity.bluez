@@ -34,6 +34,7 @@
 #include <bluetooth/bnep.h>
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
+#include <bluetooth/uuid.h>
 #include <netinet/in.h>
 
 #include <glib.h>
@@ -46,7 +47,6 @@
 #include "error.h"
 #include "sdpd.h"
 #include "btio.h"
-#include "glib-compat.h"
 
 #include "common.h"
 #include "server.h"
@@ -133,20 +133,6 @@ static struct network_session *find_session(GSList *list, GIOChannel *io)
 	return NULL;
 }
 #endif
-
-static void add_lang_attr(sdp_record_t *r)
-{
-	sdp_lang_attr_t base_lang;
-	sdp_list_t *langs = 0;
-
-	/* UTF-8 MIBenum (http://www.iana.org/assignments/character-sets) */
-	base_lang.code_ISO639 = (0x65 << 8) | 0x6e;
-	base_lang.encoding = 106;
-	base_lang.base_offset = SDP_PRIMARY_LANG_BASE;
-	langs = sdp_list_append(0, &base_lang);
-	sdp_set_lang_attr(r, langs);
-	sdp_list_free(langs, 0);
-}
 
 static sdp_record_t *server_record_new(const char *name, uint16_t id)
 {
@@ -256,7 +242,7 @@ static sdp_record_t *server_record_new(const char *name, uint16_t id)
 	aproto = sdp_list_append(NULL, apseq);
 	sdp_set_access_protos(record, aproto);
 
-	add_lang_attr(record);
+	sdp_add_lang_attr(record);
 
 	sdp_attr_add_new(record, SDP_ATTR_SECURITY_DESC,
 				SDP_UINT16, &security_desc);
@@ -359,13 +345,13 @@ static uint16_t bnep_setup_decode(struct bnep_setup_conn_req *req,
 
 	switch (req->uuid_size) {
 	case 2: /* UUID16 */
-		*dst_role = ntohs(bt_get_unaligned((uint16_t *) dest));
-		*src_role = ntohs(bt_get_unaligned((uint16_t *) source));
+		*dst_role = bt_get_be16(dest);
+		*src_role = bt_get_be16(source);
 		break;
 	case 4: /* UUID32 */
 	case 16: /* UUID128 */
-		*dst_role = ntohl(bt_get_unaligned((uint32_t *) dest));
-		*src_role = ntohl(bt_get_unaligned((uint32_t *) source));
+		*dst_role = bt_get_be32(dest);
+		*src_role = bt_get_be32(source);
 		break;
 	default:
 		return BNEP_CONN_INVALID_SVC;
@@ -406,7 +392,6 @@ static gboolean server_disconnected_cb(GIOChannel *chan,
 {
 	struct network_server *ns = NULL;
 	struct network_session *session = NULL;
-	gboolean connected = FALSE;
 	char address[20] = {0};
 	GError *gerr = NULL;
 	const char* paddr = address;
@@ -457,9 +442,6 @@ static gboolean bnep_setup(GIOChannel *chan,
 	struct bnep_setup_conn_req *req = (void *) packet;
 	uint16_t src_role, dst_role, rsp = BNEP_CONN_NOT_ALLOWED;
 	int n, sk;
-#ifdef  __TIZEN_PATCH__
-	gboolean connected = TRUE;
-#endif
 
 	if (cond & G_IO_NVAL)
 		return FALSE;
@@ -823,16 +805,22 @@ static void path_unregister(void *data)
 	adapter_free(na);
 }
 
-static GDBusMethodTable server_methods[] = {
-	{ "Register",	"ss",	"",	register_server		},
-	{ "Unregister",	"s",	"",	unregister_server	},
+static const GDBusMethodTable server_methods[] = {
+	{ GDBUS_METHOD("Register",
+			GDBUS_ARGS({ "uuid", "s" }, { "bridge", "s" }), NULL,
+			register_server) },
+	{ GDBUS_METHOD("Unregister",
+			GDBUS_ARGS({ "uuid", "s" }), NULL,
+			unregister_server) },
 	{ }
 };
 
 #ifdef  __TIZEN_PATCH__
 static GDBusSignalTable server_signals[] = {
-	{ "PeerConnected",	"ss"	},
-	{ "PeerDisconnected",	"ss"	},
+	{ GDBUS_SIGNAL("PeerConnected",
+			GDBUS_ARGS({ "device", "s" }, { "address", "s" })) },
+	{ GDBUS_SIGNAL("PeerDisconnected",
+			GDBUS_ARGS({ "device", "s" }, { "address", "s" })) },
 	{ }
 };
 #endif

@@ -53,7 +53,6 @@
 #include "error.h"
 #include "telephony.h"
 #include "headset.h"
-#include "glib-compat.h"
 #include "sdp-client.h"
 #include "btio.h"
 #include "dbus-common.h"
@@ -166,9 +165,6 @@ struct headset {
 
 	guint dc_timer;
 
-#ifdef __TIZEN_PATCH__
-	guint rfcomm_io_id;
-#endif
 	gboolean hfp_active;
 	gboolean search_hfp;
 	gboolean rfcomm_initiator;
@@ -1205,7 +1201,34 @@ static int voice_dial(struct audio_device *device, const char *buf)
 }
 
 #ifdef __TIZEN_PATCH__
-int telephony_list_phonebook_store_rsp(void *telephony_device, const char *buf, cme_error_t err)
+int telephony_select_phonebook_memory_status_rsp(void *telephony_device, const char *path,
+						uint32_t total, uint32_t used,
+						cme_error_t err)
+{
+	struct audio_device *device = telephony_device;
+	struct headset *hs = device->headset;
+	struct headset_slc *slc = hs->slc;
+
+	if (err != CME_ERROR_NONE) {
+		if (slc->cme_enabled)
+			return headset_send(hs, "\r\n+CME ERROR: %d\r\n", err);
+		else
+			return headset_send(hs, "\r\nERROR\r\n");
+	}
+
+	if (0 != total && 0 != used) {
+		if (!active_devices)
+			return -ENODEV;
+
+		send_foreach_headset(active_devices, hfp_cmp,
+					"\r\n+CPBS: %s,%d,%d\r\n",
+					path, used, total);
+	}
+	return headset_send(hs, "\r\nOK\r\n");
+}
+
+int telephony_select_phonebook_memory_list_rsp(void *telephony_device, const char *buf,
+						cme_error_t err)
 {
 	struct audio_device *device = telephony_device;
 	struct headset *hs = device->headset;
@@ -1229,58 +1252,35 @@ int telephony_list_phonebook_store_rsp(void *telephony_device, const char *buf, 
 	return headset_send(hs, "\r\nOK\r\n");
 }
 
-int telephony_read_phonebook_store_rsp(void *telephony_device, char* pb_store, uint32_t total, uint32_t used, cme_error_t err)
+int telephony_select_phonebook_memory_rsp(void *telephony_device, cme_error_t err)
 {
-	struct audio_device *device = telephony_device;
-	struct headset *hs = device->headset;
-	struct headset_slc *slc = hs->slc;
-
-	if (err != CME_ERROR_NONE) {
-		if (slc->cme_enabled)
-			return headset_send(hs, "\r\n+CME ERROR: %d\r\n", err);
-		else
-			return headset_send(hs, "\r\nERROR\r\n");
-	}
-
-	if (0 != total && 0 != used) {
-		if (!active_devices)
-			return -ENODEV;
-
-		send_foreach_headset(active_devices, hfp_cmp,
-					"\r\n+CPBS: \"%s\",%d,%d\r\n",
-					pb_store, used, total);
-	}
-	return headset_send(hs, "\r\nOK\r\n");
+	return telephony_generic_rsp(telephony_device, err);
 }
 
 static int select_phonebook_memory(struct audio_device *device, const char *buf)
 {
-	struct headset *hs = device->headset;
-	int err;
+	if (strlen(buf) < 8)
+		return -EINVAL;
 
-	if (NULL != buf) {
-		if (strlen(buf) < 9)
-			return -EINVAL;
+	if (buf[7] == '?') {
+		telephony_select_phonebook_memory_status(device);
+		return 0;
+	}
 
-		if (buf[7] == '?') {
-			telephony_read_phonebook_store(device);
+	if (buf[7] == '=') {
+		if (buf[8] == '?') {
+			telephony_select_phonebook_memory_list(device);
 			return 0;
 		}
-
-		if (buf[8] == '=') {
-			if (buf[9] == '?') {
-				telephony_list_phonebook_store(device);
-			} else {
-				telephony_set_phonebook_store(device, &buf[9]);
-				return headset_send(hs, "\r\nOK\r\n");
-			}
-		}
+		telephony_select_phonebook_memory(device, &buf[8]);
+		return 0;
 	}
-	return 0;
+
+	return -EINVAL;
 }
 
-int telephony_read_phonebook_attributes_rsp(void *telephony_device,
-						uint32_t total,
+int telephony_read_phonebook_entries_list_rsp(void *telephony_device,
+						uint32_t used,
 						uint32_t number_length,
 						uint32_t name_length,
 						cme_error_t err)
@@ -1289,6 +1289,9 @@ int telephony_read_phonebook_attributes_rsp(void *telephony_device,
 	struct headset *hs = device->headset;
 	struct headset_slc *slc = hs->slc;
 
+	uint32_t index = 0;
+	int send_err = 0;
+
 	if (err != CME_ERROR_NONE) {
 		if (slc->cme_enabled)
 			return headset_send(hs, "\r\n+CME ERROR: %d\r\n", err);
@@ -1296,100 +1299,113 @@ int telephony_read_phonebook_attributes_rsp(void *telephony_device,
 			return headset_send(hs, "\r\nERROR\r\n");
 	}
 
-	if (total != 0 && name_length != 0 && number_length != 0) {
-		if (!active_devices)
-			return -ENODEV;
+	if (used < 0)
+		index = 1;
 
-		send_foreach_headset(active_devices, hfp_cmp,
-					"\r\n+CPBR: (1-%d),%d,%d\r\n",
-					total, number_length, name_length);
-	}
+	send_err = headset_send(hs, "\r\n+CPBR: (%d-%d),%d,%d\r\n",
+			index, used, number_length, name_length);
+	if (send_err < 0)
+		return send_err;
+
 	return headset_send(hs, "\r\nOK\r\n");
 }
 
-int telephony_read_phonebook_rsp(void *telephony_device, const char *data,
-					cme_error_t err)
+int telephony_read_phonebook_entries_rsp(void *telephony_device, cme_error_t err)
 {
-	struct audio_device *device = telephony_device;
-	struct headset *hs = device->headset;
-	struct headset_slc *slc = hs->slc;
+	return telephony_generic_rsp(telephony_device, err);
+}
 
-	if (err != CME_ERROR_NONE) {
-		if (slc->cme_enabled)
-			return headset_send(hs, "\r\n+CME ERROR: %d\r\n", err);
-		else
-			return headset_send(hs, "\r\nERROR\r\n");
-	}
+int telephony_read_phonebook_entries_ind(const char *name, const char *number,
+					uint32_t handle)
+{
+	int type = 129;
+	const char *pos = NULL;
 
-	if (NULL != data) {
-		if (!active_devices)
-			return -ENODEV;
+	pos = number;
+	while (*pos == ' ' || *pos == '\t')
+		pos++;
 
-		send_foreach_headset(active_devices, hfp_cmp,
-					"\r\n+CPBR:  %s\r\n", data);
-	}
+	/* 145 means international access code, otherwise 129 is used */
+	if (*pos == '+')
+		type = 145;
+
+	send_foreach_headset(active_devices, hfp_cmp,
+			"\r\n+CPBR: %d,\"%s\",%d,\"%s\"\r\n",
+			handle, number, type, name);
+	return 0;
 }
 
 static int read_phonebook_entries(struct audio_device *device, const char *buf)
 {
-	struct headset *hs = device->headset;
-	int err;
+	if (strlen(buf) < 8)
+		return -EINVAL;
 
-	if (NULL != buf) {
-		if (strlen(buf) < 8)
-			return -EINVAL;
+	if (buf[7] != '=')
+		return -EINVAL;
 
-		if (buf[9] == '?') {
-			telephony_read_phonebook_attributes(device);
-		} else {
-			telephony_read_phonebook(device, &buf[9]);
-		}
-	}
+	if (buf[8] == '?')
+		telephony_read_phonebook_entries_list(device);
+	else
+		telephony_read_phonebook_entries(device, &buf[8]);
+
 	return 0;
 }
 
-int telephony_find_phonebook_entry_properties_rsp(void *telephony_device,
-						uint32_t max_number_length,
-						uint32_t max_name_length,
+int telephony_find_phonebook_entries_status_rsp(void *telephony_device,
 						cme_error_t err)
 {
-	struct audio_device *device = telephony_device;
-	struct headset *hs = device->headset;
-	struct headset_slc *slc = hs->slc;
+	return telephony_generic_rsp(telephony_device, err);
+}
 
-	if (err != CME_ERROR_NONE) {
-		if (slc->cme_enabled)
-			return headset_send(hs, "\r\n+CME ERROR: %d\r\n", err);
-		else
-			return headset_send(hs, "\r\nERROR\r\n");
-	}
+int telephony_find_phonebook_entries_rsp(void *telephony_device,
+					cme_error_t err)
+{
+	return telephony_generic_rsp(telephony_device, err);
+}
 
-	if (max_name_length != 0 && max_number_length != 0) {
-		if (!active_devices)
-			return -ENODEV;
+int telephony_find_phonebook_entries_status_ind( uint32_t number_length,
+					uint32_t name_length)
+{
+	send_foreach_headset(active_devices, hfp_cmp,
+			"\r\n+CPBF: %d,%d\r\n",
+			number_length, name_length);
 
-		send_foreach_headset(active_devices, hfp_cmp,
-					"\r\n+CPBF: %d,%d\r\n",
-					max_number_length,
-					max_name_length);
-	}
-	return headset_send(hs, "\r\nOK\r\n");
+	return 0;
+}
+
+int telephony_find_phonebook_entries_ind(const char *name, const char *number,
+					uint32_t handle)
+{
+	int type = 129;
+	const char *pos = NULL;
+
+	pos = number;
+	while (*pos == ' ' || *pos == '\t')
+		pos++;
+
+	/* 145 means international access code, otherwise 129 is used */
+	if (*pos == '+')
+		type = 145;
+
+	send_foreach_headset(active_devices, hfp_cmp,
+			"\r\n+CPBF: %d,\"%s\",%d,\"%s\"\r\n",
+			handle, number, type, name);
+	return 0;
 }
 
 static int find_phonebook_entires(struct audio_device *device, const char *buf)
 {
-	struct headset *hs = device->headset;
-	int err;
+	if (strlen(buf) < 8)
+		return -EINVAL;
 
-	if (NULL != buf)  {
-		if (strlen(buf) < 8)
-			return -EINVAL;
+	if (buf[7] != '=')
+		return -EINVAL;
 
-		if (buf[9] == '?')
-			telephony_find_phonebook_entry_properties(device);
-		else
-			telephony_find_phonebook_entry(device, &buf[9]);
-	}
+	if (buf[8] == '?')
+		telephony_find_phonebook_entries_status(device);
+	else
+		telephony_find_phonebook_entries(device, &buf[8]);
+
 	return 0;
 }
 
@@ -1446,7 +1462,6 @@ int telephony_get_preffered_store_capacity_rsp(void *telephony_device,
 static int preffered_message_storage(struct audio_device *device, const char *buf)
 {
 	struct headset *hs = device->headset;
-	int err;
 
 	if (NULL != buf) {
 		if (strlen(buf) < 9)
@@ -1497,7 +1512,7 @@ int telephony_supported_character_generic_rsp(void *telephony_device,
 static int select_character_set(struct audio_device *device, const char *buf)
 {
 	struct headset *hs = device->headset;
-	int err;
+
 	if (NULL != buf) {
 		if (strlen(buf) < 9)
 			return -EINVAL;
@@ -1519,6 +1534,59 @@ static int select_character_set(struct audio_device *device, const char *buf)
 	return 0;
 
 }
+
+int telephony_battery_charge_status_rsp(void *telephony_device,
+						int32_t bcs,
+						int32_t bcl,
+						cme_error_t err)
+{
+	struct audio_device *device = telephony_device;
+
+	if (err == CME_ERROR_NONE) {
+		send_foreach_headset(active_devices, hfp_cmp,
+					"\r\n+CBC: %d,%d\r\n", bcs, bcl);
+	}
+
+	return telephony_generic_rsp(device, err);
+}
+
+static int get_battery_charge_status(struct audio_device *device, const char *buf)
+{
+	if (strlen(buf) < 8)
+		return -EINVAL;
+
+	if (buf[7] == '?')
+		telephony_get_battery_property(device);
+
+	return 0;
+}
+
+int telephony_signal_quality_rsp(void *telephony_device,
+						int32_t rssi,
+						int32_t ber,
+						cme_error_t err)
+{
+	struct audio_device *device = telephony_device;
+
+	if (err == CME_ERROR_NONE) {
+		send_foreach_headset(active_devices, hfp_cmp,
+					"\r\n+CSQ: %d,%d\r\n", rssi, ber);
+	}
+	return telephony_generic_rsp(device,err);
+}
+
+static int get_signal_quality(struct audio_device *device, const char *buf)
+{
+	if (strlen(buf) < 8)
+		return -EINVAL;
+
+	if (buf[7] == '?')
+		telephony_get_signal_quality(device);
+
+	return 0;
+
+}
+
 #endif
 
 static int apple_command(struct audio_device *device, const char *buf)
@@ -1552,12 +1620,13 @@ static struct event event_callbacks[] = {
 	{ "AT+XAPL", apple_command },
 	{ "AT+IPHONEACCEV", apple_command },
 #ifdef __TIZEN_PATCH__
-	/*TIZEN PATCH Starts here*/
 	{ "AT+CPBS", select_phonebook_memory },
 	{ "AT+CPBR", read_phonebook_entries},
 	{ "AT+CPBF", find_phonebook_entires },
 	{ "AT+CPMS", preffered_message_storage },
 	{ "AT+CSCS", select_character_set },
+	{ "AT+CSQ", get_signal_quality },
+	{ "AT+CBC", get_battery_charge_status },
 #endif
 	{ 0 }
 };
@@ -1608,10 +1677,6 @@ static gboolean rfcomm_io_cb(GIOChannel *chan, GIOCondition cond,
 		return FALSE;
 
 	hs = device->headset;
-#ifdef __TIZEN_PATCH__
-	if (!hs)
-		return FALSE;
-#endif
 	slc = hs->slc;
 
 	if (cond & (G_IO_ERR | G_IO_HUP)) {
@@ -1631,7 +1696,7 @@ static gboolean rfcomm_io_cb(GIOChannel *chan, GIOCondition cond,
 	if (free_space < (size_t) bytes_read) {
 		/* Very likely that the HS is sending us garbage so
 		 * just ignore the data and disconnect */
-		error("Too much data to fit incomming buffer");
+		error("Too much data to fit incoming buffer");
 		goto failed;
 	}
 
@@ -1730,14 +1795,8 @@ void headset_connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 	else
 		hs->auto_dc = FALSE;
 
-#ifdef __TIZEN_PATCH__
-	hs->rfcomm_io_id = g_io_add_watch(chan,
-				G_IO_IN | G_IO_ERR | G_IO_HUP | G_IO_NVAL,
-				(GIOFunc) rfcomm_io_cb, dev);
-#else
 	g_io_add_watch(chan, G_IO_IN | G_IO_ERR | G_IO_HUP| G_IO_NVAL,
 			(GIOFunc) rfcomm_io_cb, dev);
-#endif
 
 	DBG("%s: Connected to %s", dev->path, hs_address);
 
@@ -1803,9 +1862,11 @@ static int headset_set_channel(struct headset *headset,
 
 	if (svc == HANDSFREE_SVCLASS_ID) {
 		headset->hfp_handle = record->handle;
+		headset->hsp_handle = 0;
 		DBG("Discovered Handsfree service on channel %d", ch);
 	} else {
 		headset->hsp_handle = record->handle;
+		headset->hfp_handle = 0;
 		DBG("Discovered Headset service on channel %d", ch);
 	}
 
@@ -1958,17 +2019,12 @@ static int rfcomm_connect(struct audio_device *dev, headset_stream_cb_t cb,
 	DBG("%s: Connecting to %s channel %d", dev->path, address,
 		hs->rfcomm_ch);
 
-#ifdef __TIZEN_PATCH__
-	if (hs->rfcomm_io_id) {
-		g_source_remove(hs->rfcomm_io_id);
-		hs->rfcomm_io_id = 0;
-	}
-#endif
 	hs->tmp_rfcomm = bt_io_connect(BT_IO_RFCOMM, headset_connect_cb, dev,
 					NULL, &err,
 					BT_IO_OPT_SOURCE_BDADDR, &dev->src,
 					BT_IO_OPT_DEST_BDADDR, &dev->dst,
 					BT_IO_OPT_CHANNEL, hs->rfcomm_ch,
+					BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_MEDIUM,
 					BT_IO_OPT_INVALID);
 
 	hs->rfcomm_ch = -1;
@@ -2399,43 +2455,100 @@ static DBusMessage *hs_set_property(DBusConnection *conn,
 	return btd_error_invalid_args(msg);
 }
 
-static GDBusMethodTable headset_methods[] = {
-	{ "Connect",		"",	"",	hs_connect,
-						G_DBUS_METHOD_FLAG_ASYNC },
-	{ "Disconnect",		"",	"",	hs_disconnect },
-	{ "IsConnected",	"",	"b",	hs_is_connected },
-	{ "IndicateCall",	"",	"",	hs_ring },
-	{ "CancelCall",		"",	"",	hs_cancel_call },
-	{ "Play",		"",	"",	hs_play,
-						G_DBUS_METHOD_FLAG_ASYNC |
-						G_DBUS_METHOD_FLAG_DEPRECATED },
-	{ "Stop",		"",	"",	hs_stop },
-	{ "IsPlaying",		"",	"b",	hs_is_playing,
-						G_DBUS_METHOD_FLAG_DEPRECATED },
-	{ "GetSpeakerGain",	"",	"q",	hs_get_speaker_gain,
-						G_DBUS_METHOD_FLAG_DEPRECATED },
-	{ "GetMicrophoneGain",	"",	"q",	hs_get_mic_gain,
-						G_DBUS_METHOD_FLAG_DEPRECATED },
-	{ "SetSpeakerGain",	"q",	"",	hs_set_speaker_gain,
-						G_DBUS_METHOD_FLAG_DEPRECATED },
-	{ "SetMicrophoneGain",	"q",	"",	hs_set_mic_gain,
-						G_DBUS_METHOD_FLAG_DEPRECATED },
-	{ "GetProperties",	"",	"a{sv}",hs_get_properties },
-	{ "SetProperty",	"sv",	"",	hs_set_property },
-	{ NULL, NULL, NULL, NULL }
+#ifdef __TIZEN_PATCH__
+static DBusMessage *hs_set_voice_dial(DBusConnection *conn, DBusMessage *msg,
+						void *data)
+{
+	struct audio_device *device = data;
+	struct headset *hs = device->headset;
+	struct headset_slc *slc = hs->slc;
+	DBusMessage *reply;
+	int err;
+	dbus_bool_t enable;
+
+	if (hs->state < HEADSET_STATE_CONNECTED)
+		return btd_error_not_connected(msg);
+
+	if (!(slc->hf_features & HF_FEATURE_VOICE_RECOGNITION)) {
+		DBG("Voice Recognition is not supported by HF \n");
+		return btd_error_not_supported(msg);
+	}
+
+	if (!dbus_message_get_args(msg, NULL, DBUS_TYPE_BOOLEAN, &enable,
+						DBUS_TYPE_INVALID))
+		return NULL;
+
+	DBG("hs_set_voice_dial = %d \n", enable);
+
+	reply = dbus_message_new_method_return(msg);
+
+	if (!reply)
+		return NULL;
+
+	err = headset_send(hs, "\r\n+BVRA: %d\r\n", enable);
+
+	if (err < 0) {
+		dbus_message_unref(reply);
+		return btd_error_failed(msg, strerror(-err));
+	}
+
+	return reply;
+}
+#endif
+
+static const GDBusMethodTable headset_methods[] = {
+	{ GDBUS_ASYNC_METHOD("Connect", NULL, NULL, hs_connect) },
+	{ GDBUS_METHOD("Disconnect", NULL, NULL, hs_disconnect) },
+	{ GDBUS_METHOD("IsConnected",
+			NULL, GDBUS_ARGS({ "connected", "b" }),
+			hs_is_connected) },
+	{ GDBUS_METHOD("IndicateCall", NULL, NULL, hs_ring) },
+	{ GDBUS_METHOD("CancelCall", NULL, NULL, hs_cancel_call) },
+	{ GDBUS_DEPRECATED_ASYNC_METHOD("Play", NULL, NULL, hs_play) },
+	{ GDBUS_METHOD("Stop", NULL, NULL, hs_stop) },
+	{ GDBUS_DEPRECATED_METHOD("IsPlaying",
+					NULL, GDBUS_ARGS({ "playing", "b" }),
+					hs_is_playing) },
+	{ GDBUS_DEPRECATED_METHOD("GetSpeakerGain",
+					NULL, GDBUS_ARGS({ "gain", "q" }),
+					hs_get_speaker_gain) },
+	{ GDBUS_DEPRECATED_METHOD("GetMicrophoneGain",
+					NULL, GDBUS_ARGS({ "gain", "q" }),
+					hs_get_mic_gain) },
+	{ GDBUS_DEPRECATED_METHOD("SetSpeakerGain",
+					GDBUS_ARGS({ "gain", "q" }), NULL,
+					hs_set_speaker_gain) },
+	{ GDBUS_DEPRECATED_METHOD("SetMicrophoneGain",
+					GDBUS_ARGS({ "gain", "q" }), NULL,
+					hs_set_mic_gain) },
+	{ GDBUS_METHOD("GetProperties",
+			NULL, GDBUS_ARGS({ "properties", "a{sv}" }),
+			hs_get_properties) },
+	{ GDBUS_METHOD("SetProperty",
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" }), NULL,
+			hs_set_property) },
+#ifdef __TIZEN_PATCH__
+	{ GDBUS_METHOD("SetVoiceDial",
+			GDBUS_ARGS({ "enable", "b" }), NULL,
+			hs_set_voice_dial) },
+#endif
+	{ }
 };
 
-static GDBusSignalTable headset_signals[] = {
-	{ "Connected",			"",	G_DBUS_SIGNAL_FLAG_DEPRECATED },
-	{ "Disconnected",		"",	G_DBUS_SIGNAL_FLAG_DEPRECATED },
-	{ "AnswerRequested",		""	},
-	{ "Stopped",			"",	G_DBUS_SIGNAL_FLAG_DEPRECATED },
-	{ "Playing",			"",	G_DBUS_SIGNAL_FLAG_DEPRECATED },
-	{ "SpeakerGainChanged",		"q",	G_DBUS_SIGNAL_FLAG_DEPRECATED },
-	{ "MicrophoneGainChanged",	"q",	G_DBUS_SIGNAL_FLAG_DEPRECATED },
-	{ "CallTerminated",		""	},
-	{ "PropertyChanged",		"sv"	},
-	{ NULL, NULL }
+static const GDBusSignalTable headset_signals[] = {
+	{ GDBUS_DEPRECATED_SIGNAL("Connected", NULL) },
+	{ GDBUS_DEPRECATED_SIGNAL("Disconnected", NULL) },
+	{ GDBUS_DEPRECATED_SIGNAL("AnswerRequested", NULL) },
+	{ GDBUS_DEPRECATED_SIGNAL("Stopped", NULL) },
+	{ GDBUS_DEPRECATED_SIGNAL("Playing", NULL) },
+	{ GDBUS_DEPRECATED_SIGNAL("SpeakerGainChanged",
+						GDBUS_ARGS({ "gain", "q" })) },
+	{ GDBUS_DEPRECATED_SIGNAL("MicrophoneGainChanged",
+						GDBUS_ARGS({ "gain", "q" })) },
+	{ GDBUS_SIGNAL("CallTerminated", NULL) },
+	{ GDBUS_SIGNAL("PropertyChanged",
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" })) },
+	{ }
 };
 
 void headset_update(struct audio_device *dev, uint16_t svc,
@@ -2492,12 +2605,6 @@ static int headset_close_rfcomm(struct audio_device *dev)
 		hs->rfcomm = NULL;
 	}
 
-#ifdef __TIZEN_PATCH__
-	if (hs->rfcomm_io_id) {
-		g_source_remove(hs->rfcomm_io_id);
-		hs->rfcomm_io_id = 0;
-	}
-#endif
 	g_free(hs->slc);
 	hs->slc = NULL;
 

@@ -40,6 +40,7 @@ GQuark bt_io_error_quark(void);
 typedef enum {
 	BT_IO_L2RAW,
 	BT_IO_L2CAP,
+	BT_IO_L2ERTM,
 	BT_IO_RFCOMM,
 	BT_IO_SCO,
 } BtIOType;
@@ -50,8 +51,10 @@ typedef enum {
 	BT_IO_OPT_SOURCE_BDADDR,
 	BT_IO_OPT_DEST,
 	BT_IO_OPT_DEST_BDADDR,
+	BT_IO_OPT_DEST_TYPE,
 	BT_IO_OPT_DEFER_TIMEOUT,
 	BT_IO_OPT_SEC_LEVEL,
+	BT_IO_OPT_KEY_SIZE,
 	BT_IO_OPT_CHANNEL,
 	BT_IO_OPT_SOURCE_CHANNEL,
 	BT_IO_OPT_DEST_CHANNEL,
@@ -74,6 +77,14 @@ typedef enum {
 	BT_IO_SEC_MEDIUM,
 	BT_IO_SEC_HIGH,
 } BtIOSecLevel;
+
+typedef enum {
+	BT_IO_MODE_BASIC = 0,
+	BT_IO_MODE_RETRANS,
+	BT_IO_MODE_FLOWCTL,
+	BT_IO_MODE_ERTM,
+	BT_IO_MODE_STREAMING
+} BtIOMode;
 
 typedef void (*BtIOConfirm)(GIOChannel *io, gpointer user_data);
 

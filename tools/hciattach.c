@@ -42,8 +42,6 @@
 #include <sys/poll.h>
 #include <sys/param.h>
 #include <sys/ioctl.h>
-#include <sys/socket.h>
-#include <sys/uio.h>
 
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/hci.h>
@@ -148,6 +146,10 @@ static int uart_speed(int s)
 #ifdef B3500000
 	case 3500000:
 		return B3500000;
+#endif
+#ifdef B3710000
+	case 3710000
+		return B3710000;
 #endif
 #ifdef B4000000
 	case 4000000:
@@ -338,6 +340,11 @@ static int ath3k_pm(int fd, struct uart_t *u, struct termios *ti)
 static int qualcomm(int fd, struct uart_t *u, struct termios *ti)
 {
 	return qualcomm_init(fd, u->speed, ti, u->bdaddr);
+}
+
+static int intel(int fd, struct uart_t *u, struct termios *ti)
+{
+	return intel_init(fd, u->init_speed, &u->speed, ti);
 }
 
 static int read_check(int fd, void *buf, int count)
@@ -1197,6 +1204,14 @@ struct uart_t uart[] = {
 	{ "qualcomm",   0x0000, 0x0000, HCI_UART_H4,   115200, 115200,
 			FLOW_CTL, DISABLE_PM, NULL, qualcomm, NULL },
 
+	/* Intel Bluetooth Module */
+	{ "intel",      0x0000, 0x0000, HCI_UART_H4,   115200, 115200,
+			FLOW_CTL, DISABLE_PM, NULL, intel, NULL },
+
+	/* Three-wire UART */
+	{ "3wire",      0x0000, 0x0000, HCI_UART_3WIRE, 115200, 115200,
+			0, DISABLE_PM, NULL, NULL, NULL },
+
 	{ NULL, 0 }
 };
 
@@ -1360,11 +1375,10 @@ int main(int argc, char *argv[])
 	printpid = 0;
 	raw = 0;
 #ifdef __TI_PATCH__
-	while ((opt=getopt(argc, argv, "bnprft:g:s:l")) != EOF)
+	while ((opt=getopt(argc, argv, "bnprft:g:s:l")) != EOF) {
 #else
-	while ((opt=getopt(argc, argv, "bnpt:s:lr")) != EOF)
+	while ((opt=getopt(argc, argv, "bnpt:s:lr")) != EOF) {
 #endif
-	{
 		switch(opt) {
 		case 'b':
 			send_break = 1;
