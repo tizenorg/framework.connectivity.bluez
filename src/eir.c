@@ -341,7 +341,10 @@ gboolean eir_has_data_type(uint8_t *data, size_t len, uint8_t type)
 {
 	uint8_t field_len;
 	size_t parsed = 0;
-
+#ifdef __TIZEN_PATCH__
+	if (len < 2)
+		return FALSE;
+#endif
 	while (parsed < len - 1) {
 		field_len = data[0];
 
