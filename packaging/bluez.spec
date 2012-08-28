@@ -105,6 +105,7 @@ install -D -m 0644 network/network.conf %{buildroot}%{_prefix}/etc/bluetooth/net
 %{_sbindir}/bluetoothd
 %{_sbindir}/hciconfig
 %{_sbindir}/hciattach
+%exclude %{_bindir}/ciptool
 %{_bindir}/l2ping
 %{_bindir}/sdptool
 %{_bindir}/gatttool
