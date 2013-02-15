@@ -1,0 +1,133 @@
+#!/usr/bin/make -f
+
+# Uncomment this to turn on verbose mode.
+#export DH_VERBOSE=1
+
+
+# These are used for cross-compiling and for saving the configure script
+# from having to guess our platform (since we know it already)
+DEB_HOST_GNU_TYPE   ?= $(shell dpkg-architecture -qDEB_HOST_GNU_TYPE)
+DEB_BUILD_GNU_TYPE  ?= $(shell dpkg-architecture -qDEB_BUILD_GNU_TYPE)
+
+CFLAGS ?= -Wall -g
+LDFLAGS ?=
+PREFIX ?= /usr
+DATADIR ?= /opt
+
+LDFLAGS += -Wl,--as-needed
+
+ifneq (,$(findstring noopt,$(DEB_BUILD_OPTIONS)))
+	CFLAGS += -O0
+else
+	CFLAGS += -O2
+endif
+
+MACHINE="aquila"
+BT_CHIP_CFLAGS=-D__BROADCOM_PATCH__
+CHIP_OPTIONS=--disable-bccmd
+
+configure: configure.ac
+	aclocal
+	autoheader
+	libtoolize
+	automake --add-missing
+	autoconf
+
+config.status: configure
+	dh_testdir
+
+	# Add here commands to configure the package.
+	CFLAGS="$(CFLAGS) -D__TIZEN_PATCH__ -D__BROADCOM_PATCH__ $(BT_CHIP_CFLAGS)" \
+	LDFLAGS="$(LDFLAGS) -Wl,--warn-unresolved-symbols" \
+	./configure	--prefix=$(PREFIX) \
+			--sysconfdir=$(PREFIX)/etc \
+			--localstatedir=$(DATADIR)/var \
+			--enable-pie \
+			--enable-network \
+			--enable-serial \
+			--enable-input \
+			--enable-usb=no \
+			--enable-tools \
+			$(CHIP_OPTIONS) \
+			--enable-pcmcia=no \
+			--enable-hid2hci=no \
+			--enable-alsa=no \
+			--enable-gstreamer=no \
+			--disable-dfutool \
+			--disable-cups \
+			--disable-test \
+			--enable-health \
+			--enable-dbusoob \
+			--with-telephony=tizen
+
+build: build-stamp
+
+build-stamp:  config.status
+	dh_testdir
+
+	# Add here commands to compile the package.
+	$(MAKE)
+	#docbook-to-man debian/ncurses.sgml > ncurses.1
+
+	for f in `find $(CURDIR)/debian/ -name "*.in"`; do \
+		cat $$f > $${f%.in}; \
+		sed -i -e "s#@PREFIX@#$(PREFIX)#g" $${f%.in}; \
+		sed -i -e "s#@DATADIR@#$(DATADIR)#g" $${f%.in}; \
+	done
+
+	touch $@
+
+clean:
+	dh_testdir
+	dh_testroot
+	rm -f build-stamp
+
+	# Add here commands to clean up after the build process.
+	-$(MAKE) distclean
+
+	for f in `find $(CURDIR)/debian/ -name "*.in"`; do \
+		rm -f $${f%.in}; \
+	done
+
+	dh_clean 
+
+install: build
+	dh_testdir
+	dh_testroot
+	dh_clean -k
+	dh_installdirs
+
+	# Add here commands to install the package into debian/tmp.
+	install -D -m 0644 $(CURDIR)/audio/audio.conf $(CURDIR)/debian/tmp/usr/etc/bluetooth/audio.conf
+	install -D -m 0644 $(CURDIR)/network/network.conf $(CURDIR)/debian/tmp/usr/etc/bluetooth/network.conf
+
+	$(MAKE) DESTDIR=$(CURDIR)/debian/tmp install
+
+
+# Build architecture-independent files here.
+binary-indep: build install
+# We have nothing to do by default.
+
+# Build architecture-dependent files here.
+binary-arch: build install
+	dh_testdir
+	dh_testroot
+	dh_installchangelogs
+	dh_installdocs
+	dh_installexamples
+	dh_install --sourcedir=debian/tmp
+	dh_installman
+	dh_link
+	dh_strip --dbg-package=bluez-dbg
+	dh_compress
+	dh_fixperms
+#	dh_perl
+	dh_makeshlibs
+	dh_installdeb
+	dh_shlibdeps
+	dh_gencontrol
+	dh_md5sums
+	dh_builddeb
+
+binary: binary-indep binary-arch
+.PHONY: build clean binary-indep binary-arch binary install

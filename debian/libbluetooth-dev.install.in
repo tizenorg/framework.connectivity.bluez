@@ -1,0 +1,4 @@
+@PREFIX@/include/*
+@PREFIX@/lib/*.la
+@PREFIX@/lib/pkgconfig/*
+#@PREFIX@/lib/bluetooth/plugins/*.la
