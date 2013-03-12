@@ -1,0 +1,25 @@
+<manifest>
+    <define>
+        <domain name="bluez"/>
+    </define>
+    <assign>
+        <filesystem path="/usr/bin/ciptool" label="bluez" exec_label="bluez"/>
+        <filesystem path="/usr/bin/gatttool" label="bluez" exec_label="bluez"/>
+        <filesystem path="/usr/bin/hcitool" label="bluez" exec_label="bluez"/>
+        <filesystem path="/usr/bin/l2ping" label="bluez" exec_label="bluez"/>
+        <filesystem path="/usr/bin/rfcomm" label="bluez" exec_label="bluez"/>
+        <filesystem path="/usr/bin/sdptool" label="bluez" exec_label="bluez"/>
+
+        <filesystem path="/usr/etc/bluetooth/audio.conf" label="bluez"/>
+        <filesystem path="/usr/etc/bluetooth/main.conf" label="bluez"/>
+        <filesystem path="/usr/etc/bluetooth/network.conf" label="bluez"/>
+        <filesystem path="/usr/etc/bluetooth/rfcomm.conf" label="bluez"/>
+
+        <filesystem path="/usr/sbin/bluetoothd" label="bluez" exec_label="bluez"/>
+        <filesystem path="/usr/sbin/hciattach" label="bluez" exec_label="bluez"/>
+        <filesystem path="/usr/sbin/hciconfig" label="bluez" exec_label="bluez"/>
+    </assign>
+    <request>
+        <domain name="_"/>
+    </request>
+</manifest>
