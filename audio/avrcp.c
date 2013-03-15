@@ -144,7 +144,9 @@ struct avrcp_header {
 struct avrcp_server {
 	bdaddr_t src;
 	uint32_t tg_record_id;
+#ifndef __TIZEN_PATCH__
 	uint32_t ct_record_id;
+#endif
 	GSList *players;
 	struct avrcp_player *active_player;
 };
@@ -1314,6 +1316,7 @@ int avrcp_register(DBusConnection *conn, const bdaddr_t *src, GKeyFile *config)
 	}
 	server->tg_record_id = record->handle;
 
+#ifndef __TIZEN_PATCH__
 	record = avrcp_ct_record();
 	if (!record) {
 		error("Unable to allocate new service record");
@@ -1328,9 +1331,11 @@ int avrcp_register(DBusConnection *conn, const bdaddr_t *src, GKeyFile *config)
 		return -1;
 	}
 	server->ct_record_id = record->handle;
-
+#endif
 	if (avctp_register(src, master) < 0) {
+#ifndef __TIZEN_PATCH__
 		remove_record_from_server(server->ct_record_id);
+#endif
 		remove_record_from_server(server->tg_record_id);
 		g_free(server);
 		return -1;
@@ -1370,7 +1375,9 @@ void avrcp_unregister(const bdaddr_t *src)
 
 	servers = g_slist_remove(servers, server);
 
+#ifndef __TIZEN_PATCH__
 	remove_record_from_server(server->ct_record_id);
+#endif
 	remove_record_from_server(server->tg_record_id);
 
 	avctp_unregister(&server->src);
