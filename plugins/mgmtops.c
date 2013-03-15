@@ -2554,11 +2554,7 @@ static struct btd_adapter_ops mgmt_ops = {
 
 static int mgmt_init(void)
 {
-#ifdef __TIZEN_PATCH__
-	return btd_register_adapter_ops(&mgmt_ops, FALSE);
-#else
 	return btd_register_adapter_ops(&mgmt_ops, TRUE);
-#endif
 }
 
 static void mgmt_exit(void)

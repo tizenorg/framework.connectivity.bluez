@@ -1,7 +1,7 @@
 Name:       bluez
 Summary:    Bluetooth utilities
-Version:    4.101_19
-Release:    19
+Version:    4.101_21
+Release:    21
 Group:      Applications/System
 License:    GPLv2+
 URL:        http://www.bluez.org/
@@ -104,8 +104,6 @@ install -D -m 0644 COPYING %{buildroot}%{_datadir}/license/bluez
 install -D -m 0644 COPYING %{buildroot}%{_datadir}/license/libbluetooth3
 install -D -m 0644 COPYING %{buildroot}%{_datadir}/license/libbluetooth-devel
 
-mkdir -p %{buildroot}%{_libdir}/systemd/system/multi-user.target.wants
-ln -s ../bluetooth.service %{buildroot}%{_libdir}/systemd/system/multi-user.target.wants/bluetooth.service
 ln -s bluetooth.service %{buildroot}%{_libdir}/systemd/system/dbus-org.bluez.service
 
 %post -n libbluetooth3 -p /sbin/ldconfig
@@ -134,7 +132,6 @@ ln -s bluetooth.service %{buildroot}%{_libdir}/systemd/system/dbus-org.bluez.ser
 %dir %{_libdir}/bluetooth/plugins
 %{_libdir}/systemd/system/bluetooth.service
 %{_libdir}/systemd/system/dbus-org.bluez.service
-%{_libdir}/systemd/system/multi-user.target.wants/bluetooth.service
 %dir %{_localstatedir}/lib/bluetooth
 %{_datadir}/dbus-1/system-services/org.bluez.service
 %{_datadir}/license/bluez

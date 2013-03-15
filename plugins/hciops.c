@@ -3930,11 +3930,7 @@ static struct btd_adapter_ops hci_ops = {
 static int hciops_init(void)
 {
 	DBG("");
-#ifdef __TIZEN_PATCH__
-	return btd_register_adapter_ops(&hci_ops, TRUE);
-#else
 	return btd_register_adapter_ops(&hci_ops, FALSE);
-#endif
 }
 
 static void hciops_exit(void)

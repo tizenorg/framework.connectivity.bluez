@@ -1831,8 +1831,6 @@ static void telephony_operator_reply(DBusPendingCall *call, void *telephony_devi
 
 	DBG("telephony_operator_reply\n");
 
-	dbus_error_init(&derr);
-
 	if (dbus_set_error_from_message(&derr, reply)) {
 		DBG("telephony_operator_reply error:%s", derr.message);
 		goto failed;

@@ -117,6 +117,9 @@ static void disable_proxy(struct serial_proxy *prx)
 	remove_record_from_server(prx->record_id);
 	prx->record_id = 0;
 
+#ifdef __TIZEN_PATCH__
+	g_io_channel_shutdown(prx->io, TRUE, NULL);
+#endif
 	g_io_channel_unref(prx->io);
 	prx->io = NULL;
 }
