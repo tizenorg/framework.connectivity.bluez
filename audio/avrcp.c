@@ -262,12 +262,16 @@ static sdp_record_t *avrcp_tg_record(void)
 #else
 	uint16_t avrcp_ver = 0x0104, avctp_ver = 0x0103;
 #endif
+#ifdef __TIZEN_PATCH__
+	uint16_t feat = ( AVRCP_FEATURE_CATEGORY_1 |
+					AVRCP_FEATURE_PLAYER_SETTINGS );
+#else
 	uint16_t feat = ( AVRCP_FEATURE_CATEGORY_1 |
 					AVRCP_FEATURE_CATEGORY_2 |
 					AVRCP_FEATURE_CATEGORY_3 |
 					AVRCP_FEATURE_CATEGORY_4 |
 					AVRCP_FEATURE_PLAYER_SETTINGS );
-
+#endif
 	record = sdp_record_alloc();
 	if (!record)
 		return NULL;
