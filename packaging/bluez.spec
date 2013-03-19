@@ -1,7 +1,7 @@
 Name:       bluez
 Summary:    Bluetooth utilities
-Version:    4.101_21
-Release:    21
+Version:    4.101_22
+Release:    22
 Group:      Applications/System
 License:    GPLv2+
 URL:        http://www.bluez.org/
