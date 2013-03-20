@@ -93,6 +93,7 @@ export LDFLAGS=" -lncurses -Wl,--as-needed "
 			--enable-health \
 			--enable-dbusoob \
 			--enable-test \
+			--enable-hidd \
                         --with-telephony=ofono
 
 make %{?jobs:-j%jobs}
@@ -163,3 +164,4 @@ ln -s bluetooth.service %{buildroot}%{_libdir}/systemd/system/dbus-org.bluez.ser
 %{_bindir}/l2test
 %{_bindir}/rctest
 %{_libdir}/bluez/test/*
+%{_bindir}/hidd
