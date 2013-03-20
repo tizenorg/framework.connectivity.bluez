@@ -2,7 +2,7 @@
 
 from __future__ import absolute_import, print_function, unicode_literals
 
-from gi.repository import GObject
+import gobject
 
 import dbus
 import dbus.mainloop.glib
@@ -36,5 +36,5 @@ if __name__ == "__main__":
 	except:
 		pass
 
-	mainloop = GObject.MainLoop()
+	mainloop = gobject.MainLoop()
 	mainloop.run()

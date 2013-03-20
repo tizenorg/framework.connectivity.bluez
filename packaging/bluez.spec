@@ -54,6 +54,10 @@ use in Bluetooth applications.
 %package -n bluez-test
 Summary:    Test utilities for BlueZ
 Group:      Test Utilities
+Requires:   %{name} = %{version}-%{release}
+Requires:   dbus-python
+Requires:   pygobject
+Requires:   python-xml
 
 %description -n bluez-test
 bluez-test contains test utilities for BlueZ testing.
@@ -158,3 +162,4 @@ ln -s bluetooth.service %{buildroot}%{_libdir}/systemd/system/dbus-org.bluez.ser
 %{_sbindir}/hciemu
 %{_bindir}/l2test
 %{_bindir}/rctest
+%{_libdir}/bluez/test/*

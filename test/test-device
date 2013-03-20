@@ -2,7 +2,7 @@
 
 from __future__ import absolute_import, print_function, unicode_literals
 
-from gi.repository import GObject
+import gobject
 
 import sys
 import dbus
@@ -12,7 +12,7 @@ from optparse import OptionParser, make_option
 
 dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
 bus = dbus.SystemBus()
-mainloop = GObject.MainLoop()
+mainloop = gobject.MainLoop()
 
 manager = dbus.Interface(bus.get_object("org.bluez", "/"), "org.bluez.Manager")
 
