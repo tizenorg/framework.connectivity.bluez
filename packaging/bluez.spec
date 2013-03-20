@@ -89,7 +89,7 @@ export LDFLAGS=" -lncurses -Wl,--as-needed "
 			--enable-health \
 			--enable-dbusoob \
 			--enable-test \
-                        --with-telephony=tizen
+                        --with-telephony=ofono
 
 make %{?jobs:-j%jobs}
 

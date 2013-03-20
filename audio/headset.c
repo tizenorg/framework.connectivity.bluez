@@ -26,6 +26,8 @@
 #include <config.h>
 #endif
 
+#undef __TIZEN_PATCH__
+
 #include <stdio.h>
 #include <errno.h>
 #include <fcntl.h>
