@@ -4,7 +4,7 @@ Description=Bluetooth service
 [Service]
 Type=dbus
 BusName=org.bluez
-ExecStart=@prefix@/sbin/bluetoothd -nd
+ExecStart=@prefix@/sbin/bluetoothd -n
 
 [Install]
 WantedBy=bluetooth.target
