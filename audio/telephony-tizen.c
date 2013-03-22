@@ -154,14 +154,14 @@ typedef struct {
 
 static struct indicator telephony_ag_indicators[] =
 {
-	{ "battchg",	"0-5",	5,	TRUE },
+	{ "battchg",	"0-5",	5,	TRUE, TRUE },
 	/* signal strength in terms of bars */
-	{ "signal",	"0-5",	0,	TRUE },
-	{ "service",	"0,1",	0,	TRUE },
-	{ "call",	"0,1",	0,	TRUE },
-	{ "callsetup",	"0-3",	0,	TRUE },
-	{ "callheld",	"0-2",	0,	FALSE },
-	{ "roam",	"0,1",	0,	TRUE },
+	{ "signal",	"0-5",	0,	TRUE, TRUE },
+	{ "service",	"0,1",	0,	TRUE, TRUE },
+	{ "call",	"0,1",	0,	TRUE, TRUE },
+	{ "callsetup",	"0-3",	0,	TRUE, TRUE },
+	{ "callheld",	"0-2",	0,	FALSE, TRUE },
+	{ "roam",	"0,1",	0,	TRUE, TRUE },
 	{ NULL }
 };
 
@@ -1500,6 +1500,15 @@ void telephony_exit(void)
 	telephony_deinit();
 }
 
+void telephony_reset_indicators(void)
+{
+	int i;
+
+	for (i = 0; telephony_ag_indicators[i].desc != NULL; i++) {
+		telephony_ag_indicators[i].activation_status = TRUE;
+	}
+}
+
 void telephony_device_connected(void *telephony_device)
 {
 	DBG("telephony-tizen: device %p connected", telephony_device);
@@ -1509,6 +1518,7 @@ void telephony_device_disconnected(void *telephony_device)
 {
 	DBG("telephony-tizen: device %p disconnected", telephony_device);
 	events_enabled = FALSE;
+	telephony_reset_indicators();
 }
 
 void telephony_event_reporting_req(void *telephony_device, int ind)
@@ -1911,6 +1921,47 @@ void telephony_subscriber_number_req(void *telephony_device)
 						number_type(subscriber_number),
 						SUBSCRIBER_SERVICE_VOICE);
 	telephony_subscriber_number_rsp(telephony_device, CME_ERROR_NONE);
+}
+
+void telephony_set_indicators_activation(void *telephony_device, const char *cmd)
+{
+	const char delims = ',';
+	char *str = NULL;
+	int i = 0;
+
+	if (cmd == NULL)
+		goto fail;
+
+	str = strchr(cmd, '=');
+	while (telephony_ag_indicators[i].desc != NULL && str != NULL) {
+		str++;
+		if (str == NULL)
+			goto fail;
+
+		if ((g_strcmp0(telephony_ag_indicators[i].desc, "call") != 0) &&
+			(g_strcmp0(telephony_ag_indicators[i].desc, "callsetup") != 0) &&
+			(g_strcmp0(telephony_ag_indicators[i].desc, "callheld") != 0)) {
+
+			if (*str == '0') {
+				telephony_ag_indicators[i].activation_status = FALSE;
+			} else if (*str == '1') {
+				telephony_ag_indicators[i].activation_status = TRUE;
+			} else {
+				DBG("No change in activation_status for [%s]\n",
+					telephony_ag_indicators[i].desc);
+			}
+		}
+		str = strchr(str, delims);
+		i++;
+	}
+
+	telephony_indicators_activation_rsp(telephony_device, CME_ERROR_NONE);
+	return;
+
+fail:
+	telephony_indicators_activation_rsp(telephony_device,
+			CME_ERROR_INVALID_TEXT_STRING);
+	return;
 }
 
 static char *get_supported_list(const char *list[], unsigned int size)

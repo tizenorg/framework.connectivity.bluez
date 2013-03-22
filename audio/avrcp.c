@@ -257,7 +257,11 @@ static sdp_record_t *avrcp_tg_record(void)
 	sdp_record_t *record;
 	sdp_data_t *psm, *version, *features;
 	uint16_t lp = AVCTP_PSM;
+#ifdef __TIZEN_PATCH__
+	uint16_t avrcp_ver = 0x0103, avctp_ver = 0x0103;
+#else
 	uint16_t avrcp_ver = 0x0104, avctp_ver = 0x0103;
+#endif
 	uint16_t feat = ( AVRCP_FEATURE_CATEGORY_1 |
 					AVRCP_FEATURE_CATEGORY_2 |
 					AVRCP_FEATURE_CATEGORY_3 |

@@ -390,8 +390,7 @@ struct avdtp_stream {
 /* Structure describing an AVDTP connection between two devices */
 
 struct avdtp {
-	int ref;
-	int free_lock;
+	unsigned int ref;
 
 	uint16_t version;
 
@@ -658,50 +657,6 @@ static gboolean stream_open_timeout(gpointer user_data)
 	return FALSE;
 }
 
-static gboolean disconnect_timeout(gpointer user_data)
-{
-	struct avdtp *session = user_data;
-	struct audio_device *dev;
-	gboolean stream_setup;
-
-	session->dc_timer = 0;
-	stream_setup = session->stream_setup;
-	session->stream_setup = FALSE;
-
-	dev = manager_get_device(&session->server->src, &session->dst, FALSE);
-
-	if (dev && dev->sink && stream_setup)
-		sink_setup_stream(dev->sink, session);
-	else if (dev && dev->source && stream_setup)
-		source_setup_stream(dev->source, session);
-	else
-		connection_lost(session, ETIMEDOUT);
-
-	return FALSE;
-}
-
-static void remove_disconnect_timer(struct avdtp *session)
-{
-	g_source_remove(session->dc_timer);
-	session->dc_timer = 0;
-	session->stream_setup = FALSE;
-}
-
-static void set_disconnect_timer(struct avdtp *session)
-{
-	if (session->dc_timer)
-		remove_disconnect_timer(session);
-
-	if (session->device_disconnect) {
-		session->dc_timer = g_idle_add(disconnect_timeout, session);
-		return;
-	}
-
-	session->dc_timer = g_timeout_add_seconds(DISCONNECT_TIMEOUT,
-						disconnect_timeout,
-						session);
-}
-
 void avdtp_error_init(struct avdtp_error *err, uint8_t category, int id)
 {
 	err->category = category;
@@ -781,8 +736,9 @@ static void avdtp_set_state(struct avdtp *session,
 	}
 }
 
-static void stream_free(struct avdtp_stream *stream)
+static void stream_free(void *data)
 {
+	struct avdtp_stream *stream = data;
 	struct avdtp_remote_sep *rsep;
 
 	stream->lsep->info.inuse = 0;
@@ -1145,32 +1101,33 @@ static int avdtp_cancel_authorization(struct avdtp *session)
 	return audio_device_cancel_authorization(dev, auth_cb, session);
 }
 
-static void connection_lost(struct avdtp *session, int err)
+static void sep_free(gpointer data)
 {
-	char address[18];
+	struct avdtp_remote_sep *sep = data;
 
-	ba2str(&session->dst, address);
-	DBG("Disconnected from %s", address);
+	g_slist_free_full(sep->caps, g_free);
+	g_free(sep);
+}
 
-	if (err != EACCES)
-		avdtp_cancel_authorization(session);
+static void remove_disconnect_timer(struct avdtp *session)
+{
+	g_source_remove(session->dc_timer);
+	session->dc_timer = 0;
+	session->stream_setup = FALSE;
+}
 
-	session->free_lock = 1;
+static void avdtp_free(void *data)
+{
+	struct avdtp *session = data;
 
-	finalize_discovery(session, err);
+	DBG("%p", session);
 
-	g_slist_foreach(session->streams, (GFunc) release_stream, session);
-	session->streams = NULL;
-
-	session->free_lock = 0;
+	g_slist_free_full(session->streams, stream_free);
 
 	if (session->io) {
 		g_io_channel_shutdown(session->io, FALSE, NULL);
 		g_io_channel_unref(session->io);
-		session->io = NULL;
 	}
-
-	avdtp_set_state(session, AVDTP_SESSION_STATE_DISCONNECTED);
 
 	if (session->io_id) {
 		g_source_remove(session->io_id);
@@ -1180,16 +1137,80 @@ static void connection_lost(struct avdtp *session, int err)
 	if (session->dc_timer)
 		remove_disconnect_timer(session);
 
-	if (session->ref != 1)
-		error("connection_lost: ref count not 1 after all callbacks");
+	if (session->req)
+		pending_req_free(session->req);
+
+	g_slist_free_full(session->seps, sep_free);
+
+	g_free(session->buf);
+
+	g_free(session);
+}
+
+static gboolean disconnect_timeout(gpointer user_data)
+{
+	struct avdtp *session = user_data;
+	struct audio_device *dev;
+	gboolean stream_setup;
+
+	session->dc_timer = 0;
+
+	stream_setup = session->stream_setup;
+	session->stream_setup = FALSE;
+	dev = manager_get_device(&session->server->src, &session->dst, FALSE);
+
+	if (dev && dev->sink && stream_setup)
+		sink_setup_stream(dev->sink, session);
+	else if (dev && dev->source && stream_setup)
+		source_setup_stream(dev->source, session);
 	else
-		avdtp_unref(session);
+		connection_lost(session, ETIMEDOUT);
+
+	return FALSE;
+}
+
+static void set_disconnect_timer(struct avdtp *session)
+{
+	if (session->dc_timer)
+		remove_disconnect_timer(session);
+
+	if (session->device_disconnect) {
+		session->dc_timer = g_idle_add(disconnect_timeout, session);
+		return;
+	}
+
+	session->dc_timer = g_timeout_add_seconds(DISCONNECT_TIMEOUT,
+						disconnect_timeout,
+						session);
+}
+
+static void connection_lost(struct avdtp *session, int err)
+{
+	struct avdtp_server *server = session->server;
+	char address[18];
+
+	ba2str(&session->dst, address);
+	DBG("Disconnected from %s", address);
+
+	if (err != EACCES)
+		avdtp_cancel_authorization(session);
+
+	g_slist_foreach(session->streams, (GFunc) release_stream, session);
+	session->streams = NULL;
+
+	finalize_discovery(session, err);
+
+	avdtp_set_state(session, AVDTP_SESSION_STATE_DISCONNECTED);
+
+	if (session->ref > 0)
+		return;
+
+	server->sessions = g_slist_remove(server->sessions, session);
+	avdtp_free(session);
 }
 
 void avdtp_unref(struct avdtp *session)
 {
-	struct avdtp_server *server;
-
 	if (!session)
 		return;
 
@@ -1197,44 +1218,10 @@ void avdtp_unref(struct avdtp *session)
 
 	DBG("%p: ref=%d", session, session->ref);
 
-	if (session->ref == 1) {
-		if (session->state == AVDTP_SESSION_STATE_CONNECTING &&
-								session->io) {
-			avdtp_cancel_authorization(session);
-			g_io_channel_shutdown(session->io, TRUE, NULL);
-			g_io_channel_unref(session->io);
-			session->io = NULL;
-			avdtp_set_state(session,
-					AVDTP_SESSION_STATE_DISCONNECTED);
-		}
-
-		if (session->io)
-			set_disconnect_timer(session);
-		else if (!session->free_lock) /* Drop the local ref if we
-						 aren't connected */
-			session->ref--;
-	}
-
 	if (session->ref > 0)
 		return;
 
-	server = session->server;
-
-	DBG("%p: freeing session and removing from list", session);
-
-	if (session->dc_timer)
-		remove_disconnect_timer(session);
-
-	server->sessions = g_slist_remove(server->sessions, session);
-
-	if (session->req)
-		pending_req_free(session->req);
-
-	g_slist_free_full(session->seps, g_free);
-
-	g_free(session->buf);
-
-	g_free(session);
+	set_disconnect_timer(session);
 }
 
 struct avdtp *avdtp_ref(struct avdtp *session)
@@ -2220,12 +2207,6 @@ static gboolean session_cb(GIOChannel *chan, GIOCondition cond,
 			goto failed;
 		}
 
-		if (session->ref == 1 && !session->streams && !session->req)
-			set_disconnect_timer(session);
-
-		if (session->streams && session->dc_timer)
-			remove_disconnect_timer(session);
-
 		if (session->req && session->req->collided) {
 			DBG("Collision detected");
 			goto next;
@@ -2372,7 +2353,6 @@ static struct avdtp *avdtp_get_internal(const bdaddr_t *src, const bdaddr_t *dst
 
 	session->server = server;
 	bacpy(&session->dst, dst);
-	session->ref = 1;
 	/* We don't use avdtp_set_state() here since this isn't a state change
 	 * but just setting of the initial state */
 	session->state = AVDTP_SESSION_STATE_DISCONNECTED;
@@ -2567,7 +2547,6 @@ static void avdtp_confirm_cb(GIOChannel *chan, gpointer data)
 							auth_cb, session);
 	if (perr < 0) {
 		avdtp_set_state(session, AVDTP_SESSION_STATE_DISCONNECTED);
-		avdtp_unref(session);
 		goto drop;
 	}
 
@@ -3979,23 +3958,12 @@ proceed:
 void avdtp_exit(const bdaddr_t *src)
 {
 	struct avdtp_server *server;
-	GSList *l;
 
 	server = find_server(servers, src);
 	if (!server)
 		return;
 
-	l = server->sessions;
-	while (l) {
-		struct avdtp *session = l->data;
-
-		l = l->next;
-		/* value of l pointer should be updated before invoking
-		 * connection_lost since it internally uses avdtp_unref
-		 * which operates on server->session list as well
-		 */
-		connection_lost(session, -ECONNABORTED);
-	}
+	g_slist_free_full(server->sessions, avdtp_free);
 
 	servers = g_slist_remove(servers, server);
 

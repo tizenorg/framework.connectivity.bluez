@@ -359,7 +359,9 @@ static gboolean received_data(GIOChannel *io, GIOCondition cond, gpointer data)
 	uint8_t buf[512], status;
 	gsize len;
 	GIOStatus iostat;
+#ifndef __TIZEN_PATCH__
 	gboolean norequests, noresponses;
+#endif
 
 	if (attrib->stale)
 		return FALSE;
@@ -415,6 +417,18 @@ static gboolean received_data(GIOChannel *io, GIOCondition cond, gpointer data)
 	status = 0;
 
 done:
+#ifdef __TIZEN_PATCH__
+	if (!g_queue_is_empty(attrib->requests) ||
+					!g_queue_is_empty(attrib->responses))
+		wake_up_sender(attrib);
+
+	if (cmd) {
+		if (cmd->func)
+			cmd->func(status, buf, len, cmd->user_data);
+
+		command_destroy(cmd);
+	}
+#else
 	norequests = attrib->requests == NULL ||
 			g_queue_is_empty(attrib->requests);
 	noresponses = attrib->responses == NULL ||
@@ -429,6 +443,7 @@ done:
 
 	if (!norequests || !noresponses)
 		wake_up_sender(attrib);
+#endif
 
 	return TRUE;
 }

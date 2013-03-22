@@ -1205,6 +1205,22 @@ static int voice_dial(struct audio_device *device, const char *buf)
 }
 
 #ifdef __TIZEN_PATCH__
+static int indicators_activation(struct audio_device *device, const char *buf)
+{
+	if (strlen(buf) < 7) {
+		error("Invalid indicator activation request");
+		return -EINVAL;
+	}
+
+	telephony_set_indicators_activation(device, &buf[6]);
+	return 0;
+}
+
+int telephony_indicators_activation_rsp(void *telephony_device, cme_error_t err)
+{
+	return telephony_generic_rsp(telephony_device, err);
+}
+
 int telephony_select_phonebook_memory_status_rsp(void *telephony_device, const char *path,
 						uint32_t total, uint32_t used,
 						cme_error_t err)
@@ -1641,6 +1657,7 @@ static struct event event_callbacks[] = {
 	{ "AT+XAPL", apple_command },
 	{ "AT+IPHONEACCEV", apple_command },
 #ifdef __TIZEN_PATCH__
+	{ "AT+BIA", indicators_activation },
 	{ "AT+CPBS", select_phonebook_memory },
 	{ "AT+CPBR", read_phonebook_entries},
 	{ "AT+CPBF", find_phonebook_entires },

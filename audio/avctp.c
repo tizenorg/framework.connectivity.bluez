@@ -723,7 +723,9 @@ static struct avctp *avctp_get_internal(const bdaddr_t *src,
 	session->server = server;
 	bacpy(&session->dst, dst);
 	session->state = AVCTP_STATE_DISCONNECTED;
-
+#ifdef __TIZEN_PATCH__
+	session->uinput = -1;
+#endif
 	server->sessions = g_slist_append(server->sessions, session);
 
 	return session;

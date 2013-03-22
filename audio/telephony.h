@@ -139,6 +139,9 @@ struct indicator {
 	const char *range;
 	int val;
 	gboolean ignore_redundant;
+#ifdef __TIZEN_PATCH__
+	gboolean activation_status;
+#endif
 };
 
 /* Notify telephony-*.c of connected/disconnected devices. Implemented by
@@ -180,6 +183,8 @@ void telephony_list_supported_character(void *telephony_device);
 void telephony_set_characterset(void *telephony_device, const char *cmd);
 void telephony_get_battery_property(void *telephony_device);
 void telephony_get_signal_quality(void *telephony_device);
+void telephony_set_indicators_activation(void *telephony_device, const char *cmd);
+void telephony_reset_indicators(void);
 
 int telephony_select_phonebook_memory_status_rsp(void *telephony_device, const gchar *path,
 					uint32_t total, uint32_t used,
@@ -223,6 +228,7 @@ int telephony_find_phonebook_entries_status_ind( uint32_t number_length,
 					uint32_t name_length);
 int telephony_find_phonebook_entries_ind(const char *name, const char *number,
 					uint32_t handle);
+int telephony_indicators_activation_rsp(void *telephony_device, cme_error_t err);
 #endif
 
 /* AG responses to HF requests. These are implemented by headset.c */
@@ -281,6 +287,12 @@ static inline int telephony_update_indicator(struct indicator *indicators,
 		DBG("Ignoring no-change indication");
 		return 0;
 	}
+
+#ifdef __TIZEN_PATCH__
+	DBG("indicator \"%s\" activation status[%d]", desc, ind->activation_status);
+	if (!ind->activation_status)
+		return 0;
+#endif
 
 	ind->val = new_val;
 

@@ -65,24 +65,8 @@ struct uart_t {
 	char *bdaddr;
 	int  (*init) (int fd, struct uart_t *u, struct termios *ti);
 	int  (*post) (int fd, struct uart_t *u, struct termios *ti);
-
-/* __TIZEN_PATCH__ */
-#ifdef __TI_PATCH__
-	uint16_t device_param;
-#endif
 };
 
-#ifdef __TI_PATCH__
-	int firmware_path = 0;
-#endif
-
-#if defined(__TI_PATCH__) || defined(__BROADCOM_PATCH__)
-#define TIOSETBRFPOWER		0x6000
-#define BRF_DEEP_SLEEP_OPCODE_BYTE_1	0x0c
-#define BRF_DEEP_SLEEP_OPCODE_BYTE_2	0xfd
-#define BRF_DEEP_SLEEP_OPCODE		\
-	(BRF_DEEP_SLEEP_OPCODE_BYTE_1 | (BRF_DEEP_SLEEP_OPCODE_BYTE_2 << 8))
-#endif
 #define FLOW_CTL	0x0001
 #define ENABLE_PM	1
 #define DISABLE_PM	0
@@ -1124,18 +1108,12 @@ struct uart_t uart[] = {
 	{ "swave",      0x0000, 0x0000, HCI_UART_H4,   115200, 115200,
 				FLOW_CTL, DISABLE_PM, NULL, swave    },
 
-/* __TIZEN_PATCH__ */
-#ifdef __TI_PATCH__
-	/* Texas Instruments BRF63xx modules */
-	{ "texas",      0x0000, 0x0000, HCI_UART_LL,   115200,3000000, FLOW_CTL, NULL, texas,    NULL/*texas_continue_script*/,    BRF_DEEP_SLEEP_OPCODE},
-#else
 	/* Texas Instruments Bluelink (BRF) modules */
 	{ "texas",      0x0000, 0x0000, HCI_UART_LL,   115200, 115200,
 				FLOW_CTL, DISABLE_PM, NULL, texas,    texas2 },
 
 	{ "texasalt",   0x0000, 0x0000, HCI_UART_LL,   115200, 115200,
 				FLOW_CTL, DISABLE_PM, NULL, texasalt, NULL   },
-#endif
 
 	/* ST Microelectronics minikits based on STLC2410/STLC2415 */
 	{ "st",         0x0000, 0x0000, HCI_UART_H4,    57600, 115200,
@@ -1242,10 +1220,6 @@ static int init_uart(char *dev, struct uart_t *u, int send_break, int raw)
 	int fd, i;
 	unsigned long flags = 0;
 
-/* __TIZEN_PATCH__ */
-#if defined(__TI_PATCH__) || defined(__BROADCOM_PATCH__)
-	int power;
-#endif
 	if (raw)
 		flags |= 1 << HCI_UART_RAW_DEVICE;
 
@@ -1291,16 +1265,6 @@ static int init_uart(char *dev, struct uart_t *u, int send_break, int raw)
 		usleep(500000);
 	}
 
-/* __TIZEN_PATCH__ */
-#if defined(__TI_PATCH__) || defined(__BROADCOM_PATCH__)
-	/* Power up the BRF chip */
-	power = 1;
-	ioctl(fd, TIOSETBRFPOWER, &power);
-#endif
-#ifdef __TI_PATCH__
-	usleep(500000);
-#endif
-
 	if (u->init && u->init(fd, u, &ti) < 0)
 		return -1;
 
@@ -1339,13 +1303,7 @@ static void usage(void)
 {
 	printf("hciattach - HCI UART driver initialization utility\n");
 	printf("Usage:\n");
-
-/* __TIZEN_PATCH__ */
-#ifdef __TI_PATCH__
-	printf("\thciattach [-n] [-p] [-b] [-g device_param] [-r] [-f] [-t timeout] [-s initial_speed] <tty> <type | id> [speed] [flow|noflow] [bdaddr]\n");
-#else
 	printf("\thciattach [-n] [-p] [-b] [-r] [-t timeout] [-s initial_speed] <tty> <type | id> [speed] [flow|noflow] [bdaddr]\n");
-#endif
 	printf("\thciattach -l\n");
 }
 
@@ -1362,23 +1320,11 @@ int main(int argc, char *argv[])
 	sigset_t sigs;
 	char dev[PATH_MAX];
 
-/* __TIZEN_PATCH__ */
-#if defined(__TI_PATCH__) || defined(__BROADCOM_PATCH__)
-	int power;
-#endif
-#ifdef __TI_PATCH__
-	uint16_t device_param = 0;
-	int reset_device = 0;
-	int bt_fd;
-#endif
 	detach = 1;
 	printpid = 0;
 	raw = 0;
-#ifdef __TI_PATCH__
-	while ((opt=getopt(argc, argv, "bnprft:g:s:l")) != EOF) {
-#else
+
 	while ((opt=getopt(argc, argv, "bnpt:s:lr")) != EOF) {
-#endif
 		switch(opt) {
 		case 'b':
 			send_break = 1;
@@ -1396,20 +1342,6 @@ int main(int argc, char *argv[])
 			to = atoi(optarg);
 			break;
 
-/* __TIZEN_PATCH__ */
-#ifdef __TI_PATCH__
-		case 'g':
-			device_param = (uint16_t)strtol(optarg, NULL, 16);
-			break;
-
-		case 'r':
-			reset_device = 1;
-			break;
-
-		case 'f':
-			firmware_path = 1;
-			break;
-#endif
 		case 's':
 			init_speed = atoi(optarg);
 			break;
@@ -1432,10 +1364,6 @@ int main(int argc, char *argv[])
 	}
 
 	n = argc - optind;
-/* __TIZEN_PATCH__ */
-#ifdef __TI_PATCH__
-	if (!reset_device || (reset_device && n < 1))
-#endif
 	if (n < 2) {
 		usage();
 		exit(1);
@@ -1493,22 +1421,6 @@ int main(int argc, char *argv[])
 			break;
 		}
 	}
-/* __TIZEN_PATCH__ */
-#ifdef __TI_PATCH__
-	if (reset_device)
-	{
-		// Reset row device
-		bt_fd = open(dev, O_RDWR | O_NOCTTY);
-		if (bt_fd< 0) {
-			perror("Can't open serial port");
-			return -1;
-		}
-		/* Power up the BRF chip */
-		power = 0;
-		ioctl(bt_fd, TIOSETBRFPOWER, &power);
-		return 0;
-	}
-#endif
 
 	if (!u) {
 		fprintf(stderr, "Unknown device type or id\n");
@@ -1519,12 +1431,6 @@ int main(int argc, char *argv[])
 	   the hardware's default */
 	if (init_speed)
 		u->init_speed = init_speed;
-#ifdef __TI_PATCH__
-	/* If user specified a device parameter, use that instead of
-	   the hardware's default */
-	if (device_param)
-		u->device_param = device_param;
-#endif
 
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_flags   = SA_NOCLDSTOP;
@@ -1596,11 +1502,5 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-/* __TIZEN_PATCH__ */
-#if defined(__TI_PATCH__) || defined(__BROADCOM_PATCH__)
-	/* Power down the BRF or BCMchip */
-	power = 0;
-	ioctl(n, TIOSETBRFPOWER, &power);
-#endif
 	return 0;
 }

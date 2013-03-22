@@ -1042,7 +1042,11 @@ static gboolean suspend_ind(struct avdtp *session, struct avdtp_local_sep *sep,
 	if (start_err < 0 && start_err != -EINPROGRESS) {
 		error("avdtp_start: %s (%d)", strerror(-start_err),
 								-start_err);
+#ifdef __TIZEN_PATCH__
+		finalize_setup_errno(setup, start_err, finalize_resume, NULL);
+#else
 		finalize_setup_errno(setup, start_err, finalize_resume);
+#endif
 	}
 
 	return TRUE;
@@ -1195,10 +1199,15 @@ static void abort_ind(struct avdtp *session, struct avdtp_local_sep *sep,
 	setup = find_setup_by_session(session);
 	if (!setup)
 		return;
-
+#ifdef __TIZEN_PATCH__
+	finalize_setup_errno(setup, -ECONNRESET, finalize_suspend,
+							finalize_resume,
+							finalize_config, NULL);
+#else
 	finalize_setup_errno(setup, -ECONNRESET, finalize_suspend,
 							finalize_resume,
 							finalize_config);
+#endif
 
 	return;
 }
