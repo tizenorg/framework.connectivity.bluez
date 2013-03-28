@@ -535,6 +535,51 @@ static void mgmt_device_disconnected(int sk, uint16_t index, void *buf,
 	btd_event_disconn_complete(&info->bdaddr, &ev->bdaddr);
 }
 
+#ifdef __TIZEN_PATCH__
+static void mgmt_device_name_update(int sk, uint16_t index, void *buf, size_t len)
+{
+	struct mgmt_ev_device_name_update *ev = buf;
+	struct eir_data eir_data;
+	struct controller_info *info;
+	uint16_t eir_len;
+	char addr[18];
+
+	DBG("");
+
+	if (len < sizeof(*ev)) {
+		error("Too small device_name_update event");
+		return;
+	}
+
+	eir_len = bt_get_le16(&ev->eir_len);
+	if (len < sizeof(*ev) + eir_len) {
+		error("Too small device_name_update event");
+		return;
+	}
+
+	ba2str(&ev->addr.bdaddr, addr);
+
+	DBG("hci%u device %s name update eir_len %u", index, addr, eir_len);
+
+	if (index > max_index) {
+		error("Unexpected index %u in device_name_update event", index);
+		return;
+	}
+
+	info = &controllers[index];
+
+	memset(&eir_data, 0, sizeof(eir_data));
+	if (eir_len > 0)
+		eir_parse(&eir_data, ev->eir, eir_len);
+
+	DBG("updated name %s", eir_data.name);
+
+	btd_event_remote_name(&info->bdaddr, &ev->addr.bdaddr, eir_data.name);
+
+	eir_data_free(&eir_data);
+}
+#endif
+
 static void mgmt_connect_failed(int sk, uint16_t index, void *buf, size_t len)
 {
 	struct mgmt_ev_connect_failed *ev = buf;
@@ -1869,6 +1914,11 @@ static gboolean mgmt_event(GIOChannel *io, GIOCondition cond, gpointer user_data
 	case MGMT_EV_DEVICE_DISCONNECTED:
 		mgmt_device_disconnected(sk, index, buf + MGMT_HDR_SIZE, len);
 		break;
+#ifdef __TIZEN_PATCH__
+	case MGMT_EV_DEVICE_NAME_UPDATE:
+		mgmt_device_name_update(sk, index, buf + MGMT_HDR_SIZE, len);
+		break;
+#endif
 	case MGMT_EV_CONNECT_FAILED:
 		mgmt_connect_failed(sk, index, buf + MGMT_HDR_SIZE, len);
 		break;

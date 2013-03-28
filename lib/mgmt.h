@@ -444,6 +444,15 @@ struct mgmt_ev_passkey_notify {
 	uint8_t entered;
 } __packed;
 
+#ifdef __TIZEN_PATCH__
+#define MGMT_EV_DEVICE_NAME_UPDATE		0x0018
+struct mgmt_ev_device_name_update {
+	struct mgmt_addr_info addr;
+	uint16_t eir_len;
+	uint8_t eir[0];
+} __packed;
+#endif
+
 static const char *mgmt_op[] = {
 	"<0x0000>",
 	"Read Version",
