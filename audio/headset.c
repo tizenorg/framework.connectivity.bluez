@@ -1595,6 +1595,26 @@ int telephony_signal_quality_list_supported_rsp(void *telephony_device,
 	return telephony_generic_rsp(device,err);
 }
 
+/* convert signal strength to a RSSI level */
+int telephony_convert_signal_to_rssi(int signal)
+{
+	/* input  : BT signal strength (0~5) */
+	/* output : RSSI strength (0~31) */
+	switch (signal) {
+	case 0: return 0;
+	case 1: return 4;
+	case 2: return 8;
+	case 3: return 13;
+	case 4: return 19;
+	case 5: return 31;
+	}
+
+	if (signal > 5)
+		return 31;
+
+	return 0;
+}
+
 int telephony_signal_quality_rsp(void *telephony_device,
 						int32_t rssi,
 						int32_t ber,
@@ -1604,7 +1624,7 @@ int telephony_signal_quality_rsp(void *telephony_device,
 
 	if (err == CME_ERROR_NONE) {
 		send_foreach_headset(active_devices, hfp_cmp,
-					"\r\n+CSQ: %d,%d\r\n", rssi, ber);
+			"\r\n+CSQ: %d,%d\r\n", telephony_convert_signal_to_rssi(rssi), ber);
 	}
 	return telephony_generic_rsp(device,err);
 }
