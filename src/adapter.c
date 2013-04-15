@@ -2534,6 +2534,13 @@ void adapter_set_discovering(struct btd_adapter *adapter,
 {
 	const char *path = adapter->path;
 
+#ifdef __TIZEN_PATCH__
+	if (adapter->discovering == TRUE && discovering == TRUE) {
+		DBG("Already in discovering");
+	     return;
+	}
+#endif
+
 	adapter->discovering = discovering;
 
 	emit_property_changed(connection, path,
