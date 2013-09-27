@@ -106,6 +106,10 @@ install -D -m 0644 COPYING %{buildroot}%{_datadir}/license/libbluetooth-devel
 
 ln -s bluetooth.service %{buildroot}%{_libdir}/systemd/system/dbus-org.bluez.service
 
+mkdir -p %{buildroot}/usr/share/license
+cp COPYING %{buildroot}/usr/share/license/%{name}
+cat %{_builddir}/%{name}-%{version}/COPYING.LIB >> %{buildroot}/usr/share/license/%{name}
+
 %post -n libbluetooth3 -p /sbin/ldconfig
 
 %postun -n libbluetooth3 -p /sbin/ldconfig
@@ -135,13 +139,12 @@ ln -s bluetooth.service %{buildroot}%{_libdir}/systemd/system/dbus-org.bluez.ser
 %dir %{_localstatedir}/lib/bluetooth
 %{_datadir}/dbus-1/system-services/org.bluez.service
 %{_datadir}/license/bluez
-
+/usr/share/license/%{name}
 
 %files -n libbluetooth3
 %defattr(-,root,root,-)
 %{_libdir}/libbluetooth.so.*
 %{_datadir}/license/libbluetooth3
-
 
 %files -n libbluetooth-devel
 %defattr(-, root, root)
