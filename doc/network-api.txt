@@ -86,3 +86,17 @@ Methods		void Register(string uuid, string bridge)
 
 			All servers will be automatically unregistered when
 			the calling application terminates.
+
+#ifdef __TIZEN_PATCH__
+		void Disconnect(string address)
+
+			Disconnect the device from the network device.
+
+			Possible errors: org.bluez.Error.Failed
+					org.bluez.Error.NotConnected
+
+		dict GetProperties(string address)
+
+			Returns all properties of the specified device.
+			See the properties section for available properties.
+#endif

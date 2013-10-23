@@ -81,6 +81,10 @@ struct media_endpoint {
 	uint8_t			codec;		/* Endpoint codec */
 	uint8_t			*capabilities;	/* Endpoint property capabilities */
 	size_t			size;		/* Endpoint capabilities size */
+#ifdef __BT_SCMST_FEATURE__
+	uint8_t			*cp_caps;	/* Endpoint content protection capabilities */
+	size_t			cp_size;	/* Endpoint content protection capabilities size */
+#endif
 	guint			hs_watch;
 	guint			ag_watch;
 	guint			watch;
@@ -510,6 +514,17 @@ static const char *get_name(struct a2dp_sep *sep, void *user_data)
 	return endpoint->sender;
 }
 
+#ifdef __BT_SCMST_FEATURE__
+static size_t get_content_protection_capabilites(struct a2dp_sep *sep,
+						uint8_t **content_protection_caps, void *user_data)
+{
+	struct media_endpoint *endpoint = user_data;
+
+	*content_protection_caps = endpoint->cp_caps;
+	return endpoint->cp_size;
+}
+#endif
+
 static size_t get_capabilities(struct a2dp_sep *sep, uint8_t **capabilities,
 							void *user_data)
 {
@@ -605,6 +620,9 @@ static void set_delay(struct a2dp_sep *sep, uint16_t delay, void *user_data)
 static struct a2dp_endpoint a2dp_endpoint = {
 	.get_name = get_name,
 	.get_capabilities = get_capabilities,
+#ifdef __BT_SCMST_FEATURE__
+	.get_contect_protection_capabilites = get_content_protection_capabilites,
+#endif
 	.select_configuration = select_config,
 	.set_configuration = set_config,
 	.clear_configuration = clear_config,
@@ -736,6 +754,19 @@ static gboolean endpoint_init_hs(struct media_endpoint *endpoint, int *err)
 	return TRUE;
 }
 
+#ifdef __BT_SCMST_FEATURE__
+static struct media_endpoint *media_endpoint_create(struct media_adapter *adapter,
+						const char *sender,
+						const char *path,
+						const char *uuid,
+						gboolean delay_reporting,
+						uint8_t codec,
+						uint8_t *capabilities,
+						int size,
+						uint8_t *cp_caps,
+						int cp_size,
+						int *err)
+#else
 static struct media_endpoint *media_endpoint_create(struct media_adapter *adapter,
 						const char *sender,
 						const char *path,
@@ -745,6 +776,7 @@ static struct media_endpoint *media_endpoint_create(struct media_adapter *adapte
 						uint8_t *capabilities,
 						int size,
 						int *err)
+#endif
 {
 	struct media_endpoint *endpoint;
 	gboolean succeeded;
@@ -760,6 +792,14 @@ static struct media_endpoint *media_endpoint_create(struct media_adapter *adapte
 		memcpy(endpoint->capabilities, capabilities, size);
 		endpoint->size = size;
 	}
+
+#ifdef __BT_SCMST_FEATURE__
+	if (cp_size > 0) {
+		endpoint->cp_caps = g_new(uint8_t, cp_size);
+		memcpy(endpoint->cp_caps, cp_caps, cp_size);
+		endpoint->cp_size = cp_size;
+	}
+#endif
 
 	endpoint->adapter = adapter;
 
@@ -825,9 +865,16 @@ static struct media_endpoint *media_adapter_find_endpoint(
 	return NULL;
 }
 
+#ifdef __BT_SCMST_FEATURE__
+static int parse_properties(DBusMessageIter *props, const char **uuid,
+				gboolean *delay_reporting, uint8_t *codec,
+				uint8_t **capabilities, int *size, uint8_t **cp_cap, int* cp_size)
+
+#else
 static int parse_properties(DBusMessageIter *props, const char **uuid,
 				gboolean *delay_reporting, uint8_t *codec,
 				uint8_t **capabilities, int *size)
+#endif
 {
 	gboolean has_uuid = FALSE;
 	gboolean has_codec = FALSE;
@@ -868,7 +915,18 @@ static int parse_properties(DBusMessageIter *props, const char **uuid,
 			dbus_message_iter_get_fixed_array(&array, capabilities,
 							size);
 		}
+#ifdef __BT_SCMST_FEATURE__
+		else if (strcasecmp(key, "ContentProtection") == 0) {
+			DBusMessageIter array;
 
+			if (var != DBUS_TYPE_ARRAY)
+				return -EINVAL;
+
+			dbus_message_iter_recurse(&value, &array);
+			dbus_message_iter_get_fixed_array(&array, cp_cap,
+							cp_size);
+		}
+#endif
 		dbus_message_iter_next(props);
 	}
 
@@ -884,6 +942,10 @@ static DBusMessage *register_endpoint(DBusConnection *conn, DBusMessage *msg,
 	gboolean delay_reporting = FALSE;
 	uint8_t codec;
 	uint8_t *capabilities;
+#ifdef __BT_SCMST_FEATURE__
+	uint8_t *cp_cap;
+	int cp_size = 0;
+#endif
 	int size = 0;
 	int err;
 
@@ -901,6 +963,20 @@ static DBusMessage *register_endpoint(DBusConnection *conn, DBusMessage *msg,
 	if (dbus_message_iter_get_arg_type(&props) != DBUS_TYPE_DICT_ENTRY)
 		return btd_error_invalid_args(msg);
 
+#ifdef __BT_SCMST_FEATURE__
+	if (parse_properties(&props, &uuid, &delay_reporting, &codec,
+			&capabilities, &size, &cp_cap, &cp_size) < 0)
+		return btd_error_invalid_args(msg);
+
+	if (media_endpoint_create(adapter, sender, path, uuid,
+			delay_reporting, codec, capabilities,
+			size, cp_cap, cp_size, &err) == NULL) {
+		if (err == -EPROTONOSUPPORT)
+			return btd_error_not_supported(msg);
+		else
+			return btd_error_invalid_args(msg);
+	}
+#else
 	if (parse_properties(&props, &uuid, &delay_reporting, &codec,
 						&capabilities, &size) < 0)
 		return btd_error_invalid_args(msg);
@@ -912,6 +988,7 @@ static DBusMessage *register_endpoint(DBusConnection *conn, DBusMessage *msg,
 		else
 			return btd_error_invalid_args(msg);
 	}
+#endif
 
 	return g_dbus_create_reply(msg, DBUS_TYPE_INVALID);
 }
@@ -926,7 +1003,7 @@ static DBusMessage *unregister_endpoint(DBusConnection *conn, DBusMessage *msg,
 	if (!dbus_message_get_args(msg, NULL,
 				DBUS_TYPE_OBJECT_PATH, &path,
 				DBUS_TYPE_INVALID))
-		return NULL;
+		return btd_error_invalid_args(msg);
 
 	sender = dbus_message_get_sender(msg);
 
@@ -1215,6 +1292,18 @@ static const char *metadata_to_str(uint32_t id)
 	return NULL;
 }
 
+static GList *list_settings(void *user_data)
+{
+	struct media_player *mp = user_data;
+
+	DBG("");
+
+	if (mp->settings == NULL)
+		return NULL;
+
+	return g_hash_table_get_keys(mp->settings);
+}
+
 static int get_setting(uint8_t attr, void *user_data)
 {
 	struct media_player *mp = user_data;
@@ -1371,6 +1460,7 @@ static void set_volume(uint8_t volume, struct audio_device *dev, void *user_data
 }
 
 static struct avrcp_player_cb player_cb = {
+	.list_settings = list_settings,
 	.get_setting = get_setting,
 	.set_setting = set_setting,
 	.list_metadata = list_metadata,
@@ -1458,7 +1548,12 @@ static gboolean set_property(struct media_player *mp, const char *key,
 							DBusMessageIter *entry)
 {
 	DBusMessageIter var;
+#ifdef __TIZEN_PATCH__
 	const char *value;
+	void *curval;
+#else
+	const char *value, *curval;
+#endif
 	int attr, val;
 
 	if (dbus_message_iter_get_arg_type(entry) != DBUS_TYPE_VARIANT)
@@ -1485,10 +1580,20 @@ static gboolean set_property(struct media_player *mp, const char *key,
 	if (val < 0)
 		return FALSE;
 
+	curval = g_hash_table_lookup(mp->settings, GUINT_TO_POINTER(attr));
+#ifdef __TIZEN_PATCH__
+	if (GPOINTER_TO_UINT(curval) == val)
+#else
+	if (g_strcmp0(curval, value) == 0)
+#endif
+		return TRUE;
+
 	DBG("%s=%s", key, value);
 
 	g_hash_table_replace(mp->settings, GUINT_TO_POINTER(attr),
 						GUINT_TO_POINTER(val));
+
+	avrcp_player_event(mp->player, AVRCP_EVENT_SETTINGS_CHANGED, GUINT_TO_POINTER(attr));
 
 	return TRUE;
 }
@@ -1787,14 +1892,14 @@ static DBusMessage *register_player(DBusConnection *conn, DBusMessage *msg,
 		media_player_destroy(mp);
 		return btd_error_invalid_args(msg);
 	}
-
+#ifndef __TIZEN_PATCH__
 	dbus_message_iter_next(&args);
 
 	if (parse_player_metadata(mp, &args) == FALSE) {
 		media_player_destroy(mp);
 		return btd_error_invalid_args(msg);
 	}
-
+#endif
 	return g_dbus_create_reply(msg, DBUS_TYPE_INVALID);
 }
 
@@ -1808,7 +1913,7 @@ static DBusMessage *unregister_player(DBusConnection *conn, DBusMessage *msg,
 	if (!dbus_message_get_args(msg, NULL,
 				DBUS_TYPE_OBJECT_PATH, &path,
 				DBUS_TYPE_INVALID))
-		return NULL;
+		return btd_error_invalid_args(msg);
 
 	sender = dbus_message_get_sender(msg);
 
@@ -1828,8 +1933,12 @@ static const GDBusMethodTable media_methods[] = {
 	{ GDBUS_METHOD("UnregisterEndpoint",
 		GDBUS_ARGS({ "endpoint", "o" }), NULL, unregister_endpoint) },
 	{ GDBUS_METHOD("RegisterPlayer",
+#ifdef __TIZEN_PATCH__
+		GDBUS_ARGS({ "player", "o" }, { "properties", "a{sv}" }),
+#else
 		GDBUS_ARGS({ "player", "o" }, { "properties", "a{sv}" },
 						{ "metadata", "a{sv}" }),
+#endif
 		NULL, register_player) },
 	{ GDBUS_METHOD("UnregisterPlayer",
 		GDBUS_ARGS({ "player", "o" }), NULL, unregister_player) },

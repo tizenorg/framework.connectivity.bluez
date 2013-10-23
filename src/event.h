@@ -26,6 +26,9 @@ int btd_event_request_pin(bdaddr_t *sba, bdaddr_t *dba, gboolean secure);
 void btd_event_device_found(bdaddr_t *local, bdaddr_t *peer, uint8_t bdaddr_type,
 					int8_t rssi, uint8_t confirm_name,
 					uint8_t *data, uint8_t data_len);
+#ifdef __TIZEN_PATCH__
+void btd_event_device_rssi(bdaddr_t *local, bdaddr_t *peer, int8_t rssi);
+#endif
 void btd_event_set_legacy_pairing(bdaddr_t *local, bdaddr_t *peer, gboolean legacy);
 void btd_event_remote_class(bdaddr_t *local, bdaddr_t *peer, uint32_t class);
 void btd_event_remote_name(bdaddr_t *local, bdaddr_t *peer, char *name);

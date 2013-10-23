@@ -27,6 +27,7 @@ void error(const char *format, ...) __attribute__((format(printf, 1, 2)));
 
 void btd_debug(const char *format, ...) __attribute__((format(printf, 1, 2)));
 
+void __hci_attach_log_init(void );
 void __btd_log_init(const char *debug, int detach);
 void __btd_log_cleanup(void);
 void __btd_toggle_debug(void);

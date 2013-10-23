@@ -43,6 +43,9 @@
 #include <sys/param.h>
 #include <sys/ioctl.h>
 
+#include <glib.h>
+#include "log.h"
+
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/hci.h>
 #include <bluetooth/hci_lib.h>
@@ -84,7 +87,7 @@ static void sig_term(int sig)
 
 static void sig_alarm(int sig)
 {
-	fprintf(stderr, "Initialization timed out.\n");
+	DBG("Initialization timed out.\n");
 	exit(1);
 }
 
@@ -921,13 +924,13 @@ static int bcm2035(int fd, struct uart_t *u, struct termios *ti)
 
 	/* Send command */
 	if (write(fd, cmd, 4) != 4) {
-		fprintf(stderr, "Failed to write reset command\n");
+		DBG("Failed to write reset command\n");
 		return -1;
 	}
 
 	/* Read reply */
 	if ((n = read_hci_event(fd, resp, 4)) < 0) {
-		fprintf(stderr, "Failed to reset chip\n");
+		DBG("Failed to reset chip\n");
 		return -1;
 	}
 
@@ -943,13 +946,13 @@ static int bcm2035(int fd, struct uart_t *u, struct termios *ti)
 
 		/* Send command */
 		if (write(fd, cmd, 10) != 10) {
-			fprintf(stderr, "Failed to write BD_ADDR command\n");
+			DBG("Failed to write BD_ADDR command\n");
 			return -1;
 		}
 
 		/* Read reply */
 		if ((n = read_hci_event(fd, resp, 10)) < 0) {
-			fprintf(stderr, "Failed to set BD_ADDR\n");
+			DBG("Failed to set BD_ADDR\n");
 			return -1;
 		}
 	}
@@ -964,14 +967,14 @@ static int bcm2035(int fd, struct uart_t *u, struct termios *ti)
 
 	/* Send command */
 	if (write(fd, cmd, 4) != 4) {
-		fprintf(stderr, "Failed to write \"read local version\" "
+		DBG("Failed to write \"read local version\" "
 			"command\n");
 		return -1;
 	}
 
 	/* Read reply */
 	if ((n = read_hci_event(fd, resp, 4)) < 0) {
-		fprintf(stderr, "Failed to read local version\n");
+		DBG("Failed to read local version\n");
 		return -1;
 	}
 
@@ -985,21 +988,21 @@ static int bcm2035(int fd, struct uart_t *u, struct termios *ti)
 
 	/* Send command */
 	if (write(fd, cmd, 4) != 4) {
-		fprintf(stderr, "Failed to write \"read local supported "
+		DBG("Failed to write \"read local supported "
 						"commands\" command\n");
 		return -1;
 	}
 
 	/* Read reply */
 	if ((n = read_hci_event(fd, resp, 4)) < 0) {
-		fprintf(stderr, "Failed to read local supported commands\n");
+		DBG("Failed to read local supported commands\n");
 		return -1;
 	}
 
 	/* Set the baud rate */
 	memset(cmd, 0, sizeof(cmd));
 	memset(resp, 0, sizeof(resp));
-
+#if 0
 /* __TIZEN_PATCH__ */
 #ifndef __BROADCOM_PATCH__
 	cmd[0] = HCI_COMMAND_PKT;
@@ -1029,12 +1032,12 @@ static int bcm2035(int fd, struct uart_t *u, struct termios *ti)
 		cmd[5] = 0xf3;
 		break;
 	}
-	fprintf(stderr, "Baud rate parameters: DHBR=0x%2x,DLBR=0x%2x\n",
+	DBG("Baud rate parameters: DHBR=0x%2x,DLBR=0x%2x\n",
 		cmd[4], cmd[5]);
 
 	/* Send command */
 	if (write(fd, cmd, 6) != 6) {
-		fprintf(stderr, "Failed to write \"set baud rate\" command\n");
+		DBG("Failed to write \"set baud rate\" command\n");
 		return -1;
 	}
 #else
@@ -1061,21 +1064,21 @@ static int bcm2035(int fd, struct uart_t *u, struct termios *ti)
 	cmd[8] = (u->speed >> 16) & 0xFF;
 	cmd[9] = (u->speed >> 24) & 0xFF;
 
-	fprintf(stderr, "Set the baud rate %d : 0x%02x,0x%02x,0x%02x,0x%02x\n",u->speed,cmd[6],cmd[7],cmd[8],cmd[9] );
+	DBG("Set the baud rate %d : 0x%02x,0x%02x,0x%02x,0x%02x\n",u->speed,cmd[6],cmd[7],cmd[8],cmd[9] );
 
 	/* Send command */
 	if (write(fd, cmd, 10) != 10) {
-		fprintf(stderr, "Failed to write \"set baud rate\" command\n");
+		DBG("Failed to write \"set baud rate\" command\n");
 		return -1;
 	}
 
 #endif
 
 	if ((n = read_hci_event(fd, resp, 6)) < 0) {
-		fprintf(stderr, "Failed to set baud rate\n");
+		DBG("Failed to set baud rate\n");
 		return -1;
 	}
-
+#endif
 	return 0;
 }
 
@@ -1213,6 +1216,44 @@ static struct uart_t * get_by_type(char *type)
 	return NULL;
 }
 
+#ifdef __BROADCOM_PATCH__
+static int enable_hci(char *dev, struct uart_t *u)
+{
+	int fd, i;
+	unsigned long flags = 0;
+
+	fd = open(dev, O_RDWR | O_NOCTTY);
+	if (fd < 0) {
+		DBG("Can't open serial port");
+		return -1;
+	}
+
+	tcflush(fd, TCIOFLUSH);
+
+	/* Set TTY to N_HCI line discipline */
+	i = N_HCI;
+	if (ioctl(fd, TIOCSETD, &i) < 0) {
+		DBG("Can't set line discipline");
+		return -1;
+	}
+
+	if (flags && ioctl(fd, HCIUARTSETFLAGS, flags) < 0) {
+		DBG("Can't set UART flags");
+		return -1;
+	}
+
+	tcflush(fd, TCIOFLUSH);
+
+	if (ioctl(fd, HCIUARTSETPROTO, u->proto) < 0) {
+		DBG("Can't set device");
+		return -1;
+	}
+
+	return fd;
+}
+
+#else	/* __BROADCOM_PATCH__ */
+
 /* Initialize UART driver */
 static int init_uart(char *dev, struct uart_t *u, int send_break, int raw)
 {
@@ -1225,14 +1266,14 @@ static int init_uart(char *dev, struct uart_t *u, int send_break, int raw)
 
 	fd = open(dev, O_RDWR | O_NOCTTY);
 	if (fd < 0) {
-		perror("Can't open serial port");
+		DBG("Can't open serial port");
 		return -1;
 	}
 
 	tcflush(fd, TCIOFLUSH);
 
 	if (tcgetattr(fd, &ti) < 0) {
-		perror("Can't get port settings");
+		DBG("Can't get port settings");
 		return -1;
 	}
 
@@ -1248,13 +1289,13 @@ static int init_uart(char *dev, struct uart_t *u, int send_break, int raw)
 #endif
 
 	if (tcsetattr(fd, TCSANOW, &ti) < 0) {
-		perror("Can't set port settings");
+		DBG("Can't set port settings");
 		return -1;
 	}
 
 	/* Set initial baudrate */
 	if (set_speed(fd, &ti, u->init_speed) < 0) {
-		perror("Can't set initial baud rate");
+		DBG("Can't set initial baud rate");
 		return -1;
 	}
 
@@ -1272,32 +1313,36 @@ static int init_uart(char *dev, struct uart_t *u, int send_break, int raw)
 
 	/* Set actual baudrate */
 	if (set_speed(fd, &ti, u->speed) < 0) {
-		perror("Can't set baud rate");
+		DBG("Can't set baud rate");
 		return -1;
 	}
 
 	/* Set TTY to N_HCI line discipline */
 	i = N_HCI;
 	if (ioctl(fd, TIOCSETD, &i) < 0) {
-		perror("Can't set line discipline");
+		DBG("Can't set line discipline");
 		return -1;
 	}
 
 	if (flags && ioctl(fd, HCIUARTSETFLAGS, flags) < 0) {
-		perror("Can't set UART flags");
+		DBG("Can't set UART flags");
 		return -1;
 	}
 
 	if (ioctl(fd, HCIUARTSETPROTO, u->proto) < 0) {
-		perror("Can't set device");
+		DBG("Can't set device");
 		return -1;
 	}
 
+#if 0
 	if (u->post && u->post(fd, u, &ti) < 0)
 		return -1;
+#endif
 
 	return fd;
 }
+
+#endif	/* __BROADCOM_PATCH__ */
 
 static void usage(void)
 {
@@ -1427,6 +1472,8 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
+	__hci_attach_log_init();
+
 	/* If user specified a initial speed, use that instead of
 	   the hardware's default */
 	if (init_speed)
@@ -1440,10 +1487,13 @@ int main(int argc, char *argv[])
 	/* 10 seconds should be enough for initialization */
 	alarm(to);
 	bcsp_max_retries = to;
-
+#ifdef __BROADCOM_PATCH__
+	n = enable_hci(dev, u);
+#else
 	n = init_uart(dev, u, send_break, raw);
+#endif
 	if (n < 0) {
-		perror("Can't initialize device");
+		DBG("Can't initialize device");
 		exit(1);
 	}
 
@@ -1498,9 +1548,10 @@ int main(int argc, char *argv[])
 	/* Restore TTY line discipline */
 	ld = N_TTY;
 	if (ioctl(n, TIOCSETD, &ld) < 0) {
-		perror("Can't restore line discipline");
+		DBG("Can't restore line discipline");
 		exit(1);
 	}
 
+	closelog();
 	return 0;
 }

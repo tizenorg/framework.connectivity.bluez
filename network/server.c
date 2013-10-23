@@ -59,6 +59,9 @@ struct network_session {
 	bdaddr_t	dst;		/* Remote Bluetooth Address */
 	GIOChannel	*io;		/* Pending connect channel */
 	guint		watch;		/* BNEP socket watch */
+#ifdef __TIZEN_PATCH__
+	char		dev[16];	/* Interface name */
+#endif
 };
 
 struct network_adapter {
@@ -79,9 +82,6 @@ struct network_server {
 	GSList		*sessions;	/* Active connections */
 	struct network_adapter *na;	/* Adapter reference */
 	guint		watch_id;	/* Client service watch */
-#ifdef __TIZEN_PATCH__
-	char		dev[16];	/* Interface name */
-#endif
 };
 
 static DBusConnection *connection = NULL;
@@ -132,6 +132,21 @@ static struct network_session *find_session(GSList *list, GIOChannel *io)
 
 	return NULL;
 }
+
+static struct network_session *find_session_by_addr(GSList *list,
+							bdaddr_t dst_addr)
+{
+	GSList *l;
+
+	for (l = list; l; l = l->next) {
+		struct network_session *session = l->data;
+
+		if (!bacmp(&session->dst, &dst_addr))
+			return session;
+	}
+
+	return NULL;
+}
 #endif
 
 static sdp_record_t *server_record_new(const char *name, uint16_t id)
@@ -143,8 +158,14 @@ static sdp_record_t *server_record_new(const char *name, uint16_t id)
 	sdp_data_t *v, *p;
 	uint16_t psm = BNEP_PSM, version = 0x0100;
 	uint16_t security_desc = (security ? 0x0001 : 0x0000);
+#ifdef  __TIZEN_PATCH__
+/* Set NetAccessType to GSM and MaxNetAccessrate to 1250000 */
+	uint16_t net_access_type = 0x000a;
+	uint32_t max_net_access_rate = 0x001312d0;
+#else
 	uint16_t net_access_type = 0xfffe;
 	uint32_t max_net_access_rate = 0;
+#endif
 	const char *desc = "Network service";
 	sdp_record_t *record;
 
@@ -293,7 +314,7 @@ static int server_connadd(struct network_server *ns,
 		guint watch = 0;
 
 		bnep_if_up(devname);
-		memcpy(ns->dev, devname, sizeof(devname));
+		memcpy(session->dev, devname, sizeof(devname));
 
 		watch = g_io_add_watch_full(session->io, G_PRIORITY_DEFAULT,
 					G_IO_HUP | G_IO_ERR | G_IO_NVAL,
@@ -364,6 +385,8 @@ static void session_free(void *data)
 {
 	struct network_session *session = data;
 
+	bnep_if_down(session->dev);
+
 	if (session->watch)
 		g_source_remove(session->watch);
 
@@ -404,11 +427,18 @@ static gboolean server_disconnected_cb(GIOChannel *chan,
 
 	ns = (struct network_server *) user_data;
 
-	name_str = ns->dev;
-
 	bt_io_get(chan, BT_IO_L2CAP, &gerr,
 			BT_IO_OPT_DEST, &address,
 			BT_IO_OPT_INVALID);
+
+	/* Remove the session info */
+	session = find_session(ns->sessions, chan);
+	if (session == NULL) {
+		info("Session does not exist!");
+		return FALSE;
+	}
+
+	name_str = session->dev;
 
 	g_dbus_emit_signal(connection, adapter_get_path(ns->na->adapter),
 			NETWORK_SERVER_INTERFACE, "PeerDisconnected",
@@ -416,18 +446,8 @@ static gboolean server_disconnected_cb(GIOChannel *chan,
 			DBUS_TYPE_STRING, &paddr,
 			DBUS_TYPE_INVALID);
 
-	/* Remove the session info */
-	session = find_session(ns->sessions, chan);
-	if (session) {
-		ns->sessions = g_slist_remove(ns->sessions, session);
-		session_free(session);
-	}
-	else {
-		info("Session is not exist!");
-	}
-
-	if (g_slist_length(ns->sessions) == 0)
-		bnep_if_down(ns->dev);
+	ns->sessions = g_slist_remove(ns->sessions, session);
+	session_free(session);
 
 	return FALSE;
 }
@@ -514,8 +534,8 @@ static gboolean bnep_setup(GIOChannel *chan,
 #ifdef  __TIZEN_PATCH__
 {
 // Emit connected signal to BT application
-	const gchar* adapter_path = adapter_get_path(na->adapter);
-	const char* pdev = ns->dev;
+	const gchar *adapter_path = adapter_get_path(na->adapter);
+	const char *pdev = na->setup->dev;
 	char address[24] = {0};
 	char* paddr = address;
 
@@ -693,7 +713,7 @@ static DBusMessage *register_server(DBusConnection *conn,
 
 	if (!dbus_message_get_args(msg, NULL, DBUS_TYPE_STRING, &uuid,
 				DBUS_TYPE_STRING, &bridge, DBUS_TYPE_INVALID))
-		return NULL;
+		return btd_error_invalid_args(msg);
 
 	if (g_strcmp0(uuid, "nap"))
 		return btd_error_failed(msg, "Invalid UUID");
@@ -730,7 +750,7 @@ static DBusMessage *unregister_server(DBusConnection *conn,
 
 	if (!dbus_message_get_args(msg, NULL, DBUS_TYPE_STRING, &uuid,
 							DBUS_TYPE_INVALID))
-		return NULL;
+		return btd_error_invalid_args(msg);
 
 	if (g_strcmp0(uuid, "nap"))
 		return btd_error_failed(msg, "Invalid UUID");
@@ -746,7 +766,6 @@ static DBusMessage *unregister_server(DBusConnection *conn,
 #ifdef  __TIZEN_PATCH__
 	/* Down the bnep interface, and disconnect all connection */
 	bnep_kill_all_connections();
-	bnep_if_down(ns->dev);
 
 	if (ns->sessions) {
 		g_slist_foreach(ns->sessions, (GFunc) session_free, NULL);
@@ -805,6 +824,79 @@ static void path_unregister(void *data)
 	adapter_free(na);
 }
 
+#ifdef __TIZEN_PATCH__
+static DBusMessage *disconnect_device(DBusConnection *conn, DBusMessage *msg,
+								void *data)
+{
+	struct network_server *ns = data;
+	struct network_session *session;
+	const char *addr = NULL;
+	bdaddr_t dst_addr;
+
+	if (!dbus_message_get_args(msg, NULL, DBUS_TYPE_STRING, &addr,
+						DBUS_TYPE_INVALID))
+		return NULL;
+
+	str2ba(addr, &dst_addr);
+	session = find_session_by_addr(ns->sessions, dst_addr);
+
+	if (session == NULL)
+		return btd_error_failed(msg, "No active session");
+
+	if (session->io == NULL)
+		return btd_error_not_connected(msg);
+
+	bnep_if_down(session->dev);
+	bnep_kill_connection(&dst_addr);
+
+	return dbus_message_new_method_return(msg);
+}
+
+static DBusMessage *get_properties(DBusConnection *conn,
+					DBusMessage *msg, void *data)
+{
+	struct network_server *ns = data;
+	struct network_session *session;
+	const char *addr = NULL;
+	bdaddr_t dst_addr;
+	DBusMessage *reply;
+	DBusMessageIter iter;
+	DBusMessageIter dict;
+	dbus_bool_t connected;
+	const char *property;
+	GSList *l;
+
+	if (!dbus_message_get_args(msg, NULL, DBUS_TYPE_STRING, &addr,
+						DBUS_TYPE_INVALID))
+		return NULL;
+
+	reply = dbus_message_new_method_return(msg);
+	if (!reply)
+		return NULL;
+
+	dbus_message_iter_init_append(reply, &iter);
+
+	dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY,
+			DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
+			DBUS_TYPE_STRING_AS_STRING DBUS_TYPE_VARIANT_AS_STRING
+			DBUS_DICT_ENTRY_END_CHAR_AS_STRING, &dict);
+
+	str2ba(addr, &dst_addr);
+	session = find_session_by_addr(ns->sessions, dst_addr);
+
+	connected = (session && session->io) ? TRUE : FALSE;
+	dict_append_entry(&dict, "Connected", DBUS_TYPE_BOOLEAN, &connected);
+
+	/* Interface */
+	property = session ? session->dev : "";
+	dict_append_entry(&dict, "Interface", DBUS_TYPE_STRING, &property);
+
+	dbus_message_iter_close_container(&iter, &dict);
+
+	return reply;
+}
+#endif
+
 static const GDBusMethodTable server_methods[] = {
 	{ GDBUS_METHOD("Register",
 			GDBUS_ARGS({ "uuid", "s" }, { "bridge", "s" }), NULL,
@@ -812,6 +904,15 @@ static const GDBusMethodTable server_methods[] = {
 	{ GDBUS_METHOD("Unregister",
 			GDBUS_ARGS({ "uuid", "s" }), NULL,
 			unregister_server) },
+#ifdef __TIZEN_PATCH__
+	{ GDBUS_METHOD("Disconnect",
+			GDBUS_ARGS({ "address", "s" }), NULL,
+			disconnect_device) },
+	{ GDBUS_METHOD("GetProperties",
+			GDBUS_ARGS({ "address", "s" }),
+			GDBUS_ARGS({ "properties", "a{sv}" }),
+			get_properties) },
+#endif
 	{ }
 };
 

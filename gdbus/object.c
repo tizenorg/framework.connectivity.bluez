@@ -852,6 +852,13 @@ gboolean g_dbus_emit_signal(DBusConnection *connection,
 	va_list args;
 	gboolean result;
 
+#ifdef __TIZEN_PATCH__
+/* Do not send deprecated headset and sink signal. */
+	if ((strcmp(interface, "org.bluez.Headset") == 0) ||
+			(strcmp(interface, "org.bluez.AudioSink") == 0))
+		return TRUE;
+#endif
+
 	va_start(args, type);
 
 	result = emit_signal_valist(connection, path, interface,

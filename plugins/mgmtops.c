@@ -335,11 +335,9 @@ static void update_settings(struct btd_adapter *adapter, uint32_t settings)
 	if (mgmt_ssp(info->supported_settings) && !mgmt_ssp(settings))
 		mgmt_set_mode(index, MGMT_OP_SET_SSP, 1);
 
-#ifndef __TIZEN_PATCH__
 	if (mgmt_low_energy(info->supported_settings) &&
 						!mgmt_low_energy(settings))
 		mgmt_set_mode(index, MGMT_OP_SET_LE, 1);
-#endif
 }
 
 static int mgmt_update_powered(struct btd_adapter *adapter,
@@ -1283,6 +1281,30 @@ static void set_local_name_complete(int sk, uint16_t index, void *buf,
 	adapter_name_changed(adapter, (char *) rp->name);
 }
 
+#ifdef __TIZEN_PATCH__
+static void read_rssi_complete(int sk, uint16_t index, uint8_t status,
+						     void *buf, size_t len)
+{
+	char addr[18];
+	struct controller_info *info;
+	struct mgmt_rp_read_rssi *rp = buf;
+
+	if (len != sizeof(*rp)) {
+		error("read_rssi_complete event size mismatch "
+					"(%zu != %zu)", len, sizeof(*rp));
+		return;
+	}
+	ba2str(&rp->bdaddr, addr);
+	if (index > max_index) {
+		error("Unexpected index %u in read_rssi complete", index);
+		return;
+	}
+
+	info = &controllers[index];
+	btd_event_device_rssi(&info->bdaddr, &rp->bdaddr, rp->rssi);
+}
+#endif
+
 static void read_local_oob_data_complete(int sk, uint16_t index, void *buf,
 								size_t len)
 {
@@ -1524,6 +1546,18 @@ static void mgmt_cmd_complete(int sk, uint16_t index, void *buf, size_t len)
 	case MGMT_OP_SET_DEVICE_ID:
 		DBG("set_did complete");
 		break;
+#ifdef __TIZEN_PATCH__
+	case MGMT_OP_READ_RSSI:
+		read_rssi_complete(sk, index, ev->status, ev->data, len);
+		break;
+	case MGMT_OP_CONFIRM_NAME:
+		DBG("confirm_name complete");
+		break;
+	case MGMT_OP_LOAD_LONG_TERM_KEYS:
+		DBG("load_long_term_keys complete");
+		break;
+#endif
+
 	default:
 		error("Unknown command complete for opcode %u", opcode);
 		break;
@@ -2061,6 +2095,51 @@ static int mgmt_start_discovery(int index)
 	return 0;
 }
 
+#ifdef __TIZEN_PATCH__
+static int mgmt_start_custom_discovery(int index, uint8_t disc_type)
+{
+	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_start_discovery)];
+	struct mgmt_hdr *hdr = (void *) buf;
+	struct mgmt_cp_start_discovery *cp = (void *) &buf[sizeof(*hdr)];
+	struct controller_info *info = &controllers[index];
+
+	DBG("index %d, disc_type = %d", index, disc_type);
+
+	info->discov_type = 0;
+
+	if (disc_type == BT_DISC_TYPE_BREDR_ONLY) {
+		if (mgmt_bredr(info->current_settings))
+			hci_set_bit(BDADDR_BREDR, &info->discov_type);
+	} else if (disc_type == BT_DISC_TYPE_LE_ONLY) {
+		if (mgmt_low_energy(info->current_settings)) {
+			hci_set_bit(BDADDR_LE_PUBLIC, &info->discov_type);
+			hci_set_bit(BDADDR_LE_RANDOM, &info->discov_type);
+		}
+	} else if (disc_type == BT_DISC_TYPE_LE_BREDR) {
+		if (mgmt_bredr(info->current_settings))
+			hci_set_bit(BDADDR_BREDR, &info->discov_type);
+
+		if (mgmt_low_energy(info->current_settings)) {
+			hci_set_bit(BDADDR_LE_PUBLIC, &info->discov_type);
+			hci_set_bit(BDADDR_LE_RANDOM, &info->discov_type);
+		}
+	}
+
+	memset(buf, 0, sizeof(buf));
+	hdr->opcode = htobs(MGMT_OP_START_DISCOVERY);
+	hdr->len = htobs(sizeof(*cp));
+	hdr->index = htobs(index);
+
+	cp->type = info->discov_type;
+	DBG("custom info->discov_type = %d", info->discov_type);
+
+	if (write(mgmt_sock, buf, sizeof(buf)) < 0)
+		return -errno;
+
+	return 0;
+}
+#endif
+
 static int mgmt_stop_discovery(int index)
 {
 	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_start_discovery)];
@@ -2566,6 +2645,29 @@ static int mgmtops_load_ltks(int index, GSList *keys)
 	return err;
 }
 
+#ifdef __TIZEN_PATCH__
+static int mgmtops_read_rssi(int index, bdaddr_t *bdaddr)
+{
+	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_read_rssi)];
+	struct mgmt_hdr *hdr = (void *) buf;
+	struct mgmt_cp_read_rssi *cp = (void *) &buf[sizeof(*hdr)];
+
+	memset(buf, 0, sizeof(buf));
+	hdr->opcode = htobs(MGMT_OP_READ_RSSI);
+	hdr->len = htobs(sizeof(*cp));
+	hdr->index = htobs(index);
+
+	memset(&cp->bdaddr , 0x00, sizeof(cp->bdaddr));
+	if(NULL != bdaddr)
+		bacpy(&cp->bdaddr, bdaddr);
+
+	if (write(mgmt_sock, buf, sizeof(buf)) < 0)
+		return -errno;
+
+	return 0;
+}
+#endif
+
 static struct btd_adapter_ops mgmt_ops = {
 	.setup = mgmt_setup,
 	.cleanup = mgmt_cleanup,
@@ -2573,6 +2675,9 @@ static struct btd_adapter_ops mgmt_ops = {
 	.set_discoverable = mgmt_set_discoverable,
 	.set_pairable = mgmt_set_pairable,
 	.start_discovery = mgmt_start_discovery,
+#ifdef __TIZEN_PATCH__
+	.start_custom_discovery = mgmt_start_custom_discovery,
+#endif
 	.stop_discovery = mgmt_stop_discovery,
 	.set_name = mgmt_set_name,
 	.set_dev_class = mgmt_set_dev_class,
@@ -2602,6 +2707,9 @@ static struct btd_adapter_ops mgmt_ops = {
 	.remove_remote_oob_data = mgmt_remove_remote_oob_data,
 	.confirm_name = mgmt_confirm_name,
 	.load_ltks = mgmtops_load_ltks,
+#ifdef __TIZEN_PATCH__
+	.read_rssi = mgmtops_read_rssi,
+#endif
 };
 
 static int mgmt_init(void)

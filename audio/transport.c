@@ -45,9 +45,32 @@
 #include "a2dp.h"
 #include "headset.h"
 #include "gateway.h"
+#include "sink.h"
+#include "source.h"
 #include "avrcp.h"
 
 #define MEDIA_TRANSPORT_INTERFACE "org.bluez.MediaTransport"
+
+typedef enum {
+	TRANSPORT_LOCK_READ = 1,
+	TRANSPORT_LOCK_WRITE = 1 << 1,
+} transport_lock_t;
+
+typedef enum {
+	TRANSPORT_STATE_IDLE,		/* Not acquired and suspended */
+	TRANSPORT_STATE_PENDING,	/* Playing but not acquired */
+	TRANSPORT_STATE_REQUESTING,	/* Acquire in progress */
+	TRANSPORT_STATE_ACTIVE,		/* Acquired and playing */
+	TRANSPORT_STATE_SUSPENDING,     /* Release in progress */
+} transport_state_t;
+
+static char *str_state[] = {
+	"TRANSPORT_STATE_IDLE",
+	"TRANSPORT_STATE_PENDING",
+	"TRANSPORT_STATE_REQUESTING",
+	"TRANSPORT_STATE_ACTIVE",
+	"TRANSPORT_STATE_SUSPENDING",
+};
 
 struct media_request {
 	DBusMessage		*msg;
@@ -58,7 +81,7 @@ struct media_owner {
 	struct media_transport	*transport;
 	struct media_request	*pending;
 	char			*name;
-	char			*accesstype;
+	transport_lock_t	lock;
 	guint			watch;
 };
 
@@ -84,9 +107,12 @@ struct media_transport {
 	int			fd;		/* Transport file descriptor */
 	uint16_t		imtu;		/* Transport input mtu */
 	uint16_t		omtu;		/* Transport output mtu */
-	gboolean		read_lock;
-	gboolean		write_lock;
-	gboolean		in_use;
+	transport_lock_t	lock;
+	transport_state_t	state;
+	guint			hs_watch;
+	guint			ag_watch;
+	guint			source_watch;
+	guint			sink_watch;
 	guint			(*resume) (struct media_transport *transport,
 					struct media_owner *owner);
 	guint			(*suspend) (struct media_transport *transport,
@@ -104,9 +130,101 @@ struct media_transport {
 	void			*data;
 };
 
+static const char *lock2str(transport_lock_t lock)
+{
+	if (lock == 0)
+		return "";
+	else if (lock == TRANSPORT_LOCK_READ)
+		return "r";
+	else if (lock == TRANSPORT_LOCK_WRITE)
+		return "w";
+	else
+		return "rw";
+}
+
+static transport_lock_t str2lock(const char *str)
+{
+	transport_lock_t lock = 0;
+
+	if (g_strstr_len(str, -1, "r") != NULL)
+		lock |= TRANSPORT_LOCK_READ;
+
+	if (g_strstr_len(str, -1, "w") != NULL)
+		lock |= TRANSPORT_LOCK_WRITE;
+
+	return lock;
+}
+
+static const char *state2str(transport_state_t state)
+{
+	switch (state) {
+	case TRANSPORT_STATE_IDLE:
+	case TRANSPORT_STATE_REQUESTING:
+		return "idle";
+	case TRANSPORT_STATE_PENDING:
+		return "pending";
+	case TRANSPORT_STATE_ACTIVE:
+	case TRANSPORT_STATE_SUSPENDING:
+		return "active";
+	}
+
+	return NULL;
+}
+
+static gboolean state_in_use(transport_state_t state)
+{
+	switch (state) {
+	case TRANSPORT_STATE_IDLE:
+	case TRANSPORT_STATE_PENDING:
+		return FALSE;
+	case TRANSPORT_STATE_REQUESTING:
+	case TRANSPORT_STATE_ACTIVE:
+	case TRANSPORT_STATE_SUSPENDING:
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+static void transport_set_state(struct media_transport *transport,
+							transport_state_t state)
+{
+	transport_state_t old_state = transport->state;
+	const char *str;
+
+	if (old_state == state)
+		return;
+
+	transport->state = state;
+
+	DBG("State changed %s: %s -> %s", transport->path, str_state[old_state],
+							str_state[state]);
+
+	str = state2str(state);
+
+#ifndef  __TIZEN_PATCH__
+	if (g_strcmp0(str, state2str(old_state)) != 0)
+		emit_property_changed(transport->conn, transport->path,
+					MEDIA_TRANSPORT_INTERFACE, "State",
+					DBUS_TYPE_STRING, &str);
+#endif
+}
+
 void media_transport_destroy(struct media_transport *transport)
 {
 	char *path;
+
+	if (transport->hs_watch)
+		headset_remove_state_cb(transport->hs_watch);
+
+	if (transport->ag_watch)
+		gateway_remove_state_cb(transport->ag_watch);
+
+	if (transport->sink_watch)
+		sink_remove_state_cb(transport->sink_watch);
+
+	if (transport->source_watch)
+		source_remove_state_cb(transport->source_watch);
 
 	path = g_strdup(transport->path);
 	g_dbus_unregister_interface(transport->conn, path,
@@ -148,17 +266,15 @@ static void media_request_reply(struct media_request *req,
 }
 
 static gboolean media_transport_release(struct media_transport *transport,
-					const char *accesstype)
+							transport_lock_t lock)
 {
-	if (g_strstr_len(accesstype, -1, "r") != NULL) {
-		transport->read_lock = FALSE;
-		DBG("Transport %s: read lock released", transport->path);
-	}
+	transport->lock &= ~lock;
 
-	if (g_strstr_len(accesstype, -1, "w") != NULL) {
-		transport->write_lock = FALSE;
+	if (lock & TRANSPORT_LOCK_READ)
+		DBG("Transport %s: read lock released", transport->path);
+
+	if (lock & TRANSPORT_LOCK_WRITE)
 		DBG("Transport %s: write lock released", transport->path);
-	}
 
 	return TRUE;
 }
@@ -191,7 +307,6 @@ static void media_owner_free(struct media_owner *owner)
 	media_owner_remove(owner);
 
 	g_free(owner->name);
-	g_free(owner->accesstype);
 	g_free(owner);
 }
 
@@ -200,7 +315,7 @@ static void media_transport_remove(struct media_transport *transport,
 {
 	DBG("Transport %s Owner %s", transport->path, owner->name);
 
-	media_transport_release(transport, owner->accesstype);
+	media_transport_release(transport, owner->lock);
 
 	/* Reply if owner has a pending request */
 	if (owner->pending)
@@ -214,7 +329,7 @@ static void media_transport_remove(struct media_transport *transport,
 	media_owner_free(owner);
 
 	/* Suspend if there is no longer any owner */
-	if (transport->owners == NULL && transport->in_use)
+	if (transport->owners == NULL && state_in_use(transport->state))
 		transport->suspend(transport, NULL);
 }
 
@@ -260,10 +375,10 @@ static void a2dp_resume_complete(struct avdtp *session,
 
 	media_transport_set_fd(transport, fd, imtu, omtu);
 
-	if (g_strstr_len(owner->accesstype, -1, "r") == NULL)
+	if ((owner->lock & TRANSPORT_LOCK_READ) == 0)
 		imtu = 0;
 
-	if (g_strstr_len(owner->accesstype, -1, "w") == NULL)
+	if ((owner->lock & TRANSPORT_LOCK_WRITE) == 0)
 		omtu = 0;
 
 	ret = g_dbus_send_reply(transport->conn, req->msg,
@@ -275,6 +390,8 @@ static void a2dp_resume_complete(struct avdtp *session,
 		goto fail;
 
 	media_owner_remove(owner);
+
+	transport_set_state(transport, TRANSPORT_STATE_ACTIVE);
 
 	return;
 
@@ -289,6 +406,7 @@ static guint resume_a2dp(struct media_transport *transport,
 	struct media_endpoint *endpoint = transport->endpoint;
 	struct audio_device *device = transport->device;
 	struct a2dp_sep *sep = media_endpoint_get_sep(endpoint);
+	guint id;
 
 	if (a2dp->session == NULL) {
 		a2dp->session = avdtp_get(&device->src, &device->dst);
@@ -296,15 +414,24 @@ static guint resume_a2dp(struct media_transport *transport,
 			return 0;
 	}
 
-	if (transport->in_use == TRUE)
-		goto done;
+	if (state_in_use(transport->state))
+		return a2dp_resume(a2dp->session, sep, a2dp_resume_complete,
+									owner);
 
-	transport->in_use = a2dp_sep_lock(sep, a2dp->session);
-	if (transport->in_use == FALSE)
+	if (a2dp_sep_lock(sep, a2dp->session) == FALSE)
 		return 0;
 
-done:
-	return a2dp_resume(a2dp->session, sep, a2dp_resume_complete, owner);
+	id = a2dp_resume(a2dp->session, sep, a2dp_resume_complete, owner);
+
+	if (id == 0) {
+		a2dp_sep_unlock(sep, a2dp->session);
+		return 0;
+	}
+
+	if (transport->state == TRANSPORT_STATE_IDLE)
+		transport_set_state(transport, TRANSPORT_STATE_REQUESTING);
+
+	return id;
 }
 
 static void a2dp_suspend_complete(struct avdtp *session,
@@ -323,7 +450,7 @@ static void a2dp_suspend_complete(struct avdtp *session,
 	}
 
 	a2dp_sep_unlock(sep, a2dp->session);
-	transport->in_use = FALSE;
+	transport_set_state(transport, TRANSPORT_STATE_IDLE);
 	media_transport_remove(transport, owner);
 }
 
@@ -334,13 +461,14 @@ static guint suspend_a2dp(struct media_transport *transport,
 	struct media_endpoint *endpoint = transport->endpoint;
 	struct a2dp_sep *sep = media_endpoint_get_sep(endpoint);
 
-	if (!owner) {
-		a2dp_sep_unlock(sep, a2dp->session);
-		transport->in_use = FALSE;
-		return 0;
-	}
+	if (owner != NULL)
+		return a2dp_suspend(a2dp->session, sep, a2dp_suspend_complete,
+									owner);
 
-	return a2dp_suspend(a2dp->session, sep, a2dp_suspend_complete, owner);
+	transport_set_state(transport, TRANSPORT_STATE_IDLE);
+	a2dp_sep_unlock(sep, a2dp->session);
+
+	return 0;
 }
 
 static void cancel_a2dp(struct media_transport *transport, guint id)
@@ -371,10 +499,10 @@ static void headset_resume_complete(struct audio_device *dev, void *user_data)
 
 	media_transport_set_fd(transport, fd, imtu, omtu);
 
-	if (g_strstr_len(owner->accesstype, -1, "r") == NULL)
+	if ((owner->lock & TRANSPORT_LOCK_READ) == 0)
 		imtu = 0;
 
-	if (g_strstr_len(owner->accesstype, -1, "w") == NULL)
+	if ((owner->lock & TRANSPORT_LOCK_WRITE) == 0)
 		omtu = 0;
 
 	ret = g_dbus_send_reply(transport->conn, req->msg,
@@ -387,6 +515,8 @@ static void headset_resume_complete(struct audio_device *dev, void *user_data)
 
 	media_owner_remove(owner);
 
+	transport_set_state(transport, TRANSPORT_STATE_ACTIVE);
+
 	return;
 
 fail:
@@ -398,13 +528,15 @@ static guint resume_headset(struct media_transport *transport,
 {
 	struct audio_device *device = transport->device;
 
-	if (transport->in_use == TRUE)
+	if (state_in_use(transport->state))
 		goto done;
 
-	transport->in_use = headset_lock(device, HEADSET_LOCK_READ |
-						HEADSET_LOCK_WRITE);
-	if (transport->in_use == FALSE)
+	if (headset_lock(device, HEADSET_LOCK_READ |
+						HEADSET_LOCK_WRITE) == FALSE)
 		return 0;
+
+	if (transport->state == TRANSPORT_STATE_IDLE)
+		transport_set_state(transport, TRANSPORT_STATE_REQUESTING);
 
 done:
 	return headset_request_stream(device, headset_resume_complete,
@@ -424,7 +556,7 @@ static void headset_suspend_complete(struct audio_device *dev, void *user_data)
 	}
 
 	headset_unlock(dev, HEADSET_LOCK_READ | HEADSET_LOCK_WRITE);
-	transport->in_use = FALSE;
+	transport_set_state(transport, TRANSPORT_STATE_IDLE);
 	media_transport_remove(transport, owner);
 }
 
@@ -434,8 +566,15 @@ static guint suspend_headset(struct media_transport *transport,
 	struct audio_device *device = transport->device;
 
 	if (!owner) {
+		headset_state_t state = headset_get_state(device);
+
 		headset_unlock(device, HEADSET_LOCK_READ | HEADSET_LOCK_WRITE);
-		transport->in_use = FALSE;
+
+		if (state == HEADSET_STATE_PLAYING)
+			transport_set_state(transport, TRANSPORT_STATE_PENDING);
+		else
+			transport_set_state(transport, TRANSPORT_STATE_IDLE);
+
 		return 0;
 	}
 
@@ -476,10 +615,10 @@ static void gateway_resume_complete(struct audio_device *dev, GError *err,
 
 	media_transport_set_fd(transport, fd, imtu, omtu);
 
-	if (g_strstr_len(owner->accesstype, -1, "r") == NULL)
+	if ((owner->lock & TRANSPORT_LOCK_READ) == 0)
 		imtu = 0;
 
-	if (g_strstr_len(owner->accesstype, -1, "w") == NULL)
+	if ((owner->lock & TRANSPORT_LOCK_WRITE) == 0)
 		omtu = 0;
 
 	ret = g_dbus_send_reply(transport->conn, req->msg,
@@ -492,6 +631,8 @@ static void gateway_resume_complete(struct audio_device *dev, GError *err,
 
 	media_owner_remove(owner);
 
+	transport_set_state(transport, TRANSPORT_STATE_ACTIVE);
+
 	return;
 
 fail:
@@ -503,13 +644,15 @@ static guint resume_gateway(struct media_transport *transport,
 {
 	struct audio_device *device = transport->device;
 
-	if (transport->in_use == TRUE)
+	if (state_in_use(transport->state))
 		goto done;
 
-	transport->in_use = gateway_lock(device, GATEWAY_LOCK_READ |
-						GATEWAY_LOCK_WRITE);
-	if (transport->in_use == FALSE)
+	if (gateway_lock(device, GATEWAY_LOCK_READ |
+						GATEWAY_LOCK_WRITE) == FALSE)
 		return 0;
+
+	if (transport->state == TRANSPORT_STATE_IDLE)
+		transport_set_state(transport, TRANSPORT_STATE_REQUESTING);
 
 done:
 	return gateway_request_stream(device, gateway_resume_complete,
@@ -530,7 +673,7 @@ static gboolean gateway_suspend_complete(gpointer user_data)
 	}
 
 	gateway_unlock(device, GATEWAY_LOCK_READ | GATEWAY_LOCK_WRITE);
-	transport->in_use = FALSE;
+	transport_set_state(transport, TRANSPORT_STATE_IDLE);
 	media_transport_remove(transport, owner);
 	return FALSE;
 }
@@ -542,8 +685,15 @@ static guint suspend_gateway(struct media_transport *transport,
 	static int id = 1;
 
 	if (!owner) {
+		gateway_state_t state = gateway_get_state(device);
+
 		gateway_unlock(device, GATEWAY_LOCK_READ | GATEWAY_LOCK_WRITE);
-		transport->in_use = FALSE;
+
+		if (state == GATEWAY_STATE_PLAYING)
+			transport_set_state(transport, TRANSPORT_STATE_PENDING);
+		else
+			transport_set_state(transport, TRANSPORT_STATE_IDLE);
+
 		return 0;
 	}
 
@@ -569,35 +719,18 @@ static void media_owner_exit(DBusConnection *connection, void *user_data)
 }
 
 static gboolean media_transport_acquire(struct media_transport *transport,
-							const char *accesstype)
+							transport_lock_t lock)
 {
-	gboolean read_lock = FALSE, write_lock = FALSE;
-
-	if (g_strstr_len(accesstype, -1, "r") != NULL) {
-		if (transport->read_lock == TRUE)
-			return FALSE;
-		read_lock = TRUE;
-	}
-
-	if (g_strstr_len(accesstype, -1, "w") != NULL) {
-		if (transport->write_lock == TRUE)
-			return FALSE;
-		write_lock = TRUE;
-	}
-
-	/* Check invalid accesstype */
-	if (read_lock == FALSE && write_lock == FALSE)
+	if (transport->lock & lock)
 		return FALSE;
 
-	if (read_lock) {
-		transport->read_lock = read_lock;
-		DBG("Transport %s: read lock acquired", transport->path);
-	}
+	transport->lock |= lock;
 
-	if (write_lock) {
-		transport->write_lock = write_lock;
+	if (lock & TRANSPORT_LOCK_READ)
+		DBG("Transport %s: read lock acquired", transport->path);
+
+	if (lock & TRANSPORT_LOCK_WRITE)
 		DBG("Transport %s: write lock acquired", transport->path);
-	}
 
 
 	return TRUE;
@@ -616,16 +749,16 @@ static void media_transport_add(struct media_transport *transport,
 
 static struct media_owner *media_owner_create(DBusConnection *conn,
 						DBusMessage *msg,
-						const char *accesstype)
+						transport_lock_t lock)
 {
 	struct media_owner *owner;
 
 	owner = g_new0(struct media_owner, 1);
 	owner->name = g_strdup(dbus_message_get_sender(msg));
-	owner->accesstype = g_strdup(accesstype);
+	owner->lock = lock;
 
 	DBG("Owner created: sender=%s accesstype=%s", owner->name,
-			accesstype);
+							lock2str(lock));
 
 	return owner;
 }
@@ -662,12 +795,13 @@ static DBusMessage *acquire(DBusConnection *conn, DBusMessage *msg,
 	struct media_owner *owner;
 	struct media_request *req;
 	const char *accesstype, *sender;
+	transport_lock_t lock;
 	guint id;
 
 	if (!dbus_message_get_args(msg, NULL,
 				DBUS_TYPE_STRING, &accesstype,
 				DBUS_TYPE_INVALID))
-		return NULL;
+		return btd_error_invalid_args(msg);
 
 	sender = dbus_message_get_sender(msg);
 
@@ -675,13 +809,21 @@ static DBusMessage *acquire(DBusConnection *conn, DBusMessage *msg,
 	if (owner != NULL)
 		return btd_error_not_authorized(msg);
 
-	if (media_transport_acquire(transport, accesstype) == FALSE)
+	lock = str2lock(accesstype);
+	if (lock == 0)
+		return btd_error_invalid_args(msg);
+
+	if (transport->state != TRANSPORT_STATE_PENDING &&
+				g_strstr_len(accesstype, -1, "?") != NULL)
+		return btd_error_failed(msg, "Transport not playing");
+
+	if (media_transport_acquire(transport, lock) == FALSE)
 		return btd_error_not_authorized(msg);
 
-	owner = media_owner_create(conn, msg, accesstype);
+	owner = media_owner_create(conn, msg, lock);
 	id = transport->resume(transport, owner);
 	if (id == 0) {
-		media_transport_release(transport, accesstype);
+		media_transport_release(transport, lock);
 		media_owner_free(owner);
 		return btd_error_not_authorized(msg);
 	}
@@ -699,12 +841,13 @@ static DBusMessage *release(DBusConnection *conn, DBusMessage *msg,
 	struct media_transport *transport = data;
 	struct media_owner *owner;
 	const char *accesstype, *sender;
+	transport_lock_t lock;
 	struct media_request *req;
 
 	if (!dbus_message_get_args(msg, NULL,
 				DBUS_TYPE_STRING, &accesstype,
 				DBUS_TYPE_INVALID))
-		return NULL;
+		return btd_error_invalid_args(msg);
 
 	sender = dbus_message_get_sender(msg);
 
@@ -712,7 +855,9 @@ static DBusMessage *release(DBusConnection *conn, DBusMessage *msg,
 	if (owner == NULL)
 		return btd_error_not_authorized(msg);
 
-	if (g_strcmp0(owner->accesstype, accesstype) == 0) {
+	lock = str2lock(accesstype);
+
+	if (owner->lock == lock) {
 		guint id;
 
 		/* Not the last owner, no need to suspend */
@@ -732,6 +877,8 @@ static DBusMessage *release(DBusConnection *conn, DBusMessage *msg,
 				return btd_error_in_progress(msg);
 		}
 
+		transport_set_state(transport, TRANSPORT_STATE_SUSPENDING);
+
 		id = transport->suspend(transport, owner);
 		if (id == 0) {
 			media_transport_remove(transport, owner);
@@ -742,9 +889,9 @@ static DBusMessage *release(DBusConnection *conn, DBusMessage *msg,
 		media_owner_add(owner, req);
 
 		return NULL;
-	} else if (g_strstr_len(owner->accesstype, -1, accesstype) != NULL) {
-		media_transport_release(transport, accesstype);
-		g_strdelimit(owner->accesstype, accesstype, ' ');
+	} else if ((owner->lock & lock) == lock) {
+		media_transport_release(transport, lock);
+		owner->lock &= ~lock;
 	} else
 		return btd_error_not_authorized(msg);
 
@@ -904,6 +1051,7 @@ void transport_get_properties(struct media_transport *transport,
 	DBusMessageIter dict;
 	const char *uuid;
 	uint8_t codec;
+	const char *state;
 
 	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
 			DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
@@ -922,6 +1070,10 @@ void transport_get_properties(struct media_transport *transport,
 
 	dict_append_array(&dict, "Configuration", DBUS_TYPE_BYTE,
 				&transport->configuration, transport->size);
+
+	/* State */
+	state = state2str(transport->state);
+	dict_append_entry(&dict, "State", DBUS_TYPE_STRING, &state);
 
 	if (transport->get_properties)
 		transport->get_properties(transport, &dict);
@@ -1027,6 +1179,92 @@ static void headset_nrec_changed(struct audio_device *dev, gboolean nrec,
 				DBUS_TYPE_BOOLEAN, &nrec);
 }
 
+static void transport_update_playing(struct media_transport *transport,
+							gboolean playing)
+{
+	DBG("%s State=%s Playing=%d", transport->path,
+					str_state[transport->state], playing);
+
+	if (playing == FALSE) {
+		if (transport->state == TRANSPORT_STATE_PENDING)
+			transport_set_state(transport, TRANSPORT_STATE_IDLE);
+		else if (transport->state == TRANSPORT_STATE_ACTIVE) {
+			/* Remove all owners */
+			while (transport->owners != NULL) {
+				struct media_owner *owner;
+
+				owner = transport->owners->data;
+				media_transport_remove(transport, owner);
+			}
+		}
+	} else if (transport->state == TRANSPORT_STATE_IDLE)
+		transport_set_state(transport, TRANSPORT_STATE_PENDING);
+}
+
+static void headset_state_changed(struct audio_device *dev,
+						headset_state_t old_state,
+						headset_state_t new_state,
+						void *user_data)
+{
+	struct media_transport *transport = user_data;
+
+	if (dev != transport->device)
+		return;
+
+	if (new_state == HEADSET_STATE_PLAYING)
+		transport_update_playing(transport, TRUE);
+	else
+		transport_update_playing(transport, FALSE);
+}
+
+static void gateway_state_changed(struct audio_device *dev,
+						gateway_state_t old_state,
+						gateway_state_t new_state,
+						void *user_data)
+{
+	struct media_transport *transport = user_data;
+
+	if (dev != transport->device)
+		return;
+
+	if (new_state == GATEWAY_STATE_PLAYING)
+		transport_update_playing(transport, TRUE);
+	else
+		transport_update_playing(transport, FALSE);
+}
+
+static void sink_state_changed(struct audio_device *dev,
+						sink_state_t old_state,
+						sink_state_t new_state,
+						void *user_data)
+{
+	struct media_transport *transport = user_data;
+
+	if (dev != transport->device)
+		return;
+
+	if (new_state == SINK_STATE_PLAYING)
+		transport_update_playing(transport, TRUE);
+	else
+		transport_update_playing(transport, FALSE);
+}
+
+static void source_state_changed(struct audio_device *dev,
+						source_state_t old_state,
+						source_state_t new_state,
+						void *user_data)
+{
+	struct media_transport *transport = user_data;
+
+	if (dev != transport->device)
+		return;
+
+	if (new_state == SOURCE_STATE_PLAYING)
+		transport_update_playing(transport, TRUE);
+	else
+		transport_update_playing(transport, FALSE);
+}
+
 struct media_transport *media_transport_create(DBusConnection *conn,
 						struct media_endpoint *endpoint,
 						struct audio_device *device,
@@ -1062,6 +1300,15 @@ struct media_transport *media_transport_create(DBusConnection *conn,
 		transport->set_property = set_property_a2dp;
 		transport->data = a2dp;
 		transport->destroy = destroy_a2dp;
+
+		if (strcasecmp(uuid, A2DP_SOURCE_UUID) == 0)
+			transport->sink_watch = sink_add_state_cb(
+							sink_state_changed,
+							transport);
+		else
+			transport->source_watch = source_add_state_cb(
+							source_state_changed,
+							transport);
 	} else if (strcasecmp(uuid, HFP_AG_UUID) == 0 ||
 			strcasecmp(uuid, HSP_AG_UUID) == 0) {
 		struct headset_transport *headset;
@@ -1079,6 +1326,9 @@ struct media_transport *media_transport_create(DBusConnection *conn,
 		transport->set_property = set_property_headset;
 		transport->data = headset;
 		transport->destroy = destroy_headset;
+		transport->hs_watch = headset_add_state_cb(
+							headset_state_changed,
+							transport);
 	} else if (strcasecmp(uuid, HFP_HS_UUID) == 0 ||
 			strcasecmp(uuid, HSP_HS_UUID) == 0) {
 		transport->resume = resume_gateway;
@@ -1086,6 +1336,9 @@ struct media_transport *media_transport_create(DBusConnection *conn,
 		transport->cancel = cancel_gateway;
 		transport->get_properties = get_properties_gateway;
 		transport->set_property = set_property_gateway;
+		transport->ag_watch = gateway_add_state_cb(
+							gateway_state_changed,
+							transport);
 	} else
 		goto fail;
 

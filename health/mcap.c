@@ -293,6 +293,10 @@ static void mcap_notify_error(struct mcap_mcl *mcl, GError *err)
 	case MCAP_MD_CREATE_MDL_REQ:
 		st = MDL_WAITING;
 		l = g_slist_find_custom(mcl->mdls, &st, cmp_mdl_state);
+#ifdef __TIZEN_PATCH__
+		if (l == NULL)
+			return;
+#endif
 		mdl = l->data;
 		mcl->mdls = g_slist_remove(mcl->mdls, mdl);
 		mcap_mdl_unref(mdl);
@@ -302,6 +306,10 @@ static void mcap_notify_error(struct mcap_mcl *mcl, GError *err)
 	case MCAP_MD_ABORT_MDL_REQ:
 		st = MDL_WAITING;
 		l = g_slist_find_custom(mcl->mdls, &st, cmp_mdl_state);
+#ifdef __TIZEN_PATCH__
+		if (l == NULL)
+			return;
+#endif
 		shutdown_mdl(l->data);
 		update_mcl_state(mcl);
 		con->cb.notify(err, con->user_data);
@@ -319,6 +327,10 @@ static void mcap_notify_error(struct mcap_mcl *mcl, GError *err)
 	case MCAP_MD_RECONNECT_MDL_REQ:
 		st = MDL_WAITING;
 		l = g_slist_find_custom(mcl->mdls, &st, cmp_mdl_state);
+#ifdef __TIZEN_PATCH__
+		if (l == NULL)
+			return;
+#endif
 		shutdown_mdl(l->data);
 		update_mcl_state(mcl);
 		con->cb.op(NULL, err, con->user_data);

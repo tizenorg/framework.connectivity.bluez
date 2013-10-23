@@ -232,6 +232,8 @@ static const char *telephony_chld_str = "0,1,2,3";
 
 static char *subscriber_number = NULL;	/* Subscriber number */
 
+/* timer for sending callheld status  */
+static guint create_callheld_timer = 0;
 
 static struct {
 	int32_t path_id;
@@ -297,7 +299,7 @@ static void remove_call_with_sender(gchar *sender)
 {
 	GSList *l;
 
-	DBG("+\n");
+	DBG("+");
 
 	if (sender == NULL)
 		return;
@@ -310,14 +312,14 @@ static void remove_call_with_sender(gchar *sender)
 			call_set_status(call, CSD_CALL_STATUS_MT_RELEASE);
 	}
 
-	DBG("-\n");
+	DBG("-");
 }
 
 static void telephony_app_exit_cb(DBusConnection *conn, void *user_data)
 {
 	sender_path_t *s_path = (sender_path_t *)user_data;
 
-	DBG("+\n");
+	DBG("+");
 
 	if (s_path == NULL)
 		return;
@@ -326,10 +328,10 @@ static void telephony_app_exit_cb(DBusConnection *conn, void *user_data)
 	remove_call_with_sender(s_path->sender);
 
 	if (!telephony_remove_from_sender_list(s_path->sender, s_path->path))
-		DBG("Application removed \n");
+		DBG("Application removed ");
 	else
-		DBG("Application not removed \n");
-	DBG("-\n");
+		DBG("Application not removed ");
+	DBG("-");
 }
 
 static gboolean telephony_is_registered(const char *path)
@@ -467,11 +469,41 @@ static void csd_call_free(struct csd_call *call)
 	g_free(call);
 }
 
+static gboolean callheld_timeout(gpointer user_data)
+{
+	int status;
+
+	if (find_call_with_status(CSD_CALL_STATUS_HOLD)) {
+		if (find_call_with_status(CSD_CALL_STATUS_ACTIVE)) {
+			status = EV_CALLHELD_MULTIPLE;
+		} else {
+			status = EV_CALLHELD_ON_HOLD;
+		}
+	} else {
+		status = EV_CALLHELD_NONE;
+	}
+
+	telephony_update_indicator(telephony_ag_indicators, "callheld", status);
+
+	create_callheld_timer = 0;
+	return FALSE;
+}
+
+static void handle_callheld_requested(void)
+{
+	DBG("call held timer start");
+
+	if (create_callheld_timer)
+		g_source_remove(create_callheld_timer);
+
+	create_callheld_timer = g_timeout_add(250, callheld_timeout, NULL);
+}
+
 static int reject_call(struct csd_call *call)
 {
 	DBusMessage *msg;
 
-	DBG("+\n");
+	DBG("+");
 
 	DBG("telephony-tizen: reject_call ");
 
@@ -481,20 +513,20 @@ static int reject_call(struct csd_call *call)
 		error("Unable to allocate new D-Bus message");
 		return -ENOMEM;
 	}
-	DBG(" Path =[ %s] and Call id = [%d]\n", call->path, call->call_id);
+	DBG(" Path =[ %s] and Call id = [%d]", call->path, call->call_id);
 	if (!dbus_message_append_args(msg, DBUS_TYPE_UINT32, &call->call_id,
 			DBUS_TYPE_STRING, &call->path,
 			DBUS_TYPE_STRING, &call->sender,
 			DBUS_TYPE_INVALID)) {
 
-		DBG("dbus_message_append_args -ENOMEM\n");
+		DBG("dbus_message_append_args -ENOMEM");
 		dbus_message_unref(msg);
 		return -ENOMEM;
 	}
 
 	g_dbus_send_message(ag_connection, msg);
 
-	DBG("-\n");
+	DBG("-");
 
 	return 0;
 
@@ -504,7 +536,7 @@ static int release_call(struct csd_call *call)
 {
 	DBusMessage *msg;
 
-	DBG("+\n");
+	DBG("+");
 
 	DBG("telephony-tizen: release_call ");
 
@@ -514,7 +546,7 @@ static int release_call(struct csd_call *call)
 		error("Unable to allocate new D-Bus message");
 		return -ENOMEM;
 	}
-	DBG("Path =[ %s] and Call id = [%d]\n", call->path, call->call_id);
+	DBG("Path =[ %s] and Call id = [%d]", call->path, call->call_id);
 	if (!dbus_message_append_args(msg, DBUS_TYPE_UINT32, &call->call_id,
 			DBUS_TYPE_STRING, &call->path,
 			DBUS_TYPE_STRING, &call->sender,
@@ -527,7 +559,7 @@ static int release_call(struct csd_call *call)
 
 	g_dbus_send_message(ag_connection, msg);
 
-	DBG("-\n");
+	DBG("-");
 
 	return 0;
 }
@@ -536,7 +568,7 @@ static int release_conference(void)
 {
 	GSList *l;
 
-	DBG("+\n");
+	DBG("+");
 
 	for (l = calls; l != NULL; l = l->next) {
 		struct csd_call *call = l->data;
@@ -545,7 +577,7 @@ static int release_conference(void)
 			release_call(call);
 	}
 
-	DBG("-\n");
+	DBG("-");
 
 	return 0;
 }
@@ -559,7 +591,7 @@ static int dbus_method_call_send(const char *dest, const char *path,
 	DBusPendingCall *call;
 	va_list args;
 
-	DBG("+\n");
+	DBG("+");
 
 	msg = dbus_message_new_method_call(dest, path, interface, method);
 	if (!msg) {
@@ -590,7 +622,7 @@ static int dbus_method_call_send(const char *dest, const char *path,
 
 	dbus_pending_call_set_notify(call, cb, user_data, NULL);
 	dbus_message_unref(msg);
-	DBG("-\n");
+	DBG("-");
 
 	return 0;
 }
@@ -598,7 +630,7 @@ static int dbus_method_call_send(const char *dest, const char *path,
 static int answer_call(struct csd_call *call)
 {
 	DBusMessage *msg;
-	DBG("+\n");
+	DBG("+");
 
 	msg = dbus_message_new_method_call(HFP_AGENT_SERVICE, HFP_AGENT_PATH,
 					HFP_AGENT_INTERFACE, "AnswerCall");
@@ -612,12 +644,12 @@ static int answer_call(struct csd_call *call)
 			DBUS_TYPE_STRING, &call->sender,
 			DBUS_TYPE_INVALID)) {
 
-		DBG("dbus_message_append_args -ENOMEM\n");
+		DBG("dbus_message_append_args -ENOMEM");
 		dbus_message_unref(msg);
 		return -ENOMEM;
 	}
 	g_dbus_send_message(ag_connection, msg);
-	DBG("-\n");
+	DBG("-");
 	return 0;
 }
 
@@ -705,7 +737,7 @@ static void call_set_status(struct csd_call *call, dbus_uint32_t status)
 	dbus_uint32_t prev_status;
 	int callheld = 0;
 
-	DBG("+\n");
+	DBG("+");
 
 	callheld = telephony_get_indicator(telephony_ag_indicators, "callheld");
 
@@ -769,14 +801,7 @@ static void call_set_status(struct csd_call *call, dbus_uint32_t status)
 	case CSD_CALL_STATUS_ACTIVE:
 		if (call->on_hold) {
 			call->on_hold = FALSE;
-			if (find_call_with_status(CSD_CALL_STATUS_HOLD))
-				telephony_update_indicator(telephony_ag_indicators,
-							"callheld",
-							EV_CALLHELD_MULTIPLE);
-			else
-				telephony_update_indicator(telephony_ag_indicators,
-							"callheld",
-							EV_CALLHELD_NONE);
+			handle_callheld_requested();
 		} else {
 			if (!g_slist_find(active_calls, call))
 				active_calls = g_slist_prepend(active_calls, call);
@@ -784,14 +809,10 @@ static void call_set_status(struct csd_call *call, dbus_uint32_t status)
 				telephony_update_indicator(telephony_ag_indicators,
 								"call",
 								EV_CALL_ACTIVE);
-			/* Upgrade callheld status if necessary */
-			if (callheld == EV_CALLHELD_ON_HOLD)
-				telephony_update_indicator(telephony_ag_indicators,
-							"callheld",
-							EV_CALLHELD_MULTIPLE);
 			telephony_update_indicator(telephony_ag_indicators,
 							"callsetup",
 							EV_CALLSETUP_INACTIVE);
+			handle_callheld_requested();
 			if (!call->originating)
 				telephony_calling_stopped_ind();
 			call->setup = FALSE;
@@ -825,14 +846,7 @@ static void call_set_status(struct csd_call *call, dbus_uint32_t status)
 		break;
 	case CSD_CALL_STATUS_HOLD:
 		call->on_hold = TRUE;
-		if (find_non_held_call())
-			telephony_update_indicator(telephony_ag_indicators,
-							"callheld",
-							EV_CALLHELD_MULTIPLE);
-		else
-			telephony_update_indicator(telephony_ag_indicators,
-							"callheld",
-							EV_CALLHELD_ON_HOLD);
+		handle_callheld_requested();
 		break;
 	case CSD_CALL_STATUS_RETRIEVE_INITIATED:
 		break;
@@ -864,15 +878,13 @@ static void call_set_status(struct csd_call *call, dbus_uint32_t status)
 	/* Update the conference status of each call */
 	handle_conference();
 
-	DBG("-\n");
+	DBG("-");
 }
 
 static void telephony_chld_reply(DBusPendingCall *call, void *data)
 {
 	DBusMessage *reply = dbus_pending_call_steal_reply(call);
 	DBusError derr;
-
-	DBG("redial_reply");
 
 	dbus_error_init(&derr);
 	if (!dbus_set_error_from_message(&derr, reply)) {
@@ -899,7 +911,7 @@ void telephony_call_hold_req(void *telephony_device, const char *cmd)
 	GSList *l = NULL;
 	sender_path_t *s_path = NULL;
 
-	DBG("+\n");
+	DBG("+");
 
 	DBG("telephony-tizen: got call hold request %s", cmd);
 
@@ -909,7 +921,7 @@ void telephony_call_hold_req(void *telephony_device, const char *cmd)
 						CSD_CALL_STATUS_HOLD)))
 			if (NULL == (call = find_call_with_status(
 						CSD_CALL_STATUS_WAITING))) {
-				DBG("No Onging Call \n");
+				DBG("No Onging Call ");
 				telephony_call_hold_rsp(telephony_device,
 							CME_ERROR_AG_FAILURE);
 				return;
@@ -936,7 +948,7 @@ void telephony_call_hold_req(void *telephony_device, const char *cmd)
 	idx = &cmd[0];
 	chld_value = strtoul(idx, NULL, 0);
 
-	DBG("Sender = %s path = %s \n", s_path->sender, s_path->path);
+	DBG("Sender = %s path = %s ", s_path->sender, s_path->path);
 
 	err = dbus_method_call_send(HFP_AGENT_SERVICE, HFP_AGENT_PATH,
 				HFP_AGENT_INTERFACE, "ThreewayCall",
@@ -949,14 +961,14 @@ void telephony_call_hold_req(void *telephony_device, const char *cmd)
 	if (err)
 		telephony_call_hold_rsp(telephony_device,
 					CME_ERROR_AG_FAILURE);
-	DBG("-\n");
+	DBG("-");
 }
 
 static int update_registration_status(uint8_t status)
 {
 	uint8_t new_status;
 	int ret = 0;
-	DBG("+\n");
+	DBG("+");
 
 	new_status = status;
 
@@ -1003,14 +1015,14 @@ static int update_registration_status(uint8_t status)
 	net.status = new_status;
 
 	DBG("telephony-tizen: registration status changed: %d", status);
-	DBG("-\n");
+	DBG("-");
 
 	return ret;
 }
 
 static int update_signal_strength(int32_t signal_bars)
 {
-	DBG("+\n");
+	DBG("+");
 
 	if (signal_bars < 0) {
 		DBG("signal strength smaller than expected: %d < 0",
@@ -1035,7 +1047,7 @@ static int update_battery_strength(int32_t battery_level)
 {
 	int current_battchg = 0;
 
-	DBG("+\n");
+	DBG("+");
 
 	current_battchg = telephony_get_indicator(telephony_ag_indicators, "battchg");
 
@@ -1052,7 +1064,7 @@ static int update_battery_strength(int32_t battery_level)
 		return 0;
 
 	DBG("telephony-tizen: battery strength updated: %d/5", battery_level);
-	DBG("-\n");
+	DBG("-");
 
 	return telephony_update_indicator(telephony_ag_indicators,
 			"battchg", battery_level);
@@ -1061,27 +1073,27 @@ static int update_battery_strength(int32_t battery_level)
 
 static int update_operator_name(const char *name)
 {
-	DBG("+\n");
+	DBG("+");
 	if (name == NULL)
 		return -EINVAL;
 
 	g_free(net.operator_name);
 	net.operator_name = g_strndup(name, 16);
 	DBG("telephony-tizen: operator name updated: %s", name);
-	DBG("-\n");
+	DBG("-");
 	return 0;
 }
 
 static int update_subscriber_number(const char *number)
 {
-	DBG("+\n");
+	DBG("+");
 	if (number == NULL)
 		return -EINVAL;
 
 	g_free(subscriber_number);
 	subscriber_number = g_strdup(number);
 	DBG("telephony-tizen: subscriber_number updated: %s", subscriber_number);
-	DBG("-\n");
+	DBG("-");
 	return 0;
 }
 
@@ -1134,8 +1146,8 @@ static DBusMessage *incoming(DBusConnection *conn, DBusMessage *msg,
 	struct csd_call *call;
 	uint32_t call_id;
 	int ret;
-	DBG("+\n");
-	DBG("telephony_incoming()\n");
+	DBG("+");
+	DBG("telephony_incoming()");
 
 	if (!dbus_message_get_args(msg, NULL,
 					DBUS_TYPE_STRING, &call_path,
@@ -1148,24 +1160,32 @@ static DBusMessage *incoming(DBusConnection *conn, DBusMessage *msg,
 	}
 
 	ret = telephony_is_registered(call_path);
-	if (!ret)
+	if (!ret) {
+		error("[%s] is not registered", call_path);
 		return telephony_error_reply(msg,  -ENOENT);
+	}
 
-	/*Check in the active call list, if any of the call_path exists if not don't allow
-	the call since it is initated by other applicatoin*/
+	/*Check in the active call list, if any of the call_path exists
+	if not don't allow the call since it is initated by other applicatoin*/
 
 	ret = telephony_is_call_allowed(call_path);
-	if (!ret)
+	if (!ret){
+		error("call is not allowed");
 		return telephony_error_reply(msg,  -ENOENT);
 
+	}
 
 	call = create_call(msg, call_path, number, call_id, sender);
 
-	DBG("Incoming call to %s from number %s call id %d", call_path, number, call_id);
-	ret = telephony_update_indicator(telephony_ag_indicators, "callsetup",
-					EV_CALLSETUP_INCOMING);
-	if (ret)
-		return telephony_error_reply(msg, ret);
+	DBG("Incoming call to %s from number %s call id %d", call_path,
+							number, call_id);
+
+	if (events_enabled) {
+		ret = telephony_update_indicator(telephony_ag_indicators,
+				"callsetup", EV_CALLSETUP_INCOMING);
+		if (ret)
+			error("telephony_update_indicator failed");
+	}
 
 	if (find_call_with_status(CSD_CALL_STATUS_ACTIVE) ||
 			find_call_with_status(CSD_CALL_STATUS_HOLD)) {
@@ -1183,7 +1203,7 @@ static DBusMessage *incoming(DBusConnection *conn, DBusMessage *msg,
 
 		call_set_status(call, CSD_CALL_STATUS_COMING);
 	}
-	DBG("-\n");
+	DBG("-");
 	return dbus_message_new_method_return(msg);
 }
 
@@ -1196,8 +1216,8 @@ static DBusMessage *outgoing(DBusConnection *conn, DBusMessage *msg,
 	uint32_t call_id;
 	int ret;
 
-	DBG("+\n");
-	DBG("telephony_outgoing_call()\n");
+	DBG("+");
+	DBG("telephony_outgoing_call()");
 
 	if (!dbus_message_get_args(msg, NULL,
 					DBUS_TYPE_STRING, &call_path,
@@ -1209,15 +1229,19 @@ static DBusMessage *outgoing(DBusConnection *conn, DBusMessage *msg,
 	}
 
 	ret = telephony_is_registered(call_path);
-	if (!ret)
+	if (!ret) {
+		error("[%s] is not registered", call_path);
 		return telephony_error_reply(msg, -ENOENT);
+	}
 
 	/*Check in the active call list, if any of the call_path exists if not don't allow
 	the call since it is initated by other applicatoin*/
 
 	ret = telephony_is_call_allowed(call_path);
-	if (!ret)
+	if (!ret) {
+		error("call is not allowed");
 		return telephony_error_reply(msg, -ENOENT);
+	}
 
 	call = create_call(msg, call_path, number, call_id, sender);
 
@@ -1230,7 +1254,7 @@ static DBusMessage *outgoing(DBusConnection *conn, DBusMessage *msg,
 	if (ret)
 		return telephony_error_reply(msg, ret);
 
-	DBG("-\n");
+	DBG("-");
 	return dbus_message_new_method_return(msg);
 }
 
@@ -1243,7 +1267,7 @@ static DBusMessage *set_call_status(DBusConnection *conn, DBusMessage *msg,
 	const char *sender;
 	int ret;
 
-	DBG("+\n");
+	DBG("+");
 
 	if (!dbus_message_get_args(msg, NULL,
 					DBUS_TYPE_STRING, &call_path,
@@ -1260,14 +1284,18 @@ static DBusMessage *set_call_status(DBusConnection *conn, DBusMessage *msg,
 	}
 
 	ret = telephony_is_registered(call_path);
-	if (!ret)
+	if (!ret) {
+		error("[%s] is not registered", call_path);
 		return telephony_error_reply(msg, -ENOENT);
+	}
 
 	ret = telephony_is_call_allowed(call_path);
-	if (!ret)
+	if (!ret) {
+		error("call is not allowed");
 		return telephony_error_reply(msg, -ENOENT);
+	}
 
-	DBG("status = [%d] and call_id = [%d] \n", status, call_id);
+	DBG("status = [%d] and call_id = [%d] ", status, call_id);
 
 	call = find_call_with_id(call_id);
 	if (!call) {
@@ -1280,7 +1308,7 @@ static DBusMessage *set_call_status(DBusConnection *conn, DBusMessage *msg,
 		call = create_call(msg, call_path, NULL, call_id, sender);
 	}
 	call_set_status(call, status);
-	DBG("-\n");
+	DBG("-");
 	return dbus_message_new_method_return(msg);
 }
 
@@ -1292,7 +1320,7 @@ static DBusMessage *register_telephony_agent(DBusConnection *conn, DBusMessage *
 	const char *path;
 	int ret;
 
-	DBG("+\n");
+	DBG("+");
 
 	if (!dbus_message_get_args(msg, NULL,
 					DBUS_TYPE_BOOLEAN, &flag,
@@ -1303,9 +1331,9 @@ static DBusMessage *register_telephony_agent(DBusConnection *conn, DBusMessage *
 		return btd_error_invalid_args(msg);
 	}
 
-	DBG("flag = %d \n", flag);
-	DBG("Sender = %s \n", sender);
-	DBG("path = %s \n", path);
+	DBG("flag = %d ", flag);
+	DBG("Sender = %s ", sender);
+	DBG("path = %s ", path);
 
 	if (flag)
 		ret = telephony_add_to_sender_list(sender, path);
@@ -1315,7 +1343,7 @@ static DBusMessage *register_telephony_agent(DBusConnection *conn, DBusMessage *
 	if (ret)
 		return telephony_error_reply(msg, ret);
 
-	DBG("-\n");
+	DBG("-");
 
 	return dbus_message_new_method_return(msg);
 }
@@ -1425,10 +1453,10 @@ static GDBusMethodTable telephony_methods[] = {
 
 static void path_unregister(void *data)
 {
-	DBG("+\n");
+	DBG("+");
 	g_dbus_unregister_interface(ag_connection, TELEPHONY_CSD_OBJECT_PATH,
 					TELEPHONY_CSD_INTERFACE);
-	DBG("-\n");
+	DBG("-");
 }
 
 /*API's that shall be ported*/
@@ -1438,7 +1466,8 @@ int telephony_init(void)
 				AG_FEATURE_REJECT_A_CALL |
 				AG_FEATURE_ENHANCED_CALL_STATUS |
 				AG_FEATURE_THREE_WAY_CALLING |
-				AG_FEATURE_VOICE_RECOGNITION;
+				AG_FEATURE_VOICE_RECOGNITION |
+				AG_FEATURE_EXTENDED_ERROR_RESULT_CODES;
 	int i;
 
 	DBG("");
@@ -1511,14 +1540,30 @@ void telephony_reset_indicators(void)
 
 void telephony_device_connected(void *telephony_device)
 {
+	gboolean enable = TRUE;
+
 	DBG("telephony-tizen: device %p connected", telephony_device);
+
+	/* Send status as TRUE so that AG will turn on NREC */
+	dbus_method_call_send(HFP_AGENT_SERVICE, HFP_AGENT_PATH,
+				HFP_AGENT_INTERFACE, "ConnectionStatus", NULL,
+				NULL, DBUS_TYPE_BOOLEAN, &enable,
+				DBUS_TYPE_INVALID);
 }
 
 void telephony_device_disconnected(void *telephony_device)
 {
+	gboolean enable = FALSE;
+
 	DBG("telephony-tizen: device %p disconnected", telephony_device);
 	events_enabled = FALSE;
 	telephony_reset_indicators();
+
+	/* Send status as TRUE so that AG will turn on NREC */
+	dbus_method_call_send(HFP_AGENT_SERVICE, HFP_AGENT_PATH,
+				HFP_AGENT_INTERFACE, "ConnectionStatus", NULL,
+				NULL, DBUS_TYPE_BOOLEAN, &enable,
+				DBUS_TYPE_INVALID);
 }
 
 void telephony_event_reporting_req(void *telephony_device, int ind)
@@ -1608,7 +1653,7 @@ void telephony_terminate_call_req(void *telephony_device)
 	struct csd_call *alerting;
 	int err;
 
-	DBG("+\n");
+	DBG("+");
 
 	call = find_call_with_status(CSD_CALL_STATUS_ACTIVE);
 	if (!call)
@@ -1639,7 +1684,7 @@ void telephony_terminate_call_req(void *telephony_device)
 						CME_ERROR_AG_FAILURE);
 	else
 		telephony_terminate_call_rsp(telephony_device, CME_ERROR_NONE);
-	DBG("-\n");
+	DBG("-");
 
 }
 
@@ -1673,7 +1718,7 @@ void telephony_answer_call_req(void *telephony_device)
 
 void telephony_key_press_req(void *telephony_device, const char *keys)
 {
-	struct csd_call *active, *waiting;
+	struct csd_call *active, *waiting, *alerting;
 	int err;
 
 	DBG("telephony-tizen: got key press request for %s", keys);
@@ -1686,8 +1731,14 @@ void telephony_key_press_req(void *telephony_device, const char *keys)
 
 	active = find_call_with_status(CSD_CALL_STATUS_ACTIVE);
 
+	alerting = find_call_with_status(CSD_CALL_STATUS_CREATE);
+	if (!alerting)
+		alerting = find_call_with_status(CSD_CALL_STATUS_MO_ALERTING);
+
 	if (waiting)
 		err = answer_call(waiting);
+	else if (alerting)
+		err = reject_call(alerting);
 	else if (active)
 		err = release_call(active);
 	else {
@@ -1733,7 +1784,7 @@ void telephony_transmit_dtmf_req(void *telephony_device, char tone)
 						CSD_CALL_STATUS_HOLD)))
 			if (NULL == (call = find_call_with_status(
 						CSD_CALL_STATUS_WAITING))) {
-				DBG("No Onging Call \n");
+				DBG("No Onging Call ");
 				telephony_transmit_dtmf_rsp(telephony_device,
 						CME_ERROR_AG_FAILURE);
 				return;
@@ -1839,7 +1890,7 @@ static void telephony_operator_reply(DBusPendingCall *call, void *telephony_devi
 	DBusError derr;
 	const gchar *operator_name;
 
-	DBG("telephony_operator_reply\n");
+	DBG("telephony_operator_reply");
 
 	dbus_error_init(&derr);
 	if (dbus_set_error_from_message(&derr, reply)) {
@@ -1896,22 +1947,40 @@ void telephony_nr_and_ec_req(void *telephony_device, gboolean enable)
 	telephony_nr_and_ec_rsp(telephony_device, CME_ERROR_NONE);
 }
 
+static void telephony_voice_dial_reply(DBusPendingCall *call, void *data)
+{
+	DBusMessage *reply = dbus_pending_call_steal_reply(call);
+	DBusError derr;
+
+	dbus_error_init(&derr);
+	if (dbus_set_error_from_message(&derr, reply)) {
+		DBG("Voice dial reply: %s", derr.message);
+		dbus_error_free(&derr);
+		telephony_voice_dial_rsp(data, CME_ERROR_AG_FAILURE);
+		dbus_message_unref(reply);
+		return;
+	}
+
+	DBG("Voice dial reply: cmd is valid");
+	telephony_voice_dial_rsp(data, CME_ERROR_NONE);
+	dbus_message_unref(reply);
+}
+
 void telephony_voice_dial_req(void *telephony_device, gboolean enable)
 {
+	int err = 0;
 
 	DBG("telephony-tizen: got %s voice dial request",
 				enable ? "enable" : "disable");
 
-	if (0 != dbus_method_call_send(HFP_AGENT_SERVICE, HFP_AGENT_PATH,
+	err = dbus_method_call_send(HFP_AGENT_SERVICE, HFP_AGENT_PATH,
 				HFP_AGENT_INTERFACE, "VoiceDial",
-				NULL, NULL, DBUS_TYPE_BOOLEAN, &enable,
-				DBUS_TYPE_INVALID)) {
+				telephony_voice_dial_reply, telephony_device,
+				DBUS_TYPE_BOOLEAN, &enable,
+				DBUS_TYPE_INVALID);
+	if (err)
 		telephony_voice_dial_rsp(telephony_device,
 						CME_ERROR_AG_FAILURE);
-		return;
-	}
-
-	telephony_voice_dial_rsp(telephony_device, CME_ERROR_NONE);
 }
 
 void telephony_subscriber_number_req(void *telephony_device)
@@ -1948,7 +2017,7 @@ void telephony_set_indicators_activation(void *telephony_device, const char *cmd
 			} else if (*str == '1') {
 				telephony_ag_indicators[i].activation_status = TRUE;
 			} else {
-				DBG("No change in activation_status for [%s]\n",
+				DBG("No change in activation_status for [%s]",
 					telephony_ag_indicators[i].desc);
 			}
 		}
@@ -1985,61 +2054,6 @@ static char *get_supported_list(const char *list[], unsigned int size)
 	g_string_append(str, ")");
 
 	return g_string_free(str, FALSE);
-}
-
-static int convert_utf8_gsm(uint8_t ascii, uint8_t utf_8, uint8_t *gsm)
-{
-	uint32_t i;
-
-	if (ascii == 0xC3) {
-		for (i = 0; i < GSM_UNI_MAX_C3 ; i++) {
-			if (gsm_unicode_C3[i].utf_8 == utf_8) {
-				*gsm = gsm_unicode_C3[i].gsm;
-				return 0;
-			}
-		}
-	} else if (ascii == 0xCE) {
-		for (i = 0; i < GSM_UNI_MAX_CE ; i++) {
-			if (gsm_unicode_CE[i].utf_8 == utf_8) {
-				*gsm = gsm_unicode_CE[i].gsm;
-				return 0;
-			}
-		}
-	}
-
-	return 1;
-}
-
-static void get_unicode_string(const char *name, char *unicodename)
-{
-	if (NULL != name && NULL != unicodename) {
-		int len = strlen(name);
-		int x, y;
-
-		if (len == 0)
-			return;
-
-		if (len > PHONEBOOK_MAX_CHARACTER_LENGTH)
-			len = PHONEBOOK_MAX_CHARACTER_LENGTH;
-
-		for (x = 0, y = 0 ; x < len ; x++, y++) {
-			if (x < (len - 1)) {
-				if (convert_utf8_gsm(name[x], name[x+1],
-						(uint8_t *)&unicodename[y])) {
-					x++;
-					continue;
-				}
-			}
-
-			if (name[x] == '_') {
-				 unicodename[y] = ' ';
-				 continue;
-			}
-
-			unicodename[y] = name[x];
-		}
-	}
-	return;
 }
 
 static int get_phonebook_count(const char *path, uint32_t *max_size,
@@ -2091,9 +2105,9 @@ static int get_phonebook_count(const char *path, uint32_t *max_size,
 	if (!dbus_message_get_args(reply, &error,
 				DBUS_TYPE_UINT32, &size,
 				DBUS_TYPE_INVALID)) {
-		DBG("Can't get reply arguments\n");
+		DBG("Can't get reply arguments");
 		if (dbus_error_is_set(&error)) {
-			DBG("%s\n", error.message);
+			DBG("%s", error.message);
 			dbus_error_free(&error);
 		}
 		dbus_message_unref(reply);
@@ -2324,7 +2338,7 @@ void telephony_select_phonebook_memory_status(void *telephony_device)
 	cme_error_t err = CME_ERROR_NONE;
 
 
-	DBG("telephony-tizen: telephony_read_phonebook_store\n");
+	DBG("telephony-tizen: telephony_read_phonebook_store");
 
 	if (path_id < 0 || path_id >= PHONEBOOK_STORE_LIST_SIZE)
 		path_id = 0;
@@ -2350,7 +2364,7 @@ void telephony_select_phonebook_memory_list(void *telephony_device)
 	str = get_supported_list(phonebook_store_list,
 			PHONEBOOK_STORE_LIST_SIZE);
 
-	DBG("telephony-tizen: telephony_select_phonebook_memory_list %d :%s\n",
+	DBG("telephony-tizen: telephony_select_phonebook_memory_list %d :%s",
 			PHONEBOOK_STORE_LIST_SIZE, str);
 
 	telephony_select_phonebook_memory_list_rsp(telephony_device,
@@ -2365,8 +2379,8 @@ void telephony_select_phonebook_memory(void *telephony_device, const gchar *path
 	int i = 0;
 	cme_error_t err;
 
-	DBG("telephony-tizen: telephony_select_phonebook_memory\n");
-	DBG("set phonebook type to [%s]\n", path);
+	DBG("telephony-tizen: telephony_select_phonebook_memory");
+	DBG("set phonebook type to [%s]", path);
 
 	while (i < PHONEBOOK_STORE_LIST_SIZE) {
 		if (strcmp(phonebook_store_list[i], path) == 0)
@@ -2391,7 +2405,7 @@ void telephony_read_phonebook_entries_list(void *telephony_device)
 	int32_t path_id = ag_pb_info.path_id;
 	uint32_t used;
 
-	DBG("telephony-tizen: telephony_read_phonebook_entries_list\n");
+	DBG("telephony-tizen: telephony_read_phonebook_entries_list");
 
 	if (path_id < 0 || path_id >= PHONEBOOK_STORE_LIST_SIZE)
 		err = CME_ERROR_INVALID_INDEX;
@@ -2419,7 +2433,7 @@ void telephony_read_phonebook_entries(void *telephony_device, const char *cmd)
 
 	cme_error_t err;
 
-	DBG("telephony-tizen: telephony_read_phonebook_entries\n");
+	DBG("telephony-tizen: telephony_read_phonebook_entries");
 
 	if (cmd == NULL)
 		return;
@@ -2467,7 +2481,7 @@ void telephony_find_phonebook_entries(void *telephony_device, const char *cmd)
 
 	cme_error_t err = CME_ERROR_NONE;
 
-	DBG("telephony-tizen: telephony_find_phonebook_entry\n");
+	DBG("telephony-tizen: telephony_find_phonebook_entry");
 
 	/* remove quote and compress */
 	st = strchr(cmd, '"');
@@ -2493,7 +2507,7 @@ void telephony_find_phonebook_entries(void *telephony_device, const char *cmd)
 
 void telephony_get_preffered_store_capacity(void *telephony_device)
 {
-	DBG("telephony-tizen: telephony_list_preffered_store_capcity\n");
+	DBG("telephony-tizen: telephony_list_preffered_store_capcity");
 
 	telephony_get_preffered_store_capacity_rsp(telephony_device,
 			PREFFERED_MESSAGE_STORAGE_MAX,
@@ -2502,7 +2516,7 @@ void telephony_get_preffered_store_capacity(void *telephony_device)
 
 void telephony_list_preffered_store(void *telephony_device)
 {
-	DBG("telephony-tizen: telephony_list_preffered_store_capcity\n");
+	DBG("telephony-tizen: telephony_list_preffered_store_capcity");
 
 	telephony_list_preffered_store_rsp(telephony_device,
 			PREFFERED_MESSAGE_STORAGE_LIST,
@@ -2517,7 +2531,7 @@ void telephony_set_preffered_store_capcity(void *telephony_device, const char *c
 
 void telephony_get_character_set(void *telephony_device)
 {
-	DBG("telephony-tizen: telephony_get_character_set\n");
+	DBG("telephony-tizen: telephony_get_character_set");
 
 	telephony_supported_character_generic_rsp(telephony_device,
 			(char *)character_set_list[ag_pb_info.charset_id],
@@ -2532,7 +2546,7 @@ void telephony_list_supported_character(void *telephony_device)
 	str = get_supported_list(character_set_list,
 			CHARACTER_SET_LIST_SIZE);
 
-	DBG("telephony-tizen: telephony_list_supported_character_set %d :%s\n",
+	DBG("telephony-tizen: telephony_list_supported_character_set %d :%s",
 			CHARACTER_SET_LIST_SIZE, str);
 
 	telephony_supported_character_generic_rsp(telephony_device,
@@ -2543,7 +2557,7 @@ void telephony_list_supported_character(void *telephony_device)
 
 void telephony_set_characterset(void *telephony_device, const char *cmd)
 {
-	DBG("telephony-tizen: telephony_set_characterset [%s]\n", cmd);
+	DBG("telephony-tizen: telephony_set_characterset [%s]", cmd);
 
 	int i = 0;
 
@@ -2603,7 +2617,7 @@ done:
 
 void telephony_get_battery_property(void *telephony_device)
 {
-	DBG("telephony-tizen: telephony_get_battery_property\n");
+	DBG("telephony-tizen: telephony_get_battery_property");
 
 	if (0 != dbus_method_call_send(HFP_AGENT_SERVICE, HFP_AGENT_PATH,
 				HFP_AGENT_INTERFACE, "GetBatteryStatus",
@@ -2653,7 +2667,7 @@ done:
 
 void telephony_get_signal_quality(void *telephony_device)
 {
-	DBG("telephony-tizen: telephony_get_signal_quality\n");
+	DBG("telephony-tizen: telephony_get_signal_quality");
 
 	if (0 != dbus_method_call_send(HFP_AGENT_SERVICE, HFP_AGENT_PATH,
 				HFP_AGENT_INTERFACE, "GetSignalQuality",

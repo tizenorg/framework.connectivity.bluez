@@ -182,6 +182,7 @@ static uint32_t company_ids[] = {
 
 static void register_volume_notification(struct avrcp_player *player);
 
+#ifndef __TIZEN_PATCH__
 static sdp_record_t *avrcp_ct_record(void)
 {
 	sdp_list_t *svclass_id, *pfseq, *apseq, *root;
@@ -249,6 +250,7 @@ static sdp_record_t *avrcp_ct_record(void)
 
 	return record;
 }
+#endif
 
 static sdp_record_t *avrcp_tg_record(void)
 {
@@ -260,7 +262,7 @@ static sdp_record_t *avrcp_tg_record(void)
 	sdp_data_t *psm, *version, *features;
 	uint16_t lp = AVCTP_PSM;
 #ifdef __TIZEN_PATCH__
-	uint16_t avrcp_ver = 0x0103, avctp_ver = 0x0103;
+	uint16_t avrcp_ver = 0x0103, avctp_ver = 0x0104;
 #else
 	uint16_t avrcp_ver = 0x0104, avctp_ver = 0x0103;
 #endif
@@ -333,9 +335,17 @@ static unsigned int attr_get_max_val(uint8_t attr)
 	case AVRCP_ATTRIBUTE_EQUALIZER:
 		return AVRCP_EQUALIZER_ON;
 	case AVRCP_ATTRIBUTE_REPEAT_MODE:
+#ifdef __TIZEN_PATCH__
+		return AVRCP_REPEAT_MODE_ALL;
+#else
 		return AVRCP_REPEAT_MODE_GROUP;
+#endif
 	case AVRCP_ATTRIBUTE_SHUFFLE:
+#ifdef __TIZEN_PATCH__
+		return AVRCP_SHUFFLE_ALL;
+#else
 		return AVRCP_SHUFFLE_GROUP;
+#endif
 	case AVRCP_ATTRIBUTE_SCAN:
 		return AVRCP_SCAN_GROUP;
 	}
@@ -383,6 +393,22 @@ static void set_company_id(uint8_t cid[3], const uint32_t cid_in)
 	cid[2] = cid_in;
 }
 
+static int player_get_attribute(struct avrcp_player *player, uint8_t attr)
+{
+	int value;
+
+	DBG("attr %u", attr);
+
+	if (player == NULL)
+		return -ENOENT;
+
+	value = player->cb->get_setting(attr, player->user_data);
+	if (value < 0)
+		DBG("attr %u not supported by player", attr);
+
+	return value;
+}
+
 int avrcp_player_event(struct avrcp_player *player, uint8_t id, void *data)
 {
 	uint8_t buf[AVRCP_HEADER_LENGTH + 9];
@@ -419,6 +445,17 @@ int avrcp_player_event(struct avrcp_player *player, uint8_t id, void *data)
 	case AVRCP_EVENT_TRACK_REACHED_END:
 	case AVRCP_EVENT_TRACK_REACHED_START:
 		size = 1;
+		break;
+	case AVRCP_EVENT_SETTINGS_CHANGED:
+		size = 2;
+		pdu->params[1] = 1;
+		uint8_t attr = GPOINTER_TO_UINT(data);
+		int val = player_get_attribute(player, attr);
+		if (val < 0)
+			return -EINVAL;
+
+		pdu->params[size++] = attr;
+		pdu->params[size++] = val;
 		break;
 	default:
 		error("Unknown event %u", id);
@@ -553,19 +590,6 @@ static int player_set_attribute(struct avrcp_player *player,
 	return player->cb->set_setting(attr, val, player->user_data);
 }
 
-static int player_get_attribute(struct avrcp_player *player, uint8_t attr)
-{
-	int value;
-
-	DBG("attr %u", attr);
-
-	value = player->cb->get_setting(attr, player->user_data);
-	if (value < 0)
-		DBG("attr %u not supported by player", attr);
-
-	return value;
-}
-
 static uint8_t avrcp_handle_get_capabilities(struct avrcp_player *player,
 						struct avrcp_header *pdu,
 						uint8_t transaction)
@@ -590,11 +614,12 @@ static uint8_t avrcp_handle_get_capabilities(struct avrcp_player *player,
 
 		return AVC_CTYPE_STABLE;
 	case CAP_EVENTS_SUPPORTED:
-		pdu->params[1] = 4;
+		pdu->params[1] = 5;
 		pdu->params[2] = AVRCP_EVENT_STATUS_CHANGED;
 		pdu->params[3] = AVRCP_EVENT_TRACK_CHANGED;
 		pdu->params[4] = AVRCP_EVENT_TRACK_REACHED_START;
 		pdu->params[5] = AVRCP_EVENT_TRACK_REACHED_END;
+		pdu->params[6] = AVRCP_EVENT_SETTINGS_CHANGED;
 
 		pdu->params_len = htons(2 + pdu->params[1]);
 		return AVC_CTYPE_STABLE;
@@ -918,6 +943,7 @@ static uint8_t avrcp_handle_register_notification(struct avrcp_player *player,
 {
 	uint16_t len = ntohs(pdu->params_len);
 	uint64_t uid;
+	GList *settings;
 
 	/*
 	 * 1 byte for EventID, 4 bytes for Playback interval but the latest
@@ -942,6 +968,22 @@ static uint8_t avrcp_handle_register_notification(struct avrcp_player *player,
 	case AVRCP_EVENT_TRACK_REACHED_END:
 	case AVRCP_EVENT_TRACK_REACHED_START:
 		len = 1;
+		break;
+	case AVRCP_EVENT_SETTINGS_CHANGED:
+		len = 1;
+		settings =  player->cb->list_settings(player->user_data);
+		pdu->params[len++] = g_list_length(settings);
+		for (; settings; settings = settings->next) {
+			uint8_t attr = GPOINTER_TO_UINT(settings->data);
+			int val;
+
+			val = player_get_attribute(player, attr);
+			if (val < 0)
+				continue;
+
+			pdu->params[len++] = attr;
+			pdu->params[len++] = val;
+		}
 		break;
 	default:
 		/* All other events are not supported yet */
@@ -994,11 +1036,9 @@ static uint8_t avrcp_handle_request_continuing(struct avrcp_player *player,
 	}
 
 	pdu->params_len = htons(len);
-#ifdef __TIZEN_PATCH__
-	return AVC_CTYPE_ACCEPTED;
-#else
+
 	return AVC_CTYPE_STABLE;
-#endif
+
 err:
 	pdu->params_len = htons(1);
 	pdu->params[0] = E_INVALID_PARAM;

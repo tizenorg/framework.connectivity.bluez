@@ -276,6 +276,21 @@ void btd_event_device_found(bdaddr_t *local, bdaddr_t *peer, uint8_t bdaddr_type
 						confirm_name, data, data_len);
 }
 
+#ifdef __TIZEN_PATCH__
+void btd_event_device_rssi(bdaddr_t *local, bdaddr_t *peer, int8_t rssi)
+{
+	struct btd_adapter *adapter;
+	struct btd_device *device;
+	DBusConnection *conn = get_dbus_connection();
+
+	if (!get_adapter_and_device(local, peer, &adapter, &device, FALSE)) {
+		return;
+	}
+
+	device_rssi_cb(conn, device, rssi);
+}
+#endif
+
 void btd_event_set_legacy_pairing(bdaddr_t *local, bdaddr_t *peer,
 							gboolean legacy)
 {

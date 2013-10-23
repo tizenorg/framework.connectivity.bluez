@@ -132,6 +132,11 @@ struct a2dp_endpoint {
 	size_t (*get_capabilities) (struct a2dp_sep *sep,
 						uint8_t **capabilities,
 						void *user_data);
+#ifdef __BT_SCMST_FEATURE__
+	size_t (*get_contect_protection_capabilites) (struct a2dp_sep *sep,
+					uint8_t **content_protection_caps,
+					void *user_data);
+#endif
 	int (*select_configuration) (struct a2dp_sep *sep,
 						uint8_t *capabilities,
 						size_t length,

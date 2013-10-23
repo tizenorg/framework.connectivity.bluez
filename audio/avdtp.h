@@ -94,6 +94,14 @@ struct avdtp_service_capability {
 	uint8_t data[0];
 } __attribute__ ((packed));
 
+#ifdef __BT_SCMST_FEATURE__
+struct avdtp_cp_cap {
+        uint8_t cp_type_lsb;
+        uint8_t cp_type_msb;
+        uint8_t data[0];
+} __attribute__ ((packed));
+#endif
+
 #if __BYTE_ORDER == __LITTLE_ENDIAN
 
 struct avdtp_media_codec_capability {
@@ -232,6 +240,12 @@ uint8_t avdtp_get_type(struct avdtp_remote_sep *sep);
 
 struct avdtp_service_capability *avdtp_get_codec(struct avdtp_remote_sep *sep);
 
+#ifdef __BT_SCMST_FEATURE__
+struct avdtp_service_capability *avdtp_get_protection_cap(struct avdtp_stream *stream);
+
+struct avdtp_service_capability *avdtp_get_remote_sep_protection_cap(struct avdtp_remote_sep *sep);
+#endif
+
 gboolean avdtp_get_delay_reporting(struct avdtp_remote_sep *sep);
 
 struct avdtp_stream *avdtp_get_stream(struct avdtp_remote_sep *sep);
@@ -240,6 +254,12 @@ int avdtp_discover(struct avdtp *session, avdtp_discover_cb_t cb,
 			void *user_data);
 
 gboolean avdtp_has_stream(struct avdtp *session, struct avdtp_stream *stream);
+
+#ifdef __TIZEN_PATCH__
+void finalize_discovery(struct avdtp *session, int err);
+#else
+static void finalize_discovery(struct avdtp *session, int err);
+#endif
 
 unsigned int avdtp_stream_add_cb(struct avdtp *session,
 					struct avdtp_stream *stream,

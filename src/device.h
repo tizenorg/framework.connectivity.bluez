@@ -126,3 +126,6 @@ int device_unblock(DBusConnection *conn, struct btd_device *device,
 void device_set_pnpid(struct btd_device *device, uint8_t vendor_id_src,
 			uint16_t vendor_id, uint16_t product_id,
 			uint16_t product_ver);
+#ifdef __TIZEN_PATCH__
+void device_rssi_cb(DBusConnection *conn, struct btd_device *device, int8_t rssi);
+#endif

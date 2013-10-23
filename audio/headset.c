@@ -1478,31 +1478,6 @@ int telephony_get_preffered_store_capacity_rsp(void *telephony_device,
 	return headset_send(hs, "\r\nOK\r\n");
 }
 
-static int preffered_message_storage(struct audio_device *device, const char *buf)
-{
-	struct headset *hs = device->headset;
-
-	if (NULL != buf) {
-		if (strlen(buf) < 9)
-			return -EINVAL;
-
-		if (buf[7] == '?') {
-			telephony_get_preffered_store_capacity(device);
-			return 0;
-		}
-
-		if (buf[8] == '=') {
-			if (buf[9] == '?') {
-				telephony_list_preffered_store(device);
-			} else {
-				/* telephony_set_preffered_store_capcity(device, &buf[9]); */
-				return headset_send(hs, "\r\nOK\r\n");
-			}
-		}
-	}
-	return 0;
-}
-
 int telephony_supported_character_generic_rsp(void *telephony_device,
 						char *character_set_list,
 						cme_error_t err)
@@ -1858,7 +1833,12 @@ void headset_connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 	DBG("%s: Connected to %s", dev->path, hs_address);
 
 	hs->slc = g_new0(struct headset_slc, 1);
+
+#ifdef __TIZEN_PATCH__
+	hs->slc->sp_gain = 7;
+#else
 	hs->slc->sp_gain = 15;
+#endif
 	hs->slc->mic_gain = 15;
 	hs->slc->nrec = TRUE;
 
@@ -3108,11 +3088,12 @@ void headset_set_state(struct audio_device *dev, headset_state_t state)
 		emit_property_changed(dev->conn, dev->path,
 					AUDIO_HEADSET_INTERFACE, "Playing",
 					DBUS_TYPE_BOOLEAN, &value);
-
+#ifndef __TIZEN_PATCH__
 		if (slc->sp_gain >= 0)
 			headset_send(hs, "\r\n+VGS=%u\r\n", slc->sp_gain);
 		if (slc->mic_gain >= 0)
 			headset_send(hs, "\r\n+VGM=%u\r\n", slc->mic_gain);
+#endif
 		break;
 	}
 

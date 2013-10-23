@@ -314,6 +314,20 @@ struct mgmt_cp_set_device_id {
 	uint16_t version;
 } __packed;
 
+#ifdef __TIZEN_PATCH__
+#define MGMT_OP_READ_RSSI	0x0029
+struct mgmt_cp_read_rssi {
+	bdaddr_t bdaddr;
+} __packed;
+
+struct mgmt_rp_read_rssi {
+	uint8_t status;
+	bdaddr_t bdaddr;
+	int8_t rssi;
+} __packed;
+
+#endif
+
 #define MGMT_EV_CMD_COMPLETE		0x0001
 struct mgmt_ev_cmd_complete {
 	uint16_t opcode;

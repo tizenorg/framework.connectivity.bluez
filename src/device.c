@@ -171,6 +171,10 @@ struct btd_device {
 
 	GIOChannel      *att_io;
 	guint		cleanup_id;
+#ifdef __TIZEN_PATCH__
+	guint	attio_id;
+	gboolean	gatt_connected;
+#endif
 };
 
 static uint16_t uuid_list[] = {
@@ -879,6 +883,130 @@ static DBusMessage *disconnect(DBusConnection *conn, DBusMessage *msg,
 	return NULL;
 }
 
+static void attio_connected(gpointer data, gpointer user_data)
+{
+	struct attio_data *attio = data;
+	GAttrib *attrib = user_data;
+
+	if (attio->cfunc)
+		attio->cfunc(attrib, attio->user_data);
+}
+
+static void attio_disconnected(gpointer data, gpointer user_data)
+{
+	struct attio_data *attio = data;
+
+	if (attio->dcfunc)
+		attio->dcfunc(attio->user_data);
+}
+
+#ifdef __TIZEN_PATCH__
+static void gatt_connected_cb(GAttrib *attrib, gpointer user_data)
+{
+	DBusConnection *conn = get_dbus_connection();
+	struct btd_device *device = user_data;
+
+	device->gatt_connected = TRUE;
+
+	emit_property_changed(conn, device->path,
+		DEVICE_INTERFACE, "GattConnected",
+		DBUS_TYPE_BOOLEAN, &device->gatt_connected);
+}
+
+static void gatt_disconnected_cb(gpointer user_data)
+{
+	DBusConnection *conn = get_dbus_connection();
+	struct btd_device *device = user_data;
+
+	btd_device_remove_attio_callback(device, device->attio_id);
+
+	device->gatt_connected = FALSE;
+
+	emit_property_changed(conn, device->path,
+			DEVICE_INTERFACE, "GattDisconnected",
+			DBUS_TYPE_BOOLEAN, &device->gatt_connected);
+}
+
+static DBusMessage *connect_le(DBusConnection *conn, DBusMessage *msg,
+							void *user_data)
+{
+	struct btd_device *device = user_data;
+
+	if (!device_is_le(device))
+		return btd_error_not_supported(msg);
+
+	if (device->gatt_connected)
+		return btd_error_already_connected(msg);
+
+	device->auto_connect = FALSE;
+
+	if (device->att_io == NULL)
+		device->attio_id = btd_device_add_attio_callback(device,
+					gatt_connected_cb,
+					gatt_disconnected_cb,
+					device);
+
+	return dbus_message_new_method_return(msg);
+}
+
+static DBusMessage *disconnect_le(DBusConnection *conn, DBusMessage *msg,
+							void *user_data)
+{
+	struct btd_device *device = user_data;
+
+	if (!device_is_le(device))
+		return btd_error_not_supported(msg);
+
+	if(!device->gatt_connected)
+		return btd_error_not_connected(msg);
+
+	if (device->attrib) {
+		GIOChannel *io = g_attrib_get_channel(device->attrib);
+		if (io) {
+			if (device->attachid) {
+				attrib_channel_detach(device->attrib,
+					device->attachid);
+				device->attachid = 0;
+			}
+			g_io_channel_shutdown(io, FALSE, NULL);
+			g_io_channel_unref(io);
+			g_slist_foreach(device->attios,
+				attio_disconnected, NULL);
+		}
+	}
+
+	return dbus_message_new_method_return(msg);
+}
+
+void device_rssi_cb(DBusConnection *conn, struct btd_device *device, int8_t rssi)
+{
+	char addr[18];
+	dbus_int16_t rssi_value = rssi;
+	ba2str(&device->bdaddr, addr);
+
+	DBG("device addr %s, rssi %d", addr, rssi);
+
+	emit_property_changed(conn, device->path,
+				DEVICE_INTERFACE, "RSSI",
+				DBUS_TYPE_INT16, &rssi_value);
+
+	return 0;
+}
+
+static DBusMessage *read_rssi(DBusConnection *conn, DBusMessage *msg,
+							void *user_data)
+{
+	struct btd_device *device = user_data;
+
+	int status = btd_adapter_read_rssi(device->adapter, &device->bdaddr);
+	if (status != 0)
+		return btd_error_failed(msg, "Unable to read rssi");
+	else
+		return dbus_message_new_method_return(msg);
+}
+
+#endif
+
 static const GDBusMethodTable device_methods[] = {
 	{ GDBUS_METHOD("GetProperties",
 				NULL, GDBUS_ARGS({ "properties", "a{sv}" }),
@@ -892,6 +1020,11 @@ static const GDBusMethodTable device_methods[] = {
 			discover_services) },
 	{ GDBUS_METHOD("CancelDiscovery", NULL, NULL, cancel_discover) },
 	{ GDBUS_ASYNC_METHOD("Disconnect", NULL, NULL, disconnect) },
+#ifdef __TIZEN_PATCH__
+	{ GDBUS_METHOD("ConnectLE", NULL, NULL, connect_le) },
+	{ GDBUS_METHOD("DisconnectLE", NULL, NULL, disconnect_le) },
+	{ GDBUS_METHOD("ReadRSSI", NULL, NULL, read_rssi) },
+#endif
 	{ }
 };
 
@@ -1074,6 +1207,9 @@ struct btd_device *device_create(DBusConnection *conn,
 	str2ba(address, &device->bdaddr);
 	device->adapter = adapter;
 	device->bdaddr_type = bdaddr_type;
+#ifdef __TIZEN_PATCH__
+	device->gatt_connected = FALSE;
+#endif
 	adapter_get_address(adapter, &src);
 	ba2str(&src, srcaddr);
 	read_device_name(srcaddr, address, device->name);
@@ -1773,23 +1909,6 @@ static void store_services(struct btd_device *device)
 	write_device_services(&sba, &dba, device->bdaddr_type, str);
 
 	g_free(str);
-}
-
-static void attio_connected(gpointer data, gpointer user_data)
-{
-	struct attio_data *attio = data;
-	GAttrib *attrib = user_data;
-
-	if (attio->cfunc)
-		attio->cfunc(attrib, attio->user_data);
-}
-
-static void attio_disconnected(gpointer data, gpointer user_data)
-{
-	struct attio_data *attio = data;
-
-	if (attio->dcfunc)
-		attio->dcfunc(attio->user_data);
 }
 
 static void att_connect_dispatched(gpointer user_data)

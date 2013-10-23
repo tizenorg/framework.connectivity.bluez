@@ -647,6 +647,16 @@ static void endpoint_setconf_cb(struct a2dp_setup *setup, gboolean ret)
 		avdtp_error_init(setup->err, AVDTP_MEDIA_CODEC,
 					AVDTP_UNSUPPORTED_CONFIGURATION);
 	}
+#ifdef __BT_SCMST_FEATURE__
+	if (avdtp_get_protection_cap(setup->stream)) {
+		DBG("Recived Set congiuration for SCMS-T \n");
+		sink_set_protection(TRUE);
+	} else {
+		DBG("SCMS-T not supported\n");
+		sink_set_protection(FALSE);
+	}
+	sink_stream_protected(setup->dev);
+#endif
 
 	auto_config(setup);
 }
@@ -730,6 +740,12 @@ static gboolean endpoint_getcap_ind(struct avdtp *session,
 	struct avdtp_media_codec_capability *codec_caps;
 	uint8_t *capabilities;
 	size_t length;
+#ifdef __BT_SCMST_FEATURE__
+	struct avdtp_service_capability *media_content_protection;
+	struct avdtp_cp_cap content_protection;
+	uint8_t *cp_caps;
+	size_t cp_length;
+#endif
 
 	if (a2dp_sep->type == AVDTP_SEP_TYPE_SINK)
 		DBG("Sink %p: Get_Capability_Ind", sep);
@@ -757,6 +773,22 @@ static gboolean endpoint_getcap_ind(struct avdtp *session,
 	*caps = g_slist_append(*caps, media_codec);
 	g_free(codec_caps);
 
+#ifdef __BT_SCMST_FEATURE__
+	cp_length = a2dp_sep->endpoint->get_contect_protection_capabilites(
+							a2dp_sep, &cp_caps,
+							a2dp_sep->user_data);
+
+	if (cp_length) {
+		content_protection.cp_type_lsb = cp_caps[0] & 0xFF;
+		content_protection.cp_type_msb = cp_caps[1];
+
+		media_content_protection = avdtp_service_cap_new(
+						AVDTP_CONTENT_PROTECTION,
+						&content_protection, cp_length);
+
+		*caps = g_slist_append(*caps, media_content_protection);
+	}
+#endif
 	if (get_all) {
 		struct avdtp_service_capability *delay_reporting;
 		delay_reporting = avdtp_service_cap_new(AVDTP_DELAY_REPORTING,
@@ -1379,7 +1411,11 @@ static sdp_record_t *a2dp_record(uint8_t type, uint16_t avdtp_ver)
 	sdp_record_t *record;
 	sdp_data_t *psm, *version, *features;
 	uint16_t lp = AVDTP_UUID;
+#ifdef __TIZEN_PATCH__
+	uint16_t a2dp_ver = 0x0102, feat = 0x0001;
+#else
 	uint16_t a2dp_ver = 0x0102, feat = 0x000f;
+#endif
 
 	record = sdp_record_alloc();
 	if (!record)
@@ -1950,6 +1986,18 @@ static void select_cb(struct a2dp_setup *setup, void *ret, int size)
 	struct avdtp_service_capability *media_transport, *media_codec;
 	struct avdtp_media_codec_capability *cap;
 
+#ifdef __BT_SCMST_FEATURE__
+	struct a2dp_sep *a2dp_sep = setup->sep;
+	struct avdtp_service_capability *media_content_protection;
+	struct avdtp_service_capability *cp;
+
+	struct avdtp_cp_cap content_protection;
+	uint8_t *cp_caps;
+	size_t cp_length;
+
+	media_content_protection = avdtp_get_remote_sep_protection_cap(setup->rsep);
+#endif
+
 	if (size < 0) {
 		DBG("Endpoint replied an invalid configuration");
 		goto done;
@@ -1970,6 +2018,30 @@ static void select_cb(struct a2dp_setup *setup, void *ret, int size)
 
 	setup->caps = g_slist_append(setup->caps, media_codec);
 	g_free(cap);
+
+#ifdef __BT_SCMST_FEATURE__
+	cp_length = a2dp_sep->endpoint->get_contect_protection_capabilites(
+							a2dp_sep, &cp_caps,
+							a2dp_sep->user_data);
+	if (cp_length > 0) {
+		content_protection.cp_type_lsb = cp_caps[0] & 0xFF;
+		content_protection.cp_type_msb = cp_caps[1];
+	}
+
+	if (media_content_protection && cp_length > 0 &&
+		(memcmp(media_content_protection->data, cp_caps,
+							cp_length) == 0)) {
+		cp = avdtp_service_cap_new(AVDTP_CONTENT_PROTECTION,
+					&content_protection, cp_length);
+		setup->caps = g_slist_append(setup->caps, cp);
+
+		DBG("Select SCMS-T - TRUE");
+		sink_set_protection(TRUE);
+	} else {
+		DBG("Select SCMS-T - FALSE");
+		sink_set_protection(FALSE);
+	}
+#endif
 
 done:
 	finalize_select(setup);

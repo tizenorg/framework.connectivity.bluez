@@ -194,6 +194,10 @@ int bnep_if_up(const char *devname)
 	int sk, err;
 
 	sk = socket(AF_INET, SOCK_DGRAM, 0);
+#ifdef __TIZEN_PATCH__
+	if (sk < 0)
+		return -1;
+#endif
 
 	memset(&ifr, 0, sizeof(ifr));
 	strncpy(ifr.ifr_name, devname, IF_NAMESIZE - 1);
@@ -219,6 +223,10 @@ int bnep_if_down(const char *devname)
 	int sk, err;
 
 	sk = socket(AF_INET, SOCK_DGRAM, 0);
+#ifdef __TIZEN_PATCH__
+	if (sk < 0)
+		return -1;
+#endif
 
 	memset(&ifr, 0, sizeof(ifr));
 	strncpy(ifr.ifr_name, devname, IF_NAMESIZE - 1);

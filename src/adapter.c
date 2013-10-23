@@ -136,6 +136,9 @@ struct btd_adapter {
 	GSList *disc_sessions;		/* Discovery sessions */
 	guint discov_id;		/* Discovery timer */
 	gboolean discovering;		/* Discovery active */
+#ifdef __TIZEN_PATCH__
+	uint8_t discovery_type;		/* Discovery types */
+#endif
 	gboolean discov_suspended;	/* Discovery suspended */
 	guint auto_timeout_id;		/* Automatic connections timeout */
 	sdp_list_t *services;		/* Services associated to adapter */
@@ -996,6 +999,7 @@ struct btd_device *adapter_get_device(DBusConnection *conn,
 						BDADDR_BREDR);
 }
 
+#ifndef __TIZEN_PATCH__
 static gboolean discovery_cb(gpointer user_data)
 {
 	struct btd_adapter *adapter = user_data;
@@ -1009,6 +1013,7 @@ static gboolean discovery_cb(gpointer user_data)
 
 	return FALSE;
 }
+#endif
 
 static DBusMessage *adapter_start_discovery(DBusConnection *conn,
 						DBusMessage *msg, void *data)
@@ -1039,6 +1044,9 @@ static DBusMessage *adapter_start_discovery(DBusConnection *conn,
 	if (adapter->discov_suspended)
 		goto done;
 
+#ifdef __TIZEN_PATCH__
+	adapter->discovery_type = BT_DISC_TYPE_DEFAULT;
+#endif
 	err = adapter_ops->start_discovery(adapter->dev_id);
 	if (err < 0)
 		return btd_error_failed(msg, strerror(-err));
@@ -1051,6 +1059,70 @@ done:
 
 	return dbus_message_new_method_return(msg);
 }
+
+#ifdef __TIZEN_PATCH__
+static DBusMessage *adapter_start_custom_discovery(DBusConnection *conn,
+						DBusMessage *msg, void *data)
+{
+	struct session_req *req;
+	struct btd_adapter *adapter = data;
+	const char *sender = dbus_message_get_sender(msg);
+	int err;
+	const gchar *disc_type;
+
+	if (!dbus_message_get_args(msg, NULL, DBUS_TYPE_STRING, &disc_type,
+						DBUS_TYPE_INVALID)) {
+		DBG("Discovery Invalid args");
+		return btd_error_invalid_args(msg);
+	}
+
+	DBG("disc_type = %s", disc_type);
+
+	/*Valid strings: "BREDR", "LE", "LE_BREDR" */
+	if (g_strcmp0(disc_type, "BREDR") == 0)
+		adapter->discovery_type = BT_DISC_TYPE_BREDR_ONLY;
+	else if (g_strcmp0(disc_type, "LE") == 0)
+		adapter->discovery_type =  BT_DISC_TYPE_LE_ONLY;
+	else if (g_strcmp0(disc_type, "LE_BREDR") == 0)
+		adapter->discovery_type =  BT_DISC_TYPE_LE_BREDR;
+	else
+		return btd_error_invalid_args(msg);
+
+	if (!adapter->up)
+		return btd_error_not_ready(msg);
+
+	req = find_session(adapter->disc_sessions, sender);
+	if (req) {
+		session_ref(req);
+		return dbus_message_new_method_return(msg);
+	}
+
+	if (adapter->disc_sessions)
+		goto done;
+
+	g_slist_free_full(adapter->found_devices, dev_info_free);
+	adapter->found_devices = NULL;
+
+	g_slist_free(adapter->oor_devices);
+	adapter->oor_devices = NULL;
+
+	if (adapter->discov_suspended)
+		goto done;
+
+	err = adapter_ops->start_custom_discovery(adapter->dev_id,
+						adapter->discovery_type);
+	if (err < 0)
+		return btd_error_failed(msg, strerror(-err));
+
+done:
+	req = create_session(adapter, conn, msg, 0,
+				session_owner_exit);
+
+	adapter->disc_sessions = g_slist_append(adapter->disc_sessions, req);
+
+	return dbus_message_new_method_return(msg);
+}
+#endif
 
 static DBusMessage *adapter_stop_discovery(DBusConnection *conn,
 						DBusMessage *msg, void *data)
@@ -1604,7 +1676,7 @@ static DBusMessage *register_agent(DBusConnection *conn, DBusMessage *msg,
 
 	if (!dbus_message_get_args(msg, NULL, DBUS_TYPE_OBJECT_PATH, &path,
 			DBUS_TYPE_STRING, &capability, DBUS_TYPE_INVALID))
-		return NULL;
+		return btd_error_invalid_args(msg);
 
 	if (adapter->agent)
 		return btd_error_already_exists(msg);
@@ -1634,7 +1706,7 @@ static DBusMessage *unregister_agent(DBusConnection *conn, DBusMessage *msg,
 
 	if (!dbus_message_get_args(msg, NULL, DBUS_TYPE_OBJECT_PATH, &path,
 						DBUS_TYPE_INVALID))
-		return NULL;
+		return btd_error_invalid_args(msg);
 
 	name = dbus_message_get_sender(msg);
 
@@ -1660,6 +1732,11 @@ static const GDBusMethodTable adapter_methods[] = {
 			release_session) },
 	{ GDBUS_METHOD("StartDiscovery", NULL, NULL,
 			adapter_start_discovery) },
+#ifdef __TIZEN_PATCH__
+	{ GDBUS_METHOD("StartCustomDiscovery",
+			GDBUS_ARGS({ "type", "s" }), NULL,
+			adapter_start_custom_discovery) },
+#endif
 	{ GDBUS_ASYNC_METHOD("StopDiscovery", NULL, NULL,
 			adapter_stop_discovery) },
 	{ GDBUS_DEPRECATED_METHOD("ListDevices",
@@ -2757,6 +2834,9 @@ void adapter_emit_device_found(struct btd_adapter *adapter,
 				"LegacyPairing", DBUS_TYPE_BOOLEAN, &dev->legacy,
 				"Paired", DBUS_TYPE_BOOLEAN, &paired,
 				"Broadcaster", DBUS_TYPE_BOOLEAN, &broadcaster,
+#ifdef __TIZEN_PATCH__
+				"DeviceType", DBUS_TYPE_BYTE, &dev->bdaddr_type,
+#endif
 				"UUIDs", DBUS_TYPE_ARRAY, &dev->uuids, uuid_count,
 				NULL);
 	} else {
@@ -2772,6 +2852,9 @@ void adapter_emit_device_found(struct btd_adapter *adapter,
 				"LegacyPairing", DBUS_TYPE_BOOLEAN, &dev->legacy,
 				"Paired", DBUS_TYPE_BOOLEAN, &paired,
 				"Trusted", DBUS_TYPE_BOOLEAN, &trusted,
+#ifdef __TIZEN_PATCH__
+				"DeviceType", DBUS_TYPE_BYTE, &dev->bdaddr_type,
+#endif
 				"UUIDs", DBUS_TYPE_ARRAY, &dev->uuids, uuid_count,
 				NULL);
 	}
@@ -3562,7 +3645,16 @@ void adapter_bonding_complete(struct btd_adapter *adapter, bdaddr_t *bdaddr,
 
 	if (adapter->discov_suspended) {
 		adapter->discov_suspended = FALSE;
+#ifdef __TIZEN_PATCH__
+		DBG("Bonding complete, disc type=%d", adapter->discovery_type);
+		if (adapter->discovery_type)
+			adapter_ops->start_custom_discovery(adapter->dev_id,
+						adapter->discovery_type);
+		else
+			adapter_ops->start_discovery(adapter->dev_id);
+#else
 		adapter_ops->start_discovery(adapter->dev_id);
+#endif
 	}
 }
 
@@ -3583,3 +3675,11 @@ int btd_adapter_remove_remote_oob_data(struct btd_adapter *adapter,
 {
 	return adapter_ops->remove_remote_oob_data(adapter->dev_id, bdaddr);
 }
+
+#ifdef __TIZEN_PATCH__
+int btd_adapter_read_rssi(struct btd_adapter *adapter, bdaddr_t *bdaddr)
+{
+	return adapter_ops->read_rssi(adapter->dev_id, bdaddr);
+}
+#endif
+

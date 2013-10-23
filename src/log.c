@@ -119,6 +119,20 @@ void __btd_toggle_debug(void)
 		desc->flags |= BTD_DEBUG_FLAG_PRINT;
 }
 
+void __hci_attach_log_init(void)
+{
+	int option = LOG_NDELAY | LOG_PID;
+
+	enabled = g_strsplit_set(g_strdup("*"), ":, ", 0);
+
+	__btd_enable_debug(__start___debug, __stop___debug);
+
+	openlog("hciattach", option, LOG_DAEMON);
+
+	syslog(LOG_INFO, "hciattach daemon for debugging");
+}
+
+
 void __btd_log_init(const char *debug, int detach)
 {
 	int option = LOG_NDELAY | LOG_PID;

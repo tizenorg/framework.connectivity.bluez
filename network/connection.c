@@ -73,6 +73,9 @@ struct network_conn {
 	GIOChannel	*io;
 	guint		watch;		/* Disconnect watch */
 	guint		dc_id;
+#ifdef __TIZEN_PATCH__
+	guint		wd_id;
+#endif
 	struct network_peer *peer;
 	guint		attempt_cnt;
 	guint 		timeout_source;
@@ -255,8 +258,12 @@ static gboolean bnep_setup_cb(GIOChannel *chan, GIOCondition cond,
 	memset(&timeo, 0, sizeof(timeo));
 	timeo.tv_sec = 0;
 
+#ifdef __TIZEN_PATCH__
+	if (setsockopt(sk, SOL_SOCKET, SO_RCVTIMEO, &timeo, sizeof(timeo)) < 0)
+		goto failed;
+#else
 	setsockopt(sk, SOL_SOCKET, SO_RCVTIMEO, &timeo, sizeof(timeo));
-
+#endif
 	if (bnep_connadd(sk, BNEP_SVC_PANU, nc->dev)) {
 		error("%s could not be added", nc->dev);
 		goto failed;
@@ -287,8 +294,13 @@ static gboolean bnep_setup_cb(GIOChannel *chan, GIOCondition cond,
 
 	info("%s connected", nc->dev);
 	/* Start watchdog */
+#ifdef __TIZEN_PATCH__
+	nc->wd_id = g_io_add_watch(chan, G_IO_ERR | G_IO_HUP | G_IO_NVAL,
+			(GIOFunc) bnep_watchdog_cb, nc);
+#else
 	g_io_add_watch(chan, G_IO_ERR | G_IO_HUP | G_IO_NVAL,
 			(GIOFunc) bnep_watchdog_cb, nc);
+#endif
 	g_io_channel_unref(nc->io);
 	nc->io = NULL;
 
@@ -400,7 +412,7 @@ static DBusMessage *connection_connect(DBusConnection *conn,
 
 	if (dbus_message_get_args(msg, NULL, DBUS_TYPE_STRING, &svc,
 						DBUS_TYPE_INVALID) == FALSE)
-		return NULL;
+		return btd_error_invalid_args(msg);
 
 	id = bnep_service_id(svc);
 	nc = find_connection(peer->connections, id);
@@ -527,6 +539,12 @@ static void connection_free(void *data)
 	if (nc->dc_id)
 		device_remove_disconnect_watch(nc->peer->device, nc->dc_id);
 
+#ifdef __TIZEN_PATCH__
+	/* Make sure that remove the watchdog during Unreg */
+	DBG("Remove the watchdog io");
+	if (nc->wd_id)
+		g_source_remove(nc->wd_id);
+#endif
 	connection_destroy(connection, nc);
 
 	g_free(nc);

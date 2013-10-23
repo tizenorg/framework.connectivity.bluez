@@ -66,7 +66,7 @@ bluez-test contains test utilities for BlueZ testing.
 
 %build
 
-export CFLAGS="${CFLAGS} -D__TIZEN_PATCH__ -D__BROADCOM_PATCH__ "
+export CFLAGS="${CFLAGS} -D__TIZEN_PATCH__ -D__BROADCOM_PATCH__ -D__BT_SCMST_FEATURE__"
 export LDFLAGS=" -lncurses -Wl,--as-needed "
 %reconfigure --disable-static \
 			--sysconfdir=%{_sysconfdir} \
@@ -145,6 +145,7 @@ cat %{_builddir}/%{name}-%{version}/COPYING.LIB >> %{buildroot}/usr/share/licens
 %defattr(-,root,root,-)
 %{_libdir}/libbluetooth.so.*
 %{_datadir}/license/libbluetooth3
+
 
 %files -n libbluetooth-devel
 %defattr(-, root, root)

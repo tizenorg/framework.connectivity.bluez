@@ -436,13 +436,43 @@ static DBusMessage *unregister_watcher(DBusConnection *conn,
 	return dbus_message_new_method_return(msg);
 }
 
+#ifdef __TIZEN_PATCH__
+static void write_char_cb(guint8 status, const guint8 *pdu, guint16 plen,
+							gpointer user_data)
+{
+	struct characteristic *chr = user_data;
+	struct gatt_service *gatt = chr->gatt;
+	DBusMessage *reply;
+
+	if (status != 0) {
+		g_printerr("Characteristic write failed: %s\n", att_ecode2str(status));
+		return;
+	}
+
+	if (!dec_write_resp(pdu, plen)) {
+		g_printerr("Protocol error\n");
+		return;
+	}
+
+	reply = dbus_message_new_method_return(gatt->query->msg);
+
+	dbus_connection_send(gatt->conn, reply, NULL);
+	dbus_connection_flush(gatt->conn);
+	dbus_message_unref(reply);
+	g_free(gatt->query);
+
+	return;
+}
+#endif
+
 static DBusMessage *set_value(DBusConnection *conn, DBusMessage *msg,
-			DBusMessageIter *iter, struct characteristic *chr)
+			DBusMessageIter *iter, struct characteristic *chr, unsigned char req)
 {
 	struct gatt_service *gatt = chr->gatt;
 	DBusMessageIter sub;
 	uint8_t *value;
 	int len;
+	struct query *query;
 
 	if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_ARRAY ||
 			dbus_message_iter_get_element_type(iter) != DBUS_TYPE_BYTE)
@@ -460,11 +490,20 @@ static DBusMessage *set_value(DBusConnection *conn, DBusMessage *msg,
 							attio_disconnected,
 							gatt);
 
-	if (gatt->attrib)
-		gatt_write_cmd(gatt->attrib, chr->handle, value, len,
-								NULL, NULL);
-	else
+	if (gatt->attrib) {
+		if(req) {
+			query = g_new0(struct query, 1);
+			query->msg = dbus_message_ref(msg);
+			gatt->query = query;
+			gatt_write_char(gatt->attrib, chr->handle, value, len,
+				write_char_cb, chr);
+		} else {
+			gatt_write_cmd(gatt->attrib, chr->handle, value, len,
+				NULL, NULL);
+		}
+	} else {
 		gatt->offline_chars = g_slist_append(gatt->offline_chars, chr);
+	}
 
 	return dbus_message_new_method_return(msg);
 }
@@ -494,6 +533,7 @@ static DBusMessage *set_property(DBusConnection *conn,
 	DBusMessageIter iter;
 	DBusMessageIter sub;
 	const char *property;
+	unsigned char req;
 
 	if (!dbus_message_iter_init(msg, &iter))
 		return btd_error_invalid_args(msg);
@@ -508,20 +548,88 @@ static DBusMessage *set_property(DBusConnection *conn,
 		return btd_error_invalid_args(msg);
 
 	dbus_message_iter_recurse(&iter, &sub);
+	dbus_message_iter_next(&iter);
+
+	if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_BYTE)
+		return btd_error_invalid_args(msg);
+
+	dbus_message_iter_get_basic(&iter, &req);
 
 	if (g_str_equal("Value", property))
-		return set_value(conn, msg, &sub, chr);
+		return set_value(conn, msg, &sub, chr, req);
 
 	return btd_error_invalid_args(msg);
 }
+
+#ifdef __TIZEN_PATCH__
+static void read_char_cb(guint8 status, const guint8 *pdu, guint16 plen,
+							gpointer user_data)
+{
+	struct characteristic *chr = user_data;
+	struct gatt_service *gatt = chr->gatt;
+	DBusMessage *reply;
+	uint8_t *value;
+	int vlen;
+
+	if (status != 0) {
+		g_printerr("Characteristic value/descriptor read failed: %s\n",
+							att_ecode2str(status));
+		return;
+	}
+
+	if (!dec_read_resp(pdu, plen, value, &vlen)) {
+		g_printerr("Protocol error\n");
+		return;
+	}
+
+	value = malloc(ATT_MAX_MTU * sizeof(unsigned char));
+
+	reply = dbus_message_new_method_return(gatt->query->msg);
+	dbus_message_append_args(reply,
+			DBUS_TYPE_UINT16, &chr->handle,
+			DBUS_TYPE_ARRAY, DBUS_TYPE_BYTE, &value, vlen,
+			DBUS_TYPE_INVALID);
+
+	dbus_connection_send(gatt->conn, reply, NULL);
+	dbus_connection_flush(gatt->conn);
+	dbus_message_unref(reply);
+	g_free(gatt->query);
+	free(value);
+
+	return;
+}
+
+static DBusMessage *read_char(DBusConnection *conn, DBusMessage *msg,
+								void *data)
+{
+	struct query *query;
+
+	struct characteristic *chr = data;
+	struct gatt_service *gatt = chr->gatt;
+
+	query = g_new0(struct query, 1);
+	query->msg = dbus_message_ref(msg);
+	gatt->query = query;
+
+	gatt_read_char(gatt->attrib, chr->handle, 0, read_char_cb, chr);
+
+	return dbus_message_new_method_return(msg);
+}
+#endif
 
 static const GDBusMethodTable char_methods[] = {
 	{ GDBUS_METHOD("GetProperties",
 			NULL, GDBUS_ARGS({ "properties", "a{sv}" }),
 			get_properties) },
 	{ GDBUS_METHOD("SetProperty",
-			GDBUS_ARGS({ "name", "s" }, { "value", "v" }), NULL,
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" }, {"request", "y"}), NULL,
 			set_property) },
+#ifdef __TIZEN_PATCH__
+	{ GDBUS_ASYNC_METHOD("ReadCharacteristic", NULL,
+			GDBUS_ARGS({"handle", "q"}, { "value", "a{y}" },
+			{ "length", "q" }),
+			read_char) },
+#endif
 	{ }
 };
 

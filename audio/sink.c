@@ -128,6 +128,25 @@ static void sink_set_state(struct audio_device *dev, sink_state_t new_state)
 	}
 }
 
+#ifdef __BT_SCMST_FEATURE__
+static gboolean scmst_support;
+
+void sink_set_protection(gboolean status)
+{
+	scmst_support = status;
+	DBG("SCMS-T protection status = [%d]", scmst_support);
+}
+
+void sink_stream_protected(struct audio_device *dev)
+{
+	DBG("SCMS-T protection status = [%d]", scmst_support);
+
+	emit_property_changed(dev->conn, dev->path,
+			AUDIO_SINK_INTERFACE, "Protected",
+			DBUS_TYPE_BOOLEAN, &scmst_support);
+}
+#endif
+
 static void avdtp_state_callback(struct audio_device *dev,
 					struct avdtp *session,
 					avdtp_session_state_t old_state,
@@ -308,6 +327,10 @@ static void stream_setup_complete(struct avdtp *session, struct a2dp_sep *sep,
 
 		sink->connect = NULL;
 		pending_request_free(sink->dev, pending);
+
+#ifdef __BT_SCMST_FEATURE__
+		sink_stream_protected(sink->dev);
+#endif
 
 		return;
 	}
@@ -582,13 +605,27 @@ static void sink_free(struct audio_device *dev)
 	if (sink->cb_id)
 		avdtp_stream_remove_cb(sink->session, sink->stream,
 					sink->cb_id);
+#ifdef __TIZEN_PATCH__
+	if (sink->session) {
+		/* We need to clear the avdtp discovery procedure */
+		finalize_discovery(sink->session, ECANCELED);
+		avdtp_unref(sink->session);
+	}
 
+	if (sink->connect) {
+		if (sink->connect->msg)
+			error_failed(sink->connect->conn, sink->connect->msg,
+					"Unregister sink during connection");
+
+		pending_request_free(dev, sink->connect);
+	}
+#else
 	if (sink->session)
 		avdtp_unref(sink->session);
 
 	if (sink->connect)
 		pending_request_free(dev, sink->connect);
-
+#endif
 	if (sink->disconnect)
 		pending_request_free(dev, sink->disconnect);
 

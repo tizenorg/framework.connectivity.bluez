@@ -43,6 +43,13 @@
 
 struct btd_adapter;
 
+#ifdef __TIZEN_PATCH__
+#define BT_DISC_TYPE_DEFAULT	0
+#define BT_DISC_TYPE_BREDR_ONLY	1
+#define BT_DISC_TYPE_LE_ONLY	2
+#define BT_DISC_TYPE_LE_BREDR	3
+#endif
+
 struct link_key_info {
 	bdaddr_t bdaddr;
 	unsigned char key[16];
@@ -181,6 +188,9 @@ struct btd_adapter_ops {
 							uint16_t timeout);
 	int (*set_pairable) (int index, gboolean pairable);
 	int (*start_discovery) (int index);
+#ifdef __TIZEN_PATCH__
+	int (*start_custom_discovery) (int index, uint8_t disc_type);
+#endif
 	int (*stop_discovery) (int index);
 
 	int (*set_name) (int index, const char *name);
@@ -220,6 +230,9 @@ struct btd_adapter_ops {
 	int (*confirm_name) (int index, bdaddr_t *bdaddr, uint8_t bdaddr_type,
 							gboolean name_known);
 	int (*load_ltks) (int index, GSList *keys);
+#ifdef __TIZEN_PATCH__
+	int (*read_rssi) (int index, bdaddr_t *bdaddr);
+#endif
 };
 
 int btd_register_adapter_ops(struct btd_adapter_ops *ops, gboolean priority);
@@ -286,3 +299,6 @@ int btd_adapter_remove_remote_oob_data(struct btd_adapter *adapter,
 
 int btd_adapter_gatt_server_start(struct btd_adapter *adapter);
 void btd_adapter_gatt_server_stop(struct btd_adapter *adapter);
+#ifdef __TIZEN_PATCH__
+int btd_adapter_read_rssi(struct btd_adapter *adapter, bdaddr_t *bdaddr);
+#endif

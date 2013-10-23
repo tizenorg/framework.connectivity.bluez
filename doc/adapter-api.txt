@@ -65,7 +65,22 @@ Methods		dict GetProperties()
 
 			Possible errors: org.bluez.Error.NotReady
 					 org.bluez.Error.Failed
+#ifdef __TIZEN_PATCH__
+		void StartCustomDiscovery(string pattern)
 
+			This method starts the device discovery session with
+			parameter. The valid paramter strings are "BREDR",
+			"LE" or "LE_BREDR" which will perform the inquiry for
+			appropriate types. This includes an inquiry procedure
+			and remote device name resolving. Use StopDiscovery
+			to release the sessions acquired.
+
+			This process will start emitting DeviceFound and
+			PropertyChanged "Discovering" signals.
+
+			Possible errors: org.bluez.Error.NotReady
+					 org.bluez.Error.Failed
+#endif
 		void StopDiscovery()
 
 			This method will cancel any previous StartDiscovery

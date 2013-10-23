@@ -67,6 +67,17 @@
 
 #define FI_FLAG_CONNECTED	1
 
+#define TC_HOS_HCE_BV_04_I 1 /*For PTS testcase TC_HOS_HCE_BV_04_I passing*/
+
+#ifdef TC_HOS_HCE_BV_04_I
+enum reconnect_mode_t {
+	RECONNECT_NONE = 0,
+	RECONNECT_DEVICE,
+	RECONNECT_HOST,
+	RECONNECT_ANY
+};
+#endif
+
 struct input_conn {
 	struct fake_input	*fake;
 	DBusMessage		*pending_connect;
@@ -92,9 +103,30 @@ struct input_device {
 	char			*name;
 	struct btd_device	*device;
 	GSList			*connections;
+#ifdef TC_HOS_HCE_BV_04_I
+	enum reconnect_mode_t	reconnect_mode;
+	guint			reconnect_timer;
+	uint32_t		reconnect_attempt;
+#endif
 };
 
 static GSList *devices = NULL;
+
+#ifdef TC_HOS_HCE_BV_04_I
+static void input_device_enter_reconnect_mode(struct input_conn *iconn);
+static const char * const _reconnect_mode_str[] = {
+	"none",
+	"device",
+	"host",
+	"any"
+};
+
+static const char *reconnect_mode_to_string(const enum reconnect_mode_t mode)
+{
+	return _reconnect_mode_str[mode];
+}
+#endif
+
 
 static struct input_device *find_device_by_path(GSList *list, const char *path)
 {
@@ -149,7 +181,11 @@ static void input_device_free(struct input_device *idev)
 {
 	if (idev->dc_id)
 		device_remove_disconnect_watch(idev->device, idev->dc_id);
-
+#ifdef TC_HOS_HCE_BV_04_I
+	DBG("Removing the reconnection timer......");
+	if (idev->reconnect_timer > 0)
+		g_source_remove(idev->reconnect_timer);
+#endif
 	dbus_connection_unref(idev->conn);
 	btd_device_unref(idev->device);
 	g_free(idev->name);
@@ -408,6 +444,12 @@ static gboolean intr_watch_cb(GIOChannel *chan, GIOCondition cond, gpointer data
 	/* Close control channel */
 	if (iconn->ctrl_io && !(cond & G_IO_NVAL))
 		g_io_channel_shutdown(iconn->ctrl_io, TRUE, NULL);
+
+#ifdef TC_HOS_HCE_BV_04_I
+	/* Enter the auto-reconnect mode if needed */
+	input_device_enter_reconnect_mode(iconn);
+#endif
+
 
 	return FALSE;
 }
@@ -943,6 +985,193 @@ static int fake_disconnect(struct input_conn *iconn)
 	return 0;
 }
 
+#ifdef TC_HOS_HCE_BV_04_I
+static void interrupt_reconnect_cb(GIOChannel *chan, GError *conn_err,
+							gpointer user_data)
+{
+	struct input_conn *iconn = user_data;
+	struct input_device *idev = iconn->idev;
+	int err;
+	const char *err_msg;
+	DBG("interrupt_reconnect_cb() \n");
+	if (conn_err) {
+		err_msg = conn_err->message;
+		goto failed;
+	}
+
+	err = input_device_connected(idev, iconn);
+	if (err < 0) {
+		err_msg = strerror(-err);
+		goto failed;
+	}
+
+	return;
+
+failed:
+	error("%s", err_msg);
+
+	if (!conn_err)
+		g_io_channel_shutdown(iconn->intr_io, FALSE, NULL);
+
+	g_io_channel_unref(iconn->intr_io);
+	iconn->intr_io = NULL;
+
+	if (iconn->ctrl_io) {
+		g_io_channel_unref(iconn->ctrl_io);
+		iconn->ctrl_io = NULL;
+	}
+}
+
+static void control_reconnect_cb(GIOChannel *chan, GError *conn_err,
+							gpointer user_data)
+{
+	struct input_conn *iconn = user_data;
+	struct input_device *idev = iconn->idev;
+	GIOChannel *io;
+	GError *err = NULL;
+	DBG("control_reconnect_cb() ....\n");
+	if (conn_err) {
+		error("%s", conn_err->message);
+
+		goto failed;
+	}
+
+	/* Connect to the HID interrupt channel */
+	io = bt_io_connect(BT_IO_L2CAP, interrupt_reconnect_cb, iconn,
+				NULL, &err,
+				BT_IO_OPT_SOURCE_BDADDR, &idev->src,
+				BT_IO_OPT_DEST_BDADDR, &idev->dst,
+				BT_IO_OPT_PSM, L2CAP_PSM_HIDP_INTR,
+				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_LOW,
+				BT_IO_OPT_INVALID);
+	if (!io) {
+		error("%s", err->message);
+		g_error_free(err);
+		goto failed;
+	}
+
+	iconn->intr_io = io;
+
+	return;
+
+failed:
+	g_io_channel_unref(iconn->ctrl_io);
+	iconn->ctrl_io = NULL;
+}
+
+
+static int dev_connect(struct input_conn *iconn)
+{
+	DBG("");
+	GError *err = NULL;
+	GIOChannel *io;
+	struct input_device *idev = iconn->idev;
+	if (idev->disable_sdp)
+		bt_clear_cached_session(&idev->src, &idev->dst);
+	io = bt_io_connect(BT_IO_L2CAP, control_reconnect_cb, iconn,
+				NULL, &err,
+				BT_IO_OPT_SOURCE_BDADDR, &idev->src,
+				BT_IO_OPT_DEST_BDADDR, &idev->dst,
+				BT_IO_OPT_PSM, L2CAP_PSM_HIDP_CTRL,
+				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_LOW,
+				BT_IO_OPT_INVALID);
+	iconn->ctrl_io = io;
+	if (err == NULL)
+		return 0;
+
+	error("%s", err->message);
+	g_error_free(err);
+	return -EIO;
+}
+
+static gboolean input_device_auto_reconnect(gpointer user_data)
+{
+	struct input_conn *iconn = user_data;
+	struct input_device *idev = iconn->idev;
+	DBG("path=%s, attempt=%d\n", idev->path, idev->reconnect_attempt);
+
+	/* Stop the recurrent reconnection attempts if the device is reconnected
+	 * or is marked for removal. */
+	if (device_is_temporary(idev->device) ||
+					device_is_connected(idev->device))
+		return FALSE;
+	/* Only attempt an auto-reconnect for at most 3 minutes (6 * 30s). */
+	if (idev->reconnect_attempt >= 6)
+		return FALSE;
+	/* Check if the profile is already connected. */
+	if (iconn->ctrl_io)
+		return FALSE;
+	if (is_connected(iconn))
+		return FALSE;
+	idev->reconnect_attempt++;
+	dev_connect(iconn);
+
+	return TRUE;
+}
+
+static void input_device_enter_reconnect_mode(struct input_conn *iconn)
+{
+	struct input_device *idev = iconn->idev;
+	DBG("path=%s reconnect_mode=%s\n", idev->path,
+				reconnect_mode_to_string(idev->reconnect_mode));
+
+	/* Only attempt an auto-reconnect when the device is required to accept
+	 * reconnections from the host. */
+	if (idev->reconnect_mode != RECONNECT_ANY &&
+				idev->reconnect_mode != RECONNECT_HOST)
+		return;
+
+	/* If the device is temporary we are not required to reconnect with the
+	 * device. This is likely the case of a removing device. */
+	if (device_is_temporary(idev->device) ||
+					device_is_connected(idev->device))
+		return;
+
+	if (idev->reconnect_timer > 0)
+		g_source_remove(idev->reconnect_timer);
+
+	DBG("------------------registering auto-reconnect------------\n");
+	idev->reconnect_attempt = 0;
+	idev->reconnect_timer = g_timeout_add_seconds(30,
+					input_device_auto_reconnect, iconn);
+
+}
+
+static enum reconnect_mode_t hid_reconnection_mode(gboolean reconnect_initiate,
+						gboolean normally_connectable)
+{
+	if (!reconnect_initiate && !normally_connectable)
+		return RECONNECT_NONE;
+	else if (!reconnect_initiate && normally_connectable)
+		return RECONNECT_HOST;
+	else if (reconnect_initiate && !normally_connectable)
+		return RECONNECT_DEVICE;
+	else /* (reconnect_initiate && normally_connectable) */
+		return RECONNECT_ANY;
+}
+
+static void extract_hid_props(struct input_device *idev,
+					const sdp_record_t *rec)
+{
+	/* Extract HID connectability */
+	gboolean reconnect_initiate, normally_connectable;
+	sdp_data_t *pdlist;
+
+	/* HIDNormallyConnectable is optional and assumed FALSE
+	* if not present. */
+	pdlist = sdp_data_get(rec, SDP_ATTR_HID_RECONNECT_INITIATE);
+	reconnect_initiate = pdlist ? pdlist->val.uint8 : TRUE;
+
+	pdlist = sdp_data_get(rec, SDP_ATTR_HID_NORMALLY_CONNECTABLE);
+	normally_connectable = pdlist ? pdlist->val.uint8 : FALSE;
+
+	/* Update local values */
+	idev->reconnect_mode =
+		hid_reconnection_mode(reconnect_initiate, normally_connectable);
+}
+
+#endif
+
 /*
  * Input Device methods
  */
@@ -1152,7 +1381,10 @@ int input_device_register(DBusConnection *conn, struct btd_device *device,
 			return -EINVAL;
 		devices = g_slist_append(devices, idev);
 	}
-
+#ifdef TC_HOS_HCE_BV_04_I
+	/* Initialize device properties */
+	extract_hid_props(idev, rec);
+#endif
 	iconn = input_conn_new(idev, uuid, timeout);
 
 	idev->connections = g_slist_append(idev->connections, iconn);

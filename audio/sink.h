@@ -47,3 +47,8 @@ gboolean sink_new_stream(struct audio_device *dev, struct avdtp *session,
 				struct avdtp_stream *stream);
 gboolean sink_setup_stream(struct sink *sink, struct avdtp *session);
 gboolean sink_shutdown(struct sink *sink);
+
+#ifdef __BT_SCMST_FEATURE__
+void sink_set_protection(gboolean status);
+void sink_stream_protected(struct audio_device *dev);
+#endif

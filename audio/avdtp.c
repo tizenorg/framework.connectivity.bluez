@@ -327,6 +327,9 @@ struct avdtp_remote_sep {
 	uint8_t type;
 	uint8_t media_type;
 	struct avdtp_service_capability *codec;
+#ifdef __BT_SCMST_FEATURE__
+	struct avdtp_service_capability *protection_cap;
+#endif
 	gboolean delay_reporting;
 	GSList *caps; /* of type struct avdtp_service_capability */
 	struct avdtp_stream *stream;
@@ -375,6 +378,9 @@ struct avdtp_stream {
 	GSList *caps;
 	GSList *callbacks;
 	struct avdtp_service_capability *codec;
+#ifdef __BT_SCMST_FEATURE__
+	struct avdtp_service_capability *protection_cap;
+#endif
 	guint io_id;		/* Transport GSource ID */
 	guint timer;		/* Waiting for other side to close or open
 				 * the transport channel */
@@ -1058,7 +1064,11 @@ static void avdtp_sep_set_state(struct avdtp *session,
 	}
 }
 
+#ifdef __TIZEN_PATCH__
+void finalize_discovery(struct avdtp *session, int err)
+#else
 static void finalize_discovery(struct avdtp *session, int err)
+#endif
 {
 	struct avdtp_error avdtp_err;
 
@@ -1284,9 +1294,16 @@ struct avdtp_remote_sep *avdtp_find_remote_sep(struct avdtp *session,
 	return NULL;
 }
 
+#ifdef __BT_SCMST_FEATURE__
+static GSList *caps_to_list(uint8_t *data, int size,
+				struct avdtp_service_capability **codec,
+				struct avdtp_service_capability **protection_cap,
+				gboolean *delay_reporting)
+#else
 static GSList *caps_to_list(uint8_t *data, int size,
 				struct avdtp_service_capability **codec,
 				gboolean *delay_reporting)
+#endif
 {
 	GSList *caps;
 	int processed;
@@ -1319,6 +1336,11 @@ static GSList *caps_to_list(uint8_t *data, int size,
 				length >=
 				sizeof(struct avdtp_media_codec_capability))
 			*codec = cap;
+#ifdef __BT_SCMST_FEATURE__
+		else if (category == AVDTP_CONTENT_PROTECTION &&
+				length >= sizeof(struct avdtp_cp_cap))
+			*protection_cap = cap;
+#endif
 		else if (category == AVDTP_DELAY_REPORTING && delay_reporting)
 			*delay_reporting = TRUE;
 	}
@@ -1510,10 +1532,17 @@ static gboolean avdtp_setconf_cmd(struct avdtp *session, uint8_t transaction,
 	stream->session = session;
 	stream->lsep = sep;
 	stream->rseid = req->int_seid;
+#ifdef __BT_SCMST_FEATURE__
+	stream->caps = caps_to_list(req->caps,
+					size - sizeof(struct setconf_req),
+					&stream->codec, &stream->protection_cap,
+					&stream->delay_reporting);
+#else
 	stream->caps = caps_to_list(req->caps,
 					size - sizeof(struct setconf_req),
 					&stream->codec,
 					&stream->delay_reporting);
+#endif
 
 	/* Verify that the Media Transport capability's length = 0. Reject otherwise */
 	for (l = stream->caps; l != NULL; l = g_slist_next(l)) {
@@ -2859,12 +2888,19 @@ static gboolean avdtp_get_capabilities_resp(struct avdtp *session,
 		g_slist_free_full(sep->caps, g_free);
 		sep->caps = NULL;
 		sep->codec = NULL;
+#ifdef __BT_SCMST_FEATURE__
+		sep->protection_cap = NULL;
+#endif
 		sep->delay_reporting = FALSE;
 	}
 
+#ifdef __BT_SCMST_FEATURE__
+	sep->caps = caps_to_list(resp->caps, size - sizeof(struct getcap_resp),
+				&sep->codec, &sep->protection_cap, &sep->delay_reporting);
+#else
 	sep->caps = caps_to_list(resp->caps, size - sizeof(struct getcap_resp),
 					&sep->codec, &sep->delay_reporting);
-
+#endif
 	return TRUE;
 }
 
@@ -2956,7 +2992,12 @@ static gboolean avdtp_abort_resp(struct avdtp *session,
 					struct seid_rej *resp, int size)
 {
 	struct avdtp_local_sep *sep = stream->lsep;
-
+#ifdef __TIZEN_PATCH__
+	if (!sep) {
+		error("Error in getting sep");
+		return FALSE;
+	}
+#endif
 	avdtp_sep_set_state(session, sep, AVDTP_STATE_ABORTING);
 
 	if (sep->cfm && sep->cfm->abort)
@@ -3345,6 +3386,24 @@ struct avdtp_service_capability *avdtp_get_codec(struct avdtp_remote_sep *sep)
 {
 	return sep->codec;
 }
+
+#ifdef __BT_SCMST_FEATURE__
+struct avdtp_service_capability *avdtp_get_protection_cap(struct avdtp_stream *stream)
+{
+	if (stream) {
+		return stream->protection_cap;
+	}
+	return NULL;
+}
+
+struct avdtp_service_capability *avdtp_get_remote_sep_protection_cap(struct avdtp_remote_sep *sep)
+{
+	if (sep) {
+		return sep->protection_cap;
+	}
+	return NULL;
+}
+#endif
 
 gboolean avdtp_get_delay_reporting(struct avdtp_remote_sep *sep)
 {

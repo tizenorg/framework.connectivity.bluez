@@ -295,6 +295,12 @@ properties	string State [readonly]
 			Indicates if a stream is active to a A2DP sink on
 			the remote device.
 
+#ifdef __BT_SCMST_FEATURE__
+		boolean Protected [readonly]
+			Indicates if a stream is active to A2DP sink on
+			the remote device and stream is protected.
+#endif
+
 AudioSource hierarchy
 =====================
 
