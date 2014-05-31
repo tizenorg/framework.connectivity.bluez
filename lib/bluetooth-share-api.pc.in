@@ -1,0 +1,11 @@
+prefix=@PREFIX@
+exec_prefix=@EXEC_PREFIX@
+libdir=@LIBDIR@
+includedir=@INCLUDEDIR@
+
+Name: bluetooth-share-api
+Description: SAMSUNG Linux platform Bluetooth share API
+Version: @VERSION@
+Requires: dlog dbus-glib-1 vconf
+Libs: -L${libdir} -lbluetooth-share-api
+Cflags: -I${includedir} -I${includedir}/bluetooth-share-api

@@ -1,0 +1,50 @@
+#!/bin/sh
+
+if [ ! -f /opt/dbspace/.bluetooth_trasnfer.db ]
+then
+       sqlite3 /opt/dbspace/.bluetooth_trasnfer.db 'PRAGMA journal_mode = PERSIST;
+	create table if not exists inbound (
+		id INTEGER PRIMARY KEY autoincrement,
+		tr_status INTEGER,
+		file_path TEXT,
+		dev_name TEXT,
+		timestamp INTEGER default 0,
+		addr TEXT
+	);
+	create table if not exists outbound (
+		id INTEGER PRIMARY KEY autoincrement,
+		tr_status INTEGER,
+		file_path TEXT,
+		dev_name TEXT,
+		timestamp INTEGER default 0,
+		addr TEXT
+	);
+	'
+fi
+
+# root case
+if [ ${USER} == "root" ]
+then
+	# Set vconf values with -g/-u options
+
+	# 5000 is inhouse user id
+	# do not use relative path
+
+	# For the FTP server folder
+
+	if  [ ! -e /opt/share/bt-ftp/Media ]
+	then
+		ln -s /opt/media /opt/share/bt-ftp/Media
+	fi
+
+	if  [ ! -e /opt/share/bt-ftp/SD_External ]
+	then
+		ln -s /opt/storage/sdcard /opt/share/bt-ftp/SD_External
+	fi
+
+	chown :5000 /opt/dbspace/.bluetooth_trasnfer.db
+	chown :5000 /opt/dbspace/.bluetooth_trasnfer.db-journal
+fi
+
+chmod 660 /opt/dbspace/.bluetooth_trasnfer.db
+chmod 660 /opt/dbspace/.bluetooth_trasnfer.db-journal

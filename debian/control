@@ -1,0 +1,33 @@
+Source: bluetooth-share
+Section: net
+Priority: extra
+Maintainer:  Hocheol Seo <hocheol.seo@samsung.com>, DoHyun Pyun <dh79.pyun@samsung.com>, ChanYeol Park <chanyeol.park@samsung.com>, InJun Yang <injun.yang@samsung.com>, Seungyoun Ju <sy39.ju@samsung.com>
+Uploaders: Sunil Behera <sunil.behera@samsung.com>, Syam Sidhardhan <s.syam@samsung.com>
+Build-Depends: debhelper (>= 5), libbluetooth-frwk-dev, libglib2.0-dev, libdbus-1-dev, libdbus-glib-1-dev, libappcore-common-dev, libaul-1-dev, dlog-dev, syspopup-caller-dev, libappsvc-dev, libbundle-dev, libnotification-dev, libslp-calendar-dev, libcontacts-service-dev, libslp-pm-dev, libslp-sysman-dev, libx11-dev, libappcore-efl-dev, libslp-db-util-dev, libprivilege-control-dev
+Standards-Version: 3.7.2
+
+Package: bluetooth-share
+Section: application
+Provides:bluetooth-app-headers
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends},libbluetooth-frwk-0, libaul-1, libdlog-0
+Description: Bluetooth File Share Agent
+
+Package: bluetooth-share-dbg
+Section: debug
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, bluetooth-share (= ${Source-Version})
+Description: Bluetooth file share Agent (unstripped)
+
+Package: libbluetooth-share
+Section: libs
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Bluetooth Share library
+
+Package: libbluetooth-share-dev
+Section: devel
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends},dlog-dev, libdbus-glib-1-dev, libglib2.0-dev, libbluetooth-share (= ${Source-Version})
+XB-Generate-Docs: yes
+Description: Bluetooth Share

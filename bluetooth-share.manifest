@@ -1,0 +1,15 @@
+<manifest>
+    <define>
+        <domain name="bt_share"/>
+        <provide>
+            <label name="bt_share::db"/>
+        </provide>
+    </define>
+    <assign>
+        <filesystem path="/usr/share/dbus-1/services/org.bluetooth.share.service" label="_"/>
+	<filesystem path="/usr/lib/libbluetooth-share-api.so.0.1.0" label="_"/>
+    </assign>
+    <request>
+        <domain name="bt_share"/>
+    </request>
+</manifest>
