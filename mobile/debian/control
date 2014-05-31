@@ -1,0 +1,56 @@
+Source: bluez
+Section: admin
+Priority: optional
+Maintainer: Hocheol Seo <hocheol.seo@samsung.com>, DoHyun Pyun <dh79.pyun@samsung.com>, ChanYeol Park <chanyeol.park@samsung.com>, Byeongho Shim <bh.shim@samsung.com>, Seungyoun Ju <sy39.ju@samsung.com>, Girish A J <girish.joshi@samsung.com>, Chethan T N <chethan.tn@samsung.com>
+Uploaders: Sunil Behera <sunil.behera@samsung.com>, Syam Sidhardhan <s.syam@samsung.com>
+Build-Depends: debhelper (>= 5), autotools-dev,
+               libdbus-1-dev,
+               libglib2.0-dev,
+               autotools-dev,
+               autoconf,
+               automake,
+               libtool,
+               bison,
+               flex
+Standards-Version: 3.7.2
+Homepage: http://www.bluez.org
+
+Package: libbluetooth3
+Section: libs
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Architecture: any
+Description: Library to use the BlueZ Linux Bluetooth stack
+ BlueZ is the official Linux Bluetooth protocol stack. It is an Open Source
+ project distributed under GNU General Public License (GPL).
+
+Package: libbluetooth-dev
+Section: libdevel
+Provides: libbluetooth3-dev
+Depends: libbluetooth3 (= ${binary:Version}), libc6-dev | libc-dev, ${misc:Depends}
+XB-Public-Package: yes
+XB-Generate-Docs: no
+Priority: extra
+Architecture: any
+Description: Development files for using the BlueZ Linux Bluetooth library
+ BlueZ is the official Linux Bluetooth protocol stack. It is an Open Source
+ project distributed under GNU General Public License (GPL).
+
+Package: bluez
+Architecture: any
+Depends: ${shlibs:Depends}, dbus, ${misc:Depends}
+Suggests: python-gobject, python-dbus
+Description: Bluetooth tools and daemons
+ This package contains tools and system daemons for using Bluetooth devices.
+ .
+ BlueZ is the official Linux Bluetooth protocol stack. It is an Open Source
+ project distributed under GNU General Public License (GPL).
+
+Package: bluez-dbg
+Section: debug
+Priority: extra
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, libbluetooth3 (= ${binary:Version})
+Description: Library to use the BlueZ Linux Bluetooth stack and  Bluetooth tools and daemons (unstripped)
+ The package contains detached debugging symbols for the binary packages
+ produced by the bluez soruce.
+
