@@ -445,7 +445,8 @@ static void write_char_cb(guint8 status, const guint8 *pdu, guint16 plen,
 	DBusMessage *reply;
 
 	if (status != 0) {
-		g_printerr("Characteristic write failed: %s\n", att_ecode2str(status));
+		g_printerr("Characteristic write failed: %s\n",
+						att_ecode2str(status));
 		return;
 	}
 
@@ -466,7 +467,8 @@ static void write_char_cb(guint8 status, const guint8 *pdu, guint16 plen,
 #endif
 
 static DBusMessage *set_value(DBusConnection *conn, DBusMessage *msg,
-			DBusMessageIter *iter, struct characteristic *chr, unsigned char req)
+			DBusMessageIter *iter, struct characteristic *chr,
+			unsigned char req)
 {
 	struct gatt_service *gatt = chr->gatt;
 	DBusMessageIter sub;
@@ -475,7 +477,7 @@ static DBusMessage *set_value(DBusConnection *conn, DBusMessage *msg,
 	struct query *query;
 
 	if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_ARRAY ||
-			dbus_message_iter_get_element_type(iter) != DBUS_TYPE_BYTE)
+		dbus_message_iter_get_element_type(iter) != DBUS_TYPE_BYTE)
 		return btd_error_invalid_args(msg);
 
 	dbus_message_iter_recurse(iter, &sub);
@@ -491,7 +493,7 @@ static DBusMessage *set_value(DBusConnection *conn, DBusMessage *msg,
 							gatt);
 
 	if (gatt->attrib) {
-		if(req) {
+		if (req) {
 			query = g_new0(struct query, 1);
 			query->msg = dbus_message_ref(msg);
 			gatt->query = query;
@@ -577,6 +579,13 @@ static void read_char_cb(guint8 status, const guint8 *pdu, guint16 plen,
 		return;
 	}
 
+	value = (uint8_t *) malloc(plen * sizeof(uint8_t));
+	if (value == NULL) {
+		g_printerr("Characteristic value/descriptor read failed:: %s\n",
+				att_ecode2str(ATT_ECODE_INSUFF_RESOURCES));
+		return;
+	}
+
 	if (!dec_read_resp(pdu, plen, value, &vlen)) {
 		g_printerr("Protocol error\n");
 		return;
@@ -622,7 +631,8 @@ static const GDBusMethodTable char_methods[] = {
 			NULL, GDBUS_ARGS({ "properties", "a{sv}" }),
 			get_properties) },
 	{ GDBUS_METHOD("SetProperty",
-			GDBUS_ARGS({ "name", "s" }, { "value", "v" }, {"request", "y"}), NULL,
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" },
+			{"request", "y"}), NULL,
 			set_property) },
 #ifdef __TIZEN_PATCH__
 	{ GDBUS_ASYNC_METHOD("ReadCharacteristic", NULL,
@@ -769,14 +779,16 @@ static void store_attribute(struct gatt_service *gatt, uint16_t handle,
 	g_free(str);
 }
 
-static void query_list_append(struct gatt_service *gatt, struct query_data *data)
+static void query_list_append(struct gatt_service *gatt,
+					struct query_data *data)
 {
 	struct query *query = gatt->query;
 
 	query->list = g_slist_append(query->list, data);
 }
 
-static void query_list_remove(struct gatt_service *gatt, struct query_data *data)
+static void query_list_remove(struct gatt_service *gatt,
+					struct query_data *data)
 {
 	struct query *query = gatt->query;
 
