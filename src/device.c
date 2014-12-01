@@ -990,7 +990,6 @@ void device_rssi_cb(DBusConnection *conn, struct btd_device *device, int8_t rssi
 				DEVICE_INTERFACE, "RSSI",
 				DBUS_TYPE_INT16, &rssi_value);
 
-	return 0;
 }
 
 static DBusMessage *read_rssi(DBusConnection *conn, DBusMessage *msg,
