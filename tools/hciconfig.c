@@ -747,12 +747,15 @@ static char *get_minor_device_name(int major, int minor)
 		switch (minor & 48) {
 		case 16:
 			strncpy(cls_str, "Keyboard", sizeof(cls_str));
+			cls_str[strlen(cls_str)] = '\0';
 			break;
 		case 32:
 			strncpy(cls_str, "Pointing device", sizeof(cls_str));
+			cls_str[strlen(cls_str)] = '\0';
 			break;
 		case 48:
 			strncpy(cls_str, "Combo keyboard/pointing device", sizeof(cls_str));
+			cls_str[strlen(cls_str)] = '\0';
 			break;
 		}
 		if ((minor & 15) && (strlen(cls_str) > 0))
