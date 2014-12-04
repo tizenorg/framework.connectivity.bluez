@@ -864,7 +864,6 @@ static DBusMessage *get_properties(DBusConnection *conn,
 	DBusMessageIter dict;
 	dbus_bool_t connected;
 	const char *property;
-	GSList *l;
 
 	if (!dbus_message_get_args(msg, NULL, DBUS_TYPE_STRING, &addr,
 						DBUS_TYPE_INVALID))
