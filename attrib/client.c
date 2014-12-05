@@ -577,12 +577,12 @@ static void read_char_cb(guint8 status, const guint8 *pdu, guint16 plen,
 		return;
 	}
 
+	value = malloc(ATT_MAX_MTU * sizeof(unsigned char));
+
 	if (!dec_read_resp(pdu, plen, value, &vlen)) {
 		g_printerr("Protocol error\n");
 		return;
 	}
-
-	value = malloc(ATT_MAX_MTU * sizeof(unsigned char));
 
 	reply = dbus_message_new_method_return(gatt->query->msg);
 	dbus_message_append_args(reply,
