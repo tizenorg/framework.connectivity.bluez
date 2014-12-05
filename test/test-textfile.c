@@ -47,7 +47,7 @@ int main(int argc, char *argv[])
 	int fd;
 
 	size = getpagesize();
-	printf("System uses a page size of %d bytes\n\n", size);
+	printf("System uses a page size of %u bytes\n\n", size);
 
 	fd = creat(filename, 0644);
 	if (ftruncate(fd, 0) < 0)
