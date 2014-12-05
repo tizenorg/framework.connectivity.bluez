@@ -59,7 +59,7 @@ static double sampletobits(short sample16, int verbose)
 		bit %= 2;
 
 		if (verbose)
-			printf("%d", bit);
+			printf("%u", bit);
 
 		if (bit)
 			bits += (1.0 / pow(2.0, i));
