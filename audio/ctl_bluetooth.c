@@ -89,7 +89,7 @@ static int bluetooth_elem_count(snd_ctl_ext_t *ext)
 static int bluetooth_elem_list(snd_ctl_ext_t *ext,
 				unsigned int offset, snd_ctl_elem_id_t *id)
 {
-	DBG("ext %p offset %d id %p", ext, offset, id);
+	DBG("ext %p offset %u id %p", ext, offset, id);
 
 	snd_ctl_elem_id_set_interface(id, SND_CTL_ELEM_IFACE_MIXER);
 
