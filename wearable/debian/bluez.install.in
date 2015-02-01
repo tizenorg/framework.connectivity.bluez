@@ -1,7 +1,0 @@
-@PREFIX@/etc/bluetooth/*
-@PREFIX@/etc/dbus*/*
-@PREFIX@/sbin/*
-@PREFIX@/bin/*
-@PREFIX@/share/man/man*
-@PREFIX@/lib/bluetooth/plugins/
-@DATADIR@/var/lib/bluetooth/

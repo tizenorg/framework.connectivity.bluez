@@ -1,26 +1,29 @@
 Name:       bluez
 Summary:    Bluetooth utilities
-Version:    4.101_39
+Version:    5.16_8
 Release:    1
+VCS:        framework/connectivity/bluez#bluez_4.101-slp2+22-132-g5d15421a5bd7101225aecd7c25b592b9a9ca218b
 Group:      Applications/System
-License:    GPL-2.0+ and LGPL-2.1
+License:    GPLv2+
 URL:        http://www.bluez.org/
 Source0:    http://www.kernel.org/pub/linux/bluetooth/%{name}-%{version}.tar.gz
-%if %{_repository}=="wearable"
-Patch1 :    bluez-ncurses-wearable.patch
-Patch2 :    disable-eir-unittest-wearable.patch
-%endif
-%if %{_repository}=="mobile"
-Patch1 :    bluez-ncurses-mobile.patch
-Patch2 :    disable-eir-unittest-mobile.patch
-Requires:   pciutils
-%endif
+Source101:    obex-root-setup
+Source102:    create-symlinks
+Patch1 :    bluez-ncurses.patch
+Patch2 :    disable-eir-unittest.patch
 Requires:   dbus >= 0.60
+BuildRequires:  pkgconfig(libudev)
 BuildRequires:  pkgconfig(dbus-1)
 BuildRequires:  pkgconfig(glib-2.0)
+BuildRequires:  pkgconfig(ncurses)
 BuildRequires:  flex
 BuildRequires:  bison
 BuildRequires:  readline-devel
+BuildRequires:  openssl-devel
+%ifarch %{arm}
+BuildRequires: kernel-headers
+#BuildRequires:  kernel-headers-tizen-dev
+%endif
 
 %description
 Utilities for use in Bluetooth applications:
@@ -34,8 +37,6 @@ Utilities for use in Bluetooth applications:
 	--hid2hci
 
 The BLUETOOTH trademarks are owned by Bluetooth SIG, Inc., U.S.A.
-
-
 
 %package -n libbluetooth3
 Summary:    Libraries for use in Bluetooth applications
@@ -57,6 +58,13 @@ Requires:   libbluetooth3 = %{version}
 bluez-libs-devel contains development libraries and headers for
 use in Bluetooth applications.
 
+%package -n obexd
+Summary: OBEX Server A basic OBEX server implementation
+Group: Applications/System
+
+%description -n obexd
+OBEX Server A basic OBEX server implementation.
+
 %package -n bluez-test
 Summary:    Test utilities for BlueZ
 Group:      Test Utilities
@@ -67,30 +75,33 @@ bluez-test contains test utilities for BlueZ testing.
 %prep
 %setup -q
 %patch1 -p1
-%patch2 -p2
-
 
 %build
+%if "%{?tizen_profile_name}" == "wearable"
+export CFLAGS="${CFLAGS} -D__TIZEN_PATCH__ -D__BROADCOM_PATCH__ -D__BT_SCMST_FEATURE__ -DSUPPORT_SMS_ONLY -D__BROADCOM_QOS_PATCH__ -DTIZEN_WEARABLE"
+%elseif "%{?tizen_profile_name}" == "mobile"
+export CFLAGS="${CFLAGS} -D__TIZEN_PATCH__ -DSUPPORT_SMS_ONLY"
 
-export CFLAGS="${CFLAGS} -D__TIZEN_PATCH__ -D__BROADCOM_PATCH__ -D__BT_SCMST_FEATURE__"
-export LDFLAGS=" -lncurses -Wl,--as-needed "
-
-%if %{_repository}=="wearable"
-cd wearable
-%elseif %{_repository}=="mobile"
-cd mobile
+#%if "%{?sec_build_project_name}" == "kirane_swa_open"
+#export CFLAGS="${CFLAGS} -D__BROADCOM_PATCH__ -D__BROADCOM_QOS_PATCH__"
+#%else
+export CFLAGS="${CFLAGS} -D__BROADCOM_PATCH__"
+#%endif
 %endif
 
+export LDFLAGS=" -lncurses -Wl,--as-needed "
+export CFLAGS+=" -DPBAP_SIM_ENABLE"
 %reconfigure --disable-static \
 			--sysconfdir=%{_sysconfdir} \
 			--localstatedir=%{_localstatedir} \
-%if %{_repository}=="mobile"
-			--with-systemdunitdir=%{_libdir}/systemd/system \
-%endif
+			--with-systemdsystemunitdir=%{_libdir}/systemd/system \
+			--with-systemduserunitdir=%{_libdir}/systemd/user \
                         --enable-debug \
                         --enable-pie \
+%if "%{?tizen_profile_name}" == "mobile"
                         --enable-network \
-                        --enable-serial \
+%endif
+			--enable-serial \
                         --enable-input \
                         --enable-usb=no \
                         --enable-tools \
@@ -99,36 +110,43 @@ cd mobile
                         --enable-hid2hci=no \
                         --enable-alsa=no \
                         --enable-gstreamer=no \
-                        --disable-dfutool \
-                        --disable-cups \
+			--disable-dfutool \
+			--disable-cups \
 			--enable-health \
 			--enable-dbusoob \
 			--enable-test \
-                        --with-telephony=tizen
+			--with-telephony=tizen \
+			--enable-obex \
+			--enable-library \
+%if "%{?tizen_profile_name}" == "wearable"
+			--enable-gatt \
+			--enable-wearable \
+%endif
+			--enable-experimental
 
 make %{?jobs:-j%jobs}
 
 %install
 rm -rf %{buildroot}
-
-%if %{_repository}=="wearable"
-cd wearable
-%elseif %{_repository}=="mobile"
-cd mobile
-%endif
-
 %make_install
-install -D -m 0644 audio/audio.conf %{buildroot}%{_sysconfdir}/bluetooth/audio.conf
-install -D -m 0644 network/network.conf %{buildroot}%{_sysconfdir}/bluetooth/network.conf
+
+%if "%{?tizen_profile_name}" == "wearable"
+install -D -m 0644 src/main_w.conf %{buildroot}%{_sysconfdir}/bluetooth/main.conf
+%elseif "%{?tizen_profile_name}" == "mobile"
+install -D -m 0644 src/main_m.conf %{buildroot}%{_sysconfdir}/bluetooth/main.conf
+%endif
+install -D -m 0644 src/bluetooth.conf %{buildroot}%{_sysconfdir}/dbus-1/system.d/bluetooth.conf
+install -D -m 0644 profiles/audio/audio.conf %{buildroot}%{_sysconfdir}/bluetooth/audio.conf
+install -D -m 0644 profiles/network/network.conf %{buildroot}%{_sysconfdir}/bluetooth/network.conf
 
 install -D -m 0644 COPYING %{buildroot}%{_datadir}/license/bluez
 install -D -m 0644 COPYING %{buildroot}%{_datadir}/license/libbluetooth3
 install -D -m 0644 COPYING %{buildroot}%{_datadir}/license/libbluetooth-devel
-%if %{_repository}=="mobile"
-install -D -m 0644 COPYING %{buildroot}%{_datadir}/license/bluez-test
 
-ln -s bluetooth.service %{buildroot}%{_libdir}/systemd/system/dbus-org.bluez.service
-%endif
+install -D -m 0755 %SOURCE101 %{buildroot}%{_bindir}/obex-root-setup
+install -D -m 0755 %SOURCE102 %{buildroot}%{_sysconfdir}/obex/root-setup.d/000_create-symlinks
+
+ln -sf bluetooth.service %{buildroot}%{_libdir}/systemd/system/dbus-org.bluez.service
 
 %post -n libbluetooth3 -p /sbin/ldconfig
 
@@ -136,41 +154,33 @@ ln -s bluetooth.service %{buildroot}%{_libdir}/systemd/system/dbus-org.bluez.ser
 
 
 %files
-%if %{_repository}=="wearable"
-%manifest wearable/bluez.manifest
-%elseif %{_repository}=="mobile"
-%manifest mobile/bluez.manifest
-%endif
+%manifest bluez.manifest
 %defattr(-,root,root,-)
 %{_sysconfdir}/bluetooth/audio.conf
 %{_sysconfdir}/bluetooth/main.conf
 %{_sysconfdir}/bluetooth/network.conf
-%{_sysconfdir}/bluetooth/rfcomm.conf
+#%{_sysconfdir}/bluetooth/rfcomm.conf
 %{_sysconfdir}/dbus-1/system.d/bluetooth.conf
 %{_datadir}/man/*/*
-%{_sbindir}/bluetoothd
-%{_sbindir}/hciconfig
-%{_sbindir}/hciattach
+%{_libdir}/bluetooth/bluetoothd
+%{_bindir}/hciconfig
+%{_bindir}/hciattach
 %exclude %{_bindir}/ciptool
 %{_bindir}/l2ping
 %{_bindir}/sdptool
 %{_bindir}/gatttool
+%{_bindir}/btgatt-client
 %{_bindir}/rfcomm
 %{_bindir}/hcitool
 %dir %{_libdir}/bluetooth/plugins
-%if %{_repository}=="mobile"
-%if 0%{?simulator}
-%exclude %{_libdir}/systemd/system/bluetooth.service
-%exclude %{_libdir}/systemd/system/dbus-org.bluez.service
-%else
 %{_libdir}/systemd/system/bluetooth.service
 %{_libdir}/systemd/system/dbus-org.bluez.service
-%endif
-%endif
 %dir %{_localstatedir}/lib/bluetooth
+%dir %{_libexecdir}/bluetooth
 %{_datadir}/dbus-1/system-services/org.bluez.service
 %{_datadir}/license/bluez
-
+%{_libdir}/udev/hid2hci
+%{_libdir}/udev/rules.d/97-hid2hci.rules
 
 %files -n libbluetooth3
 %defattr(-,root,root,-)
@@ -185,11 +195,23 @@ ln -s bluetooth.service %{buildroot}%{_libdir}/systemd/system/dbus-org.bluez.ser
 %{_libdir}/pkgconfig/bluez.pc
 %{_datadir}/license/libbluetooth-devel
 
+%files -n obexd
+%dir %{_libdir}/obex/plugins
+%manifest obexd.manifest
+%defattr(-,root,root,-)
+%{_libexecdir}/bluetooth/obexd
+%{_libdir}/systemd/user/obex.service
+%{_datadir}/dbus-1/services/org.bluez.obex.service
+%{_sysconfdir}/obex/root-setup.d/000_create-symlinks
+%{_bindir}/obex-root-setup
+
 %files -n bluez-test
 %defattr(-,root,root,-)
-%{_sbindir}/hciemu
+%{_libdir}/bluez/test/*
 %{_bindir}/l2test
 %{_bindir}/rctest
-%if %{_repository}=="mobile"
-%{_datadir}/license/bluez-test
-%endif
+%{_bindir}/bccmd
+%{_bindir}/bluetoothctl
+%{_bindir}/btmon
+%{_bindir}/hcidump
+%{_bindir}/bluemoon
