@@ -27,6 +27,10 @@ typedef void (*oob_read_cb_t) (struct btd_adapter *adapter, uint8_t *hash,
 							uint8_t *randomizer);
 
 void oob_register_cb(oob_read_cb_t cb);
-
+#ifdef __TIZEN_PATCH__
+void oob_read_local_data_complete(struct btd_adapter *adapter, uint8_t *hash,
+							uint8_t *randomizer, void *user_data);
+#else
 void oob_read_local_data_complete(struct btd_adapter *adapter, uint8_t *hash,
 							uint8_t *randomizer);
+#endif

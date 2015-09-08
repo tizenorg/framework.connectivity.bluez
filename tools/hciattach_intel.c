@@ -35,9 +35,9 @@
 #include <sys/ioctl.h>
 #include <time.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
+#include "lib/bluetooth.h"
+#include "lib/hci.h"
+#include "lib/hci_lib.h"
 
 #include "hciattach.h"
 
@@ -148,14 +148,13 @@ static int validate_events(struct patch_entry *event,
  */
 static int get_next_patch_entry(int fd, struct patch_entry *entry)
 {
-	int len, size;
+	int size;
 	char rb;
 
 	if (read(fd, &rb, 1) <= 0)
 		return 0;
 
 	entry->type = rb;
-	len = 0;
 
 	switch (entry->type) {
 	case PATCH_TYPE_CMD:
@@ -176,7 +175,7 @@ static int get_next_patch_entry(int fd, struct patch_entry *entry)
 	case PATCH_TYPE_EVT:
 		entry->data[0] = HCI_EVENT_PKT;
 
-		if (read(fd, &entry->data[len], 2) < 0)
+		if (read(fd, &entry->data[1], 2) < 0)
 			return -1;
 
 		size = (int)entry->data[2];
@@ -193,7 +192,7 @@ static int get_next_patch_entry(int fd, struct patch_entry *entry)
 		return -1;
 	}
 
-	return len;
+	return entry->len;
 }
 
 /**

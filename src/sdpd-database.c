@@ -28,20 +28,15 @@
 #include <config.h>
 #endif
 
-#include <stdio.h>
-#include <errno.h>
 #include <stdlib.h>
-#include <sys/socket.h>
+#include <stdbool.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/l2cap.h>
-#include <bluetooth/sdp.h>
-#include <bluetooth/sdp_lib.h>
+#include "lib/bluetooth.h"
+#include "lib/sdp.h"
+#include "lib/sdp_lib.h"
 
 #include "sdpd.h"
 #include "log.h"
-#include "adapter.h"
-#include "manager.h"
 
 static sdp_list_t *service_db;
 static sdp_list_t *access_db;
@@ -93,7 +88,10 @@ static void access_free(void *p)
 void sdp_svcdb_reset(void)
 {
 	sdp_list_free(service_db, (sdp_free_func_t) sdp_record_free);
+	service_db = NULL;
+
 	sdp_list_free(access_db, access_free);
+	access_db = NULL;
 }
 
 typedef struct _indexed {
@@ -160,6 +158,12 @@ static int compare_indices(const void *i1, const void *i2)
 void sdp_svcdb_set_collectable(sdp_record_t *record, int sock)
 {
 	sdp_indexed_t *item = malloc(sizeof(sdp_indexed_t));
+
+	if (!item) {
+		SDPDBG("No memory");
+		return;
+	}
+
 	item->sock = sock;
 	item->record = record;
 	socket_index = sdp_list_insert_sorted(socket_index, item, compare_indices);
@@ -170,7 +174,6 @@ void sdp_svcdb_set_collectable(sdp_record_t *record, int sock)
  */
 void sdp_record_add(const bdaddr_t *device, sdp_record_t *rec)
 {
-	struct btd_adapter *adapter;
 	sdp_access_t *dev;
 
 	SDPDBG("Adding rec : 0x%lx", (long) rec);
@@ -186,15 +189,6 @@ void sdp_record_add(const bdaddr_t *device, sdp_record_t *rec)
 	dev->handle = rec->handle;
 
 	access_db = sdp_list_insert_sorted(access_db, dev, access_sort);
-
-	if (bacmp(device, BDADDR_ANY) == 0) {
-		manager_foreach_adapter(adapter_service_insert, rec);
-		return;
-	}
-
-	adapter = manager_find_adapter(device);
-	if (adapter)
-		adapter_service_insert(adapter, rec);
 }
 
 static sdp_list_t *record_locate(uint32_t handle)
@@ -266,13 +260,6 @@ int sdp_record_remove(uint32_t handle)
 
 	a = p->data;
 
-	if (bacmp(&a->device, BDADDR_ANY) != 0) {
-		struct btd_adapter *adapter = manager_find_adapter(&a->device);
-		if (adapter)
-			adapter_service_remove(adapter, r);
-	} else
-		manager_foreach_adapter(adapter_service_remove, r);
-
 	access_db = sdp_list_remove(access_db, a);
 	access_free(a);
 
@@ -285,11 +272,6 @@ int sdp_record_remove(uint32_t handle)
 sdp_list_t *sdp_get_record_list(void)
 {
 	return service_db;
-}
-
-sdp_list_t *sdp_get_access_list(void)
-{
-	return access_db;
 }
 
 int sdp_check_access(uint32_t handle, bdaddr_t *device)
@@ -320,27 +302,4 @@ uint32_t sdp_next_handle(void)
 		handle++;
 
 	return handle;
-}
-
-void sdp_init_services_list(bdaddr_t *device)
-{
-	sdp_list_t *p;
-
-	DBG("");
-
-	for (p = access_db; p != NULL; p = p->next) {
-		sdp_access_t *access = p->data;
-		sdp_record_t *rec;
-
-		if (bacmp(BDADDR_ANY, &access->device))
-			continue;
-
-		rec = sdp_record_find(access->handle);
-		if (rec == NULL)
-			continue;
-
-		SDPDBG("adding record with handle %x", access->handle);
-
-		manager_foreach_adapter(adapter_service_insert, rec);
-	}
 }

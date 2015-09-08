@@ -1,44 +1,32 @@
 BlueZ D-Bus Input API description
 *********************************
 
-Copyright (C) 2004-2010  Marcel Holtmann <marcel@holtmann.org>
-
-
 Input hierarchy
 ===============
 
 Service		org.bluez
-Interface	org.bluez.Input
+Interface	org.bluez.Input1
 Object path	[variable prefix]/{hci0,hci1,...}/dev_XX_XX_XX_XX_XX_XX
 
-Methods		void Connect()
+Properties	string ReconnectMode [readonly]
 
-			Connect to the input device.
+			Determines the Connectability mode of the HID device as
+			defined by the HID Profile specification, Section 5.4.2.
 
-			Possible errors: org.bluez.Error.AlreadyConnected
-					 org.bluez.Error.ConnectionAttemptFailed
+			This mode is based in the two properties
+			HIDReconnectInitiate (see Section 5.3.4.6) and
+			HIDNormallyConnectable (see Section 5.3.4.14) which
+			define the following four possible values:
 
-		void Disconnect()
+			"none"		Device and host are not required to
+					automatically restore the connection.
 
-			Disconnect from the input device.
+			"host"		Bluetooth HID host restores connection.
 
-			To abort a connection attempt in case of errors or
-			timeouts in the client it is fine to call this method.
+			"device"	Bluetooth HID device restores
+					connection.
 
-			Possible errors: org.bluez.Error.Failed
-
-		dict GetProperties()
-
-			Returns all properties for the interface. See the
-			properties section for available properties.
-
-			Possible Errors: org.bluez.Error.InvalidArguments
-
-Signals		PropertyChanged(string name, variant value)
-
-			This signal indicates a changed value of the given
-			property.
-
-Properties	boolean Connected [readonly]
-
-			Indicates if the device is connected.
+			"any"		Bluetooth HID device shall attempt to
+					restore the lost connection, but
+					Bluetooth HID Host may also restore the
+					connection.

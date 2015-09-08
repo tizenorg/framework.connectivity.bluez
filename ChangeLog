@@ -1,3 +1,289 @@
+ver 5.28:
+	Fix issue with GATT device discovery and probing.
+	Fix issue with bearer selection for dual-mode devices.
+	Fix issue with device removal while connected.
+	Fix issue with device name setting from inquiry response.
+	Fix issue with missing termination of name characteristic.
+	Fix issue with UTF-8 length handling for device name.
+	Fix issue with AVCTP key auto release handling.
+	Fix issue with AVCTP key press repetition handling.
+	Fix issue with payload sizes and GATT notifications.
+	Fix issue with memory corruption and GATT notifications.
+	Add support for HID proxy switching and CSR 8510 A10 devices.
+	Add support for Broadcom hex2hcd conversion utility.
+
+ver 5.27:
+	Fix issue with endian handling and management interface.
+	Fix issue with pending GATT operations when disconnecting.
+	Fix issue with 128-bit UUID conversions for HID over GATT.
+	Add support for Android 5.0 SELinux policies.
+
+ver 5.26:
+	Fix issue with handling A2DP XCASE connection state.
+	Fix issue with crash and A2DP configuration failures.
+	Fix issue with crash during OBEX session shutdown.
+	Add support for version 1.2 of Phonebook Access Profile.
+	Add support for HID over GATT get and set report handling.
+	Add support for Low Energy Secure Connections feature.
+	Add support for Bluetooth 4.2 commands and events.
+	Add support for Android 5.0 Bluetooth features.
+
+ver 5.25:
+	Fix issue with SCO connection after codec negotiation.
+	Fix issue with GATT and secondary service discovery.
+	Fix issue with GATT write descriptor callback.
+	Fix issue with MAP supported features bits.
+	Add support for MAP local time and timezone offset.
+	Add support for PBAP speed-dial and favorites folders.
+	Add support for PBAP speed-dial and identifier filters.
+	Add support for controller mode configuration option.
+	Add initial support for Android Lollipop features.
+
+ver 5.24:
+	Fix issue with storing of connection parameters.
+	Add support for Phonebook Access Profile 1.2 features.
+	Add support for Message Access Profile 1.2 event reports.
+	Add support for Android Bluetooth configuration options.
+
+ver 5.23:
+	Fix issue with concurrent authorization requests.
+	Fix issue with HID report identifier mismatch.
+	Fix issue with crash when receiving uHID events.
+	Fix issue with crash and OBEX disconnect handling.
+	Fix issue with OBEX client transfers and suspend.
+	Fix issue with parsing of MAP application parameters.
+	Fix issue with devices rejecting AVRCP GetCapabilities.
+	Add support for kernel whitelist and Android Bluetooth.
+
+ver 5.22:
+	Fix issue with UHID_OUTPUT events mapping.
+	Fix issue with UHID_FEATURE events handling.
+	Fix issue with UINT32_MAX overflow and AVRCP.
+	Fix issue when dirent type DT_UNKNOWN is returned.
+	Add support for kernel whitelist filtering feature.
+	Add support for Android Bluetooth GATT over BR/EDR.
+
+ver 5.21:
+	Fix issue with SDP requests and wrong PDU size.
+	Fix issue with handling passive scanning triggers.
+	Add support for storing and loading connection parameters.
+	Add support for kernel background auto-connection feature.
+	Add support for Android Bluetooth Scan Parameters feature.
+	Add support for Android Bluetooth Device Information feature.
+	Add support for Android Bluetooth Health Device interface.
+
+ver 5.20:
+	Fix issue with LED handling of PS3 controllers.
+	Add support for Android Bluetooth GATT server interface.
+	Add support for Android Bluetooth HID over GATT feature.
+	Add support for Android Bluetooth multi-profile feature.
+	Add support for Android Bluetooth aptX audio integration.
+
+	Note: aptX codec not included
+
+ver 5.19:
+	Fix issue with OBEX Put-Delete and Create-Empty methods.
+	Fix issue with AVRCP browsable/searchable player properties.
+	Fix issue with handling multiple default agents.
+	Fix issue with handling unpair event per bearer.
+	Fix issue with HID over GATT report ID presence.
+	Add support for HID protocol handling in userspace.
+	Add support for Bluetooth reconnection policy framework.
+	Add support for Android Bluetooth SCO over HCI transport.
+	Add support for Android Bluetooth audio quality control.
+	Add support for Android Bluetooth Low Energy only mode.
+
+ver 5.18:
+	Fix issue with identifying LE single mode devices.
+	Fix issue with L2CAP and RFCOMM peer address lookup.
+	Add support for handling OBEX authentication procedure.
+	Add support for Android Bluetooth GATT client interface.
+
+ver 5.17:
+	Fix issue with not resetting OBEX SRM setup.
+	Fix issue with BR/EDR devices and auto-connect list.
+	Fix issue with bonding complete detection as peripheral.
+	Fix issue with not updating bearer timestamp of connections.
+	Fix issue with paired property for multiple bearers.
+	Add support for Android Bluetooth Handsfree interface.
+	Add support for Android Bluetooth Wideband speech.
+
+ver 5.16:
+	Fix issue with HID over GATT physical location.
+	Fix issue with HID over GATT unique identifier.
+	Fix issue with missing paired property notification.
+	Fix issue with endianess of long term key storage.
+	Add support for storing signature resolving keys.
+	Add support for Android Bluetooth AVRCP interface.
+
+ver 5.15:
+	Fix issue with LE enabling and background scanning.
+	Fix issue with HID over GATT input device name.
+	Fix issue with storage of slave long term keys.
+	Add support for handling identity resolving keys.
+	Add support for Android Bluetooth A2DP interface.
+	Add support for Android Bluetooth audio interface.
+
+ver 5.14:
+	Fix issue with marking PS3 controllers as trusted.
+	Fix issue with authorization of PS3 controllers.
+	Add support for DualShock 4 controller detection.
+	Add support for legacy pairing emulation.
+	Add support for secure simple pairing emulation.
+	Add support for automated pairing testing.
+	Add support for RFCOMM protocol testing.
+	Add support for HCI controller testing.
+
+ver 5.13:
+	Fix issue with PS3 controller detection.
+	Add support for data transfers to L2CAP testing tool.
+	Add support for delay reporting to AVDTP testing tool.
+	Add support for Android Bluetooth Core interface.
+	Add support for Android Bluetooth Socket interface.
+	Add support for Android Bluetooth HID Host interface.
+	Add support for Android Bluetooth PAN interface.
+
+ver 5.12:
+	Fix issue with missing reply to DisconnectProfile.
+	Fix issue with icon property and class of device changes.
+	Fix issue with HID devices when SDP record is not available.
+	Fix issue with handling auto-pairing of printers.
+	Fix issue with agent authorization handling.
+	Add support for PS3 controller setup and pairing.
+	Add support for LE L2CAP CoC test capabilities.
+	Add support for AVDTP qualification test cases.
+	Add support for SMP cryptographic test cases.
+
+ver 5.11:
+	Fix issue with connection attempt when not powered.
+	Fix issue with assigning player to AVRCP target role.
+	Fix issue with OBEX default cache directory.
+	Fix issue with SDP search error handling.
+	Fix issue with processing of SDP records.
+	Fix issue with HID to HCI switching utility.
+	Fix issue with mgmt end-to-end testing tool.
+	Fix issue with L2CAP end-to-end testing tool.
+	Add support for SMP end-to-end testing tool.
+	Add support for more Wii controllers.
+
+ver 5.10:
+	Fix issue with discoverable timeout handling.
+	Fix issue with MAP messages and record version.
+	Fix issue with MAP messages and status events.
+	Fix issue with MAP messages and relative folders.
+	Fix issue with MAP messages and type property signals.
+	Fix issue with transfer size for OBEX GET operations.
+	Fix issue with AVRCP service class identifier.
+	Fix issue with AVRCP tracking seeked signal.
+	Add support for OBEX command line client.
+
+ver 5.9:
+	Fix issue with network service and adapter removal.
+	Fix issue with misleading OBEX error messages.
+	Fix issue with OBEX transport reference handling.
+	Fix issue with memory leak with MAP event handler.
+	Fix issue with missing MAP property changed signal.
+	Fix issue with message type property values.
+	Fix issue with empty UUID list for devices.
+	Fix issue with profile agent cancel method.
+	Remove dependency on USB library.
+
+ver 5.8:
+	Fix issue with missing OBEX session properties.
+	Fix issue with missing SDP service refresh.
+	Fix issue with SDP attribute range check.
+	Fix issue with priority for SDP transactions.
+	Fix issue with service discovery after pairing.
+	Fix issue with race condition in service list.
+	Fix issue with input service state transition.
+	Fix issue with default authorization for profiles.
+	Fix issue with AVRCP browsing channel connections.
+	Add support for AVRCP role agnostic sessions.
+
+ver 5.7:
+	Fix issue with missing UUID discovery during pairing.
+	Fix issue with broken patch for SDP range check handling.
+	Fix issue with AVRCP usage of UID=0 for paused/stopped.
+	Add support MAP notification dispatching.
+
+ver 5.6:
+	Fix issue with incoming connections without SDP record.
+	Fix issue with canceling ongoing device connections.
+	Fix issue with handling failed connection attempts.
+	Fix issue with pending resume during A2DP open failures.
+	Fix issue with registering AVRCP unsupported notification.
+	Fix issue with listing available AVRCP target settings.
+	Fix issue with missing error for OBEX SetPath commands.
+	Fix issue with missing OBEX session command queue.
+	Fix issue with retrieving multiple MAP event reports.
+	Add support for command line player utility.
+
+ver 5.5:
+	Fix issue with race condition between SDP and properties.
+	Fix issue with handling storage of private device addresses.
+	Fix issue with NFC out-of-band pairing and power states.
+	Fix issue with short name during device update handling.
+	Fix issue with handling AVRCP without A2DP being present.
+	Add support for handling AVRCP pass-through operations.
+	Add support for automatically reconnecting HID devices.
+	Add support for automatically pairing of devices.
+
+ver 5.4:
+	Fix issue with invalid memory access and SDP service search.
+	Add support for available player changed event for controller.
+	Add support for UIDs changed event for AVRCP controller.
+	Add support for mandatory AVRCP pass-through operations.
+	Add support for Message Notification Service (MNS) server.
+	Add support for agent methods within command line client.
+
+ver 5.3:
+	Fix issue with registering invalid profiles.
+	Fix issue with inconsistent A2DP transport state.
+	Fix issue with A2DP resume while in configured state.
+	Fix issue with buffer overflow when processing SDP response.
+	Fix issue with missing range check for SDP attribute response.
+	Fix issue with missing validation of SDP data elements.
+	Fix issue with missing fallback to static hostname.
+	Fix issue with default adapter assignment.
+
+ver 5.2:
+	Fix issue with connection handling for Low Energy.
+	Fix issue with broken device discovery handling.
+	Fix issue with invalid memory access within A2DP.
+	Fix issue with handling empty path name of SetPath.
+	Fix issue with handling Message Access Profile filters.
+	Fix issue with handling network service unregistration.
+	Fix issue with not handling bogus device pairing results.
+	Fix issue with initial service discovery and profile manager.
+	Add support for AVRCP volume notifications.
+	Add support for AVRCP browsing commands.
+
+ver 5.1:
+	Fix issue with crash when removing OBEX session.
+	Fix issue with HID device disconnected from kernel.
+	Fix issue with buffer overflow when parsing HID SDP record.
+	Fix issue with SDP_TEXT_STR16 and SDP_URL_STR16 parsing.
+	Add support for integration with systemd's hostname daemon.
+	Add support for separate adapter alias property.
+	Add support for adapter and device modalias properties.
+	Add support for official BlueZ device information.
+	Add support for asynchronous management interface handling.
+	Add tool for testing management interface compliance.
+	Add tool for testing SDP qualification requirements.
+	Add tool for testing various EIR and AD data records.
+
+ver 5.0:
+	Introduce D-Bus Properties and ObjectManager interfaces.
+	Add support for generic profile interface.
+	Add support for global agent interface.
+	Add support for integrated OBEX daemon.
+	Add support for integrated hcidump utility.
+	Add support for Bluetooth tracing and monitor utility.
+	Add support for Bluetooth command line client utility.
+	Remove support for Handsfree gateway handling.
+	Remove support for GStreamer A2DP and SBC elements.
+	Disable default installation of Bluetooth library.
+
 ver 4.101:
 	Fix issue with missing BlueZ service file.
 	Fix issue with aborting A2DP setup during AVDTP start.

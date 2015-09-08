@@ -182,6 +182,18 @@ typedef struct {
 } __attribute__ ((packed)) l2cap_conf_opt;
 #define L2CAP_CONF_OPT_SIZE 2
 
+#ifdef __TIZEN_PATCH__
+typedef struct {
+	uint8_t    mode;
+	uint8_t    txwin_size;
+	uint8_t    max_transmit;
+	uint16_t   retrans_timeout;
+	uint16_t   monitor_timeout;
+	uint16_t   max_pdu_size;
+} __attribute__ ((packed)) l2cap_conf_rfc ;
+#define L2CAP_CONF_RFC_SIZE 9
+#endif
+
 #define L2CAP_CONF_MTU		0x01
 #define L2CAP_CONF_FLUSH_TO	0x02
 #define L2CAP_CONF_QOS		0x03

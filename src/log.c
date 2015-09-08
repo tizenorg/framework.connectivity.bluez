@@ -80,7 +80,7 @@ void btd_debug(const char *format, ...)
 extern struct btd_debug_desc __start___debug[];
 extern struct btd_debug_desc __stop___debug[];
 
-static gchar **enabled = NULL;
+static char **enabled = NULL;
 
 static gboolean is_enabled(struct btd_debug_desc *desc)
 {
@@ -118,6 +118,27 @@ void __btd_toggle_debug(void)
 	for (desc = __start___debug; desc < __stop___debug; desc++)
 		desc->flags |= BTD_DEBUG_FLAG_PRINT;
 }
+
+#ifdef __TIZEN_PATCH__
+void __hci_attach_log_init(void)
+{
+	int option = LOG_NDELAY | LOG_PID;
+
+	/* Fix : RESOURCE_LEAK */
+	char *str = g_strdup("*");
+
+	enabled = g_strsplit_set(str, ":, ", 0);
+
+	__btd_enable_debug(__start___debug, __stop___debug);
+
+	openlog("hciattach", option, LOG_DAEMON);
+
+	syslog(LOG_INFO, "hciattach daemon for debugging");
+
+	g_free(str);
+}
+#endif
+
 
 void __btd_log_init(const char *debug, int detach)
 {

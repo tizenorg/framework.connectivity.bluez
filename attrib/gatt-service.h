@@ -24,9 +24,27 @@
 
 typedef enum {
 	GATT_OPT_INVALID = 0,
+
+	/* bt_uuid_t* value */
 	GATT_OPT_CHR_UUID,
+
+	/* a uint16 value */
+	GATT_OPT_CHR_UUID16,
+
+#ifdef __TIZEN_PATCH__
+	/* bt_uuid_t* value */
+	GATT_OPT_DESC_UUID,
+
+	/* a uint16 value */
+	GATT_OPT_DESC_UUID16,
+#endif
+
 	GATT_OPT_CHR_PROPS,
 	GATT_OPT_CHR_VALUE_CB,
+#ifdef __TIZEN_PATCH__
+	GATT_OPT_DESC_PROPS,
+	GATT_OPT_DESC_VALUE_CB,
+#endif
 	GATT_OPT_CHR_AUTHENTICATION,
 	GATT_OPT_CHR_AUTHORIZATION,
 
@@ -49,3 +67,27 @@ typedef enum {
 
 gboolean gatt_service_add(struct btd_adapter *adapter, uint16_t uuid,
 					bt_uuid_t *svc_uuid, gatt_option opt1, ...);
+#ifdef __TIZEN_PATCH__
+bool gatt_add_descriptor(struct btd_adapter *adapter, uint16_t *handle,
+					uint16_t start_handle, gatt_option opt1, ...);
+bool gatt_add_characteristic(struct btd_adapter *adapter,
+				uint16_t *handle, uint16_t start_handle,
+				 gatt_option opt1, ...);
+uint16_t gatt_prim_service_add(struct btd_adapter *adapter, uint16_t uuid,
+				bt_uuid_t *svc_uuid, unsigned int size,
+				uint16_t *start_handle);
+void attrib_remove_service(struct btd_adapter *adapter, uint16_t start_handle,
+							uint16_t end_handle);
+bool gatt_update_db(struct btd_adapter *adapter, const bt_uuid_t *uuid,
+					uint8_t *value, size_t len);
+bool gatt_send_noty_ind(struct btd_adapter *adapter, const bt_uuid_t *uuid,
+					uint8_t *value, size_t len);
+bool gatt_send_service_changed_ind(struct btd_adapter *adapter, bt_uuid_t *uuid,
+                    uint16_t start_handle, uint16_t end_handle);
+#endif
+#if 0
+guint gatt_char_value_notify(GAttrib *attrib, uint16_t handle, uint8_t *value,
+					int vlen, GAttribResultFunc func,	gpointer user_data);
+guint gatt_char_value_indicate(GAttrib *attrib, uint16_t handle, uint8_t *value,
+					int vlen, GAttribResultFunc func,	gpointer user_data);
+#endif

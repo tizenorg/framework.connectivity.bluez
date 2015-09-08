@@ -37,9 +37,9 @@
 #include <sys/param.h>
 #include <sys/ioctl.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
+#include "lib/bluetooth.h"
+#include "lib/hci.h"
+#include "lib/hci_lib.h"
 
 #include "hciattach.h"
 
@@ -60,7 +60,7 @@
 #define FIRMWARE_DIRECTORY1	"/mnt/mmc/"
 #define FIRMWARE_DIRECTORY2	"/usr/etc/bluetooth/"
 #else
-#define FIRMWARE_DIRECTORY	"/lib/firmware/"
+#define FIRMWARE_DIRECTORY	"/lib/firmware/ti-connectivity/"
 #endif
 
 #define ACTION_SEND_COMMAND	1
@@ -115,10 +115,10 @@ struct bts_action_serial {
 	uint32_t flow_control;
 }__attribute__ ((packed));
 
-static FILE *bts_load_script(const char* file_name, uint32_t* version)
+static FILE *bts_load_script(const char *file_name, uint32_t *version)
 {
 	struct bts_header header;
-	FILE* fp;
+	FILE *fp;
 
 	fp = fopen(file_name, "rb");
 	if (!fp) {
@@ -147,8 +147,8 @@ errclose:
 	return NULL;
 }
 
-static unsigned long bts_fetch_action(FILE* fp, unsigned char* action_buf,
-				unsigned long buf_size, uint16_t* action_type)
+static unsigned long bts_fetch_action(FILE *fp, unsigned char *action_buf,
+				unsigned long buf_size, uint16_t *action_type)
 {
 	struct bts_action action_hdr;
 	unsigned long nread;
@@ -175,7 +175,7 @@ static unsigned long bts_fetch_action(FILE* fp, unsigned char* action_buf,
 	return nread * sizeof(uint8_t);
 }
 
-static void bts_unload_script(FILE* fp)
+static void bts_unload_script(FILE *fp)
 {
 	if (fp)
 		fclose(fp);
@@ -260,7 +260,7 @@ static int brf_set_serial_params(struct bts_action_serial *serial_action,
 	return 0;
 }
 
-static int brf_send_command_socket(int fd, struct bts_action_send* send_action)
+static int brf_send_command_socket(int fd, struct bts_action_send *send_action)
 {
 	char response[1024] = {0};
 	hci_command_hdr *cmd = (hci_command_hdr *) send_action->data;
@@ -290,7 +290,8 @@ static int brf_send_command_socket(int fd, struct bts_action_send* send_action)
 	return 0;
 }
 
-static int brf_send_command_file(int fd, struct bts_action_send* send_action, long size)
+static int brf_send_command_file(int fd, struct bts_action_send *send_action,
+								long size)
 {
 	unsigned char response[1024] = {0};
 	long ret = 0;
@@ -319,7 +320,8 @@ static int brf_send_command_file(int fd, struct bts_action_send* send_action, lo
 }
 
 
-static int brf_send_command(int fd, struct bts_action_send* send_action, long size, int hcill_installed)
+static int brf_send_command(int fd, struct bts_action_send *send_action,
+						long size, int hcill_installed)
 {
 	int ret = 0;
 	char *fixed_action;
@@ -343,7 +345,9 @@ static int brf_do_action(uint16_t brf_type, uint8_t *brf_action, long brf_size,
 	switch (brf_type) {
 	case ACTION_SEND_COMMAND:
 		DPRINTF("W");
-		ret = brf_send_command(fd, (struct bts_action_send*) brf_action, brf_size, hcill_installed);
+		ret = brf_send_command(fd,
+					(struct bts_action_send *) brf_action,
+					brf_size, hcill_installed);
 		break;
 	case ACTION_WAIT_EVENT:
 		DPRINTF("R");

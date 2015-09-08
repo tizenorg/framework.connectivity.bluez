@@ -34,7 +34,7 @@ extern "C" {
 
 #define HCI_MAX_DEV	16
 
-#define HCI_MAX_ACL_SIZE	1024
+#define HCI_MAX_ACL_SIZE	(1492 + 4)
 #define HCI_MAX_SCO_SIZE	255
 #define HCI_MAX_EVENT_SIZE	260
 #define HCI_MAX_FRAME_SIZE	(HCI_MAX_ACL_SIZE + 4)
@@ -55,6 +55,10 @@ extern "C" {
 #define HCI_RS232	4
 #define HCI_PCI		5
 #define HCI_SDIO	6
+
+#ifdef __TIZEN_PATCH__
+#define HCI_SMD		7
+#endif
 
 /* HCI controller types */
 #define HCI_BREDR	0x00
@@ -560,6 +564,13 @@ typedef struct {
 #define CREATE_PHYSICAL_LINK_CP_SIZE 35
 
 #define OCF_ACCEPT_PHYSICAL_LINK		0x0036
+typedef struct {
+	uint8_t		handle;
+	uint8_t		key_length;
+	uint8_t		key_type;
+	uint8_t		key[32];
+} __attribute__ ((packed)) accept_physical_link_cp;
+#define ACCEPT_PHYSICAL_LINK_CP_SIZE 35
 
 #define OCF_DISCONNECT_PHYSICAL_LINK		0x0037
 typedef struct {
@@ -650,9 +661,9 @@ typedef struct {
 } __attribute__ ((packed)) hci_qos;
 #define HCI_QOS_CP_SIZE 17
 typedef struct {
-	uint16_t 	handle;
-	uint8_t 	flags;			/* Reserved */
-	hci_qos 	qos;
+	uint16_t	handle;
+	uint8_t		flags;			/* Reserved */
+	hci_qos		qos;
 } __attribute__ ((packed)) qos_setup_cp;
 #define QOS_SETUP_CP_SIZE (3 + HCI_QOS_CP_SIZE)
 
@@ -681,7 +692,7 @@ typedef struct {
 } __attribute__ ((packed)) read_link_policy_cp;
 #define READ_LINK_POLICY_CP_SIZE 2
 typedef struct {
-	uint8_t 	status;
+	uint8_t		status;
 	uint16_t	handle;
 	uint16_t	policy;
 } __attribute__ ((packed)) read_link_policy_rp;
@@ -694,7 +705,7 @@ typedef struct {
 } __attribute__ ((packed)) write_link_policy_cp;
 #define WRITE_LINK_POLICY_CP_SIZE 4
 typedef struct {
-	uint8_t 	status;
+	uint8_t		status;
 	uint16_t	handle;
 } __attribute__ ((packed)) write_link_policy_rp;
 #define WRITE_LINK_POLICY_RP_SIZE 3
@@ -1326,6 +1337,14 @@ typedef struct {
 } __attribute__ ((packed)) read_bd_addr_rp;
 #define READ_BD_ADDR_RP_SIZE 7
 
+#define OCF_READ_DATA_BLOCK_SIZE	0x000A
+typedef struct {
+	uint8_t		status;
+	uint16_t	max_acl_len;
+	uint16_t	data_block_len;
+	uint16_t	num_blocks;
+} __attribute__ ((packed)) read_data_block_size_rp;
+
 /* Status params */
 #define OGF_STATUS_PARAM	0x05
 
@@ -1342,7 +1361,7 @@ typedef struct {
 	uint8_t		status;
 	uint16_t	handle;
 } __attribute__ ((packed)) reset_failed_contact_counter_rp;
-#define RESET_FAILED_CONTACT_COUNTER_RP_SIZE 4
+#define RESET_FAILED_CONTACT_COUNTER_RP_SIZE 3
 
 #define OCF_READ_LINK_QUALITY		0x0003
 typedef struct {
@@ -1402,22 +1421,23 @@ typedef struct {
 #define OCF_READ_LOCAL_AMP_ASSOC	0x000A
 typedef struct {
 	uint8_t		handle;
-	uint16_t	len_so_far;
-	uint16_t	max_len;
+	uint16_t	length_so_far;
+	uint16_t	assoc_length;
 } __attribute__ ((packed)) read_local_amp_assoc_cp;
-
+#define READ_LOCAL_AMP_ASSOC_CP_SIZE 5
 typedef struct {
 	uint8_t		status;
 	uint8_t		handle;
-	uint16_t	rem_len;
-	uint8_t		frag[0];
+	uint16_t	length;
+	uint8_t		fragment[HCI_MAX_NAME_LENGTH];
 } __attribute__ ((packed)) read_local_amp_assoc_rp;
+#define READ_LOCAL_AMP_ASSOC_RP_SIZE 252
 
 #define OCF_WRITE_REMOTE_AMP_ASSOC	0x000B
 typedef struct {
 	uint8_t		handle;
 	uint16_t	length_so_far;
-	uint16_t	assoc_length;
+	uint16_t	remaining_length;
 	uint8_t		fragment[HCI_MAX_NAME_LENGTH];
 } __attribute__ ((packed)) write_remote_amp_assoc_cp;
 #define WRITE_REMOTE_AMP_ASSOC_CP_SIZE 253
@@ -1492,7 +1512,7 @@ typedef struct {
 #define OCF_LE_READ_ADVERTISING_CHANNEL_TX_POWER	0x0007
 typedef struct {
 	uint8_t		status;
-	uint8_t		level;
+	int8_t		level;
 } __attribute__ ((packed)) le_read_advertising_channel_tx_power_rp;
 #define LE_READ_ADVERTISING_CHANNEL_TX_POWER_RP_SIZE 2
 
@@ -1690,8 +1710,52 @@ typedef struct {
 } __attribute__ ((packed)) le_test_end_rp;
 #define LE_TEST_END_RP_SIZE 3
 
+#define OCF_LE_ADD_DEVICE_TO_RESOLV_LIST	0x0027
+typedef struct {
+	uint8_t		bdaddr_type;
+	bdaddr_t	bdaddr;
+	uint8_t		peer_irk[16];
+	uint8_t		local_irk[16];
+} __attribute__ ((packed)) le_add_device_to_resolv_list_cp;
+#define LE_ADD_DEVICE_TO_RESOLV_LIST_CP_SIZE 39
+
+#define OCF_LE_REMOVE_DEVICE_FROM_RESOLV_LIST	0x0028
+typedef struct {
+	uint8_t		bdaddr_type;
+	bdaddr_t	bdaddr;
+} __attribute__ ((packed)) le_remove_device_from_resolv_list_cp;
+#define LE_REMOVE_DEVICE_FROM_RESOLV_LIST_CP_SIZE 7
+
+#define OCF_LE_CLEAR_RESOLV_LIST		0x0029
+
+#define OCF_LE_READ_RESOLV_LIST_SIZE		0x002A
+typedef struct {
+	uint8_t		status;
+	uint8_t		size;
+} __attribute__ ((packed)) le_read_resolv_list_size_rp;
+#define LE_READ_RESOLV_LIST_SIZE_RP_SIZE 2
+
+#define OCF_LE_SET_ADDRESS_RESOLUTION_ENABLE	0x002D
+typedef struct {
+	uint8_t		enable;
+} __attribute__ ((packed)) le_set_address_resolution_enable_cp;
+#define LE_SET_ADDRESS_RESOLUTION_ENABLE_CP_SIZE 1
+
 /* Vendor specific commands */
 #define OGF_VENDOR_CMD		0x3f
+
+#ifdef __TIZEN_PATCH__
+#ifdef __BROADCOM_QOS_PATCH__
+#define BRCM_QOS_PRIORITY_NORMAL	0x00
+#define BRCM_QOS_PRIORITY_HIGH		0xFF
+#define BROADCOM_QOS_CMD	0xFC57	/* Only for bcm4329/bcm4330/bcm4334 chipsets */
+typedef struct {
+        uint16_t handle;
+        uint8_t priority;
+} __attribute__ ((__packed__)) broadcom_qos_cp;
+#define BROADCOM_QOS_CP_SIZE 3
+#endif	/* __BROADCOM_QOS_PATCH__ */
+#endif	/* __TIZEN_PATCH__ */
 
 /* ---- HCI Events ---- */
 
@@ -1716,7 +1780,7 @@ typedef struct {
 	uint8_t		link_type;
 	uint8_t		encr_mode;
 } __attribute__ ((packed)) evt_conn_complete;
-#define EVT_CONN_COMPLETE_SIZE 13
+#define EVT_CONN_COMPLETE_SIZE 11
 
 #define EVT_CONN_REQUEST		0x04
 typedef struct {
@@ -1755,7 +1819,7 @@ typedef struct {
 	uint16_t	handle;
 	uint8_t		encrypt;
 } __attribute__ ((packed)) evt_encrypt_change;
-#define EVT_ENCRYPT_CHANGE_SIZE 5
+#define EVT_ENCRYPT_CHANGE_SIZE 4
 
 #define EVT_CHANGE_CONN_LINK_KEY_COMPLETE	0x09
 typedef struct {
@@ -1799,14 +1863,14 @@ typedef struct {
 } __attribute__ ((packed)) evt_qos_setup_complete;
 #define EVT_QOS_SETUP_COMPLETE_SIZE (4 + HCI_QOS_CP_SIZE)
 
-#define EVT_CMD_COMPLETE 		0x0E
+#define EVT_CMD_COMPLETE		0x0E
 typedef struct {
 	uint8_t		ncmd;
 	uint16_t	opcode;
 } __attribute__ ((packed)) evt_cmd_complete;
 #define EVT_CMD_COMPLETE_SIZE 3
 
-#define EVT_CMD_STATUS 			0x0F
+#define EVT_CMD_STATUS			0x0F
 typedef struct {
 	uint8_t		status;
 	uint8_t		ncmd;
@@ -2198,6 +2262,16 @@ typedef struct {
 #define EVT_FLOW_SPEC_MODIFY_COMPLETE_SIZE 3
 
 #define EVT_NUMBER_COMPLETED_BLOCKS		0x48
+typedef struct {
+	uint16_t		handle;
+	uint16_t		num_cmplt_pkts;
+	uint16_t		num_cmplt_blks;
+} __attribute__ ((packed)) cmplt_handle;
+typedef struct {
+	uint16_t		total_num_blocks;
+	uint8_t			num_handles;
+	cmplt_handle		handles[0];
+}  __attribute__ ((packed)) evt_num_completed_blocks;
 
 #define EVT_AMP_STATUS_CHANGE			0x4D
 typedef struct {
@@ -2232,25 +2306,25 @@ typedef struct {
 	uint16_t	opcode;		/* OCF & OGF */
 	uint8_t		plen;
 } __attribute__ ((packed))	hci_command_hdr;
-#define HCI_COMMAND_HDR_SIZE 	3
+#define HCI_COMMAND_HDR_SIZE	3
 
 typedef struct {
 	uint8_t		evt;
 	uint8_t		plen;
 } __attribute__ ((packed))	hci_event_hdr;
-#define HCI_EVENT_HDR_SIZE 	2
+#define HCI_EVENT_HDR_SIZE	2
 
 typedef struct {
 	uint16_t	handle;		/* Handle & Flags(PB, BC) */
 	uint16_t	dlen;
 } __attribute__ ((packed))	hci_acl_hdr;
-#define HCI_ACL_HDR_SIZE 	4
+#define HCI_ACL_HDR_SIZE	4
 
 typedef struct {
 	uint16_t	handle;
 	uint8_t		dlen;
 } __attribute__ ((packed))	hci_sco_hdr;
-#define HCI_SCO_HDR_SIZE 	3
+#define HCI_SCO_HDR_SIZE	3
 
 typedef struct {
 	uint16_t	device;
@@ -2288,6 +2362,7 @@ struct sockaddr_hci {
 #define HCI_DEV_NONE	0xffff
 
 #define HCI_CHANNEL_RAW		0
+#define HCI_CHANNEL_USER	1
 #define HCI_CHANNEL_MONITOR	2
 #define HCI_CHANNEL_CONTROL	3
 
@@ -2346,14 +2421,6 @@ struct hci_conn_info {
 	uint8_t	 out;
 	uint16_t state;
 	uint32_t link_mode;
-#ifdef __TIZEN_PATCH__
-/* Workaround to avoid HID crash during connection n PQ because of the
- * data structure mismatch. This will work for U1 kernel aswell.
- */
-	uint32_t mtu;
-	uint32_t cnt;
-	uint32_t pkts;
-#endif
 };
 
 struct hci_dev_req {

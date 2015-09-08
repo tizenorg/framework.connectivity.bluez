@@ -33,8 +33,13 @@ void oob_register_cb(oob_read_cb_t cb)
 	local_oob_read_cb = cb;
 }
 
+#ifdef __TIZEN_PATCH__
+void oob_read_local_data_complete(struct btd_adapter *adapter, uint8_t *hash,
+							uint8_t *randomizer, void *user_data)
+#else
 void oob_read_local_data_complete(struct btd_adapter *adapter, uint8_t *hash,
 							uint8_t *randomizer)
+#endif
 {
 	if (local_oob_read_cb)
 		local_oob_read_cb(adapter, hash, randomizer);

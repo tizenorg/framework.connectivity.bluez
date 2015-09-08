@@ -1,30 +1,16 @@
 BlueZ D-Bus Thermometer API description
-****************************************
+***************************************
 
 	Santiago Carot-Nemesio <sancane@gmail.com>
 
-Health Thermometer Profile hierarchy
-=====================================
+Health Thermometer Manager hierarchy
+====================================
 
 Service		org.bluez
-Interface	org.bluez.Thermometer
-Object path	[variable prefix]/{hci0,hci1,...}/dev_XX_XX_XX_XX_XX_XX
+Interface	org.bluez.ThermometerManager1
+Object path	[variable prefix]/{hci0,hci1,...}
 
-
-Methods		void SetProperty(string name, variant value)
-
-			Changes the value of the specified property. Only
-			read-write properties can be changed. On success
-			this will emit a PropertyChanged signal.
-
-			Possible Errors: org.bluez.Error.InvalidArguments
-
-		dict GetProperties()
-
-			Returns all properties for the interface. See the
-			Properties section for the available properties.
-
-		RegisterWatcher(object agent)
+Methods		RegisterWatcher(object agent)
 
 			Registers a watcher to monitor scanned measurements.
 			This agent will be notified about final temperature
@@ -36,47 +22,45 @@ Methods		void SetProperty(string name, variant value)
 
 			Unregisters a watcher.
 
-			Final and intermediate temperatures won't be notified to
-			this agent any more.
-
-			Possible Errors: org.bluez.Error.InvalidArguments
-					org.bluez.Error.NotFound
-
 		EnableIntermediateMeasurement(object agent)
 
-			Enables intermediate measurement notifications for this
-			agent if the thermometer supports it.
+			Enables intermediate measurement notifications
+			for this agent. Intermediate measurements will
+			be enabled only for thermometers which support it.
 
 			Possible Errors: org.bluez.Error.InvalidArguments
-					org.bluez.Error.NotSupported
 
 		DisableIntermediateMeasurement(object agent)
 
-			Disables intermediate measurement notifications for this
-			agent. It will disable notifications in the thermometer
-			when the last agent removes the watcher for intermediate
-			measurements.
+			Disables intermediate measurement notifications
+			for this agent. It will disable notifications in
+			thermometers when the last agent removes the
+			watcher for intermediate measurements.
 
 			Possible Errors: org.bluez.Error.InvalidArguments
 					org.bluez.Error.NotFound
 
-Signals		PropertyChanged(string name, variant value)
+Health Thermometer Profile hierarchy
+====================================
 
-			This signal indicates a changed value of the given
-			property.
+Service		org.bluez
+Interface	org.bluez.Thermometer1
+Object path	[variable prefix]/{hci0,hci1,...}/dev_XX_XX_XX_XX_XX_XX
+
 
 Properties	boolean Intermediate [readonly]
 
-			True if the thermometer supports intermediate measurement
-			notifications.
+			True if the thermometer supports intermediate
+			measurement notifications.
 
 		uint16 Interval (optional) [readwrite]
 
-			The Measurement Interval defines the time (in seconds)
-			between measurements. This interval is not related to
-			the intermediate measurements and must be defined into
-			a valid range. Setting it to zero means that no periodic
-			measurements will be taken.
+			The Measurement Interval defines the time (in
+			seconds) between measurements. This interval is
+			not related to the intermediate measurements and
+			must be defined into a valid range. Setting it
+			to zero means that no periodic measurements will
+			be taken.
 
 		uint16 Maximum (optional) [readonly]
 
@@ -91,37 +75,60 @@ Properties	boolean Intermediate [readonly]
 
 Health Thermometer Watcher hierarchy
 ====================================
+
 Service		unique name
-Interface	org.bluez.ThermometerWatcher
+Interface	org.bluez.ThermometerWatcher1
 Object path	freely definable
 
-Methods		void MeasurementReceived(dict measure)
+Methods		void MeasurementReceived(dict measurement)
 
-			This callback gets called when a measure has been
-			scanned	in the thermometer. The Time entry in the dict
-			will be only present if the device supports storing of
-			data. The time value is expressed in seconds since epoch.
-			The value represented is (mantissa) x (10**exponent)
-			See foot note for special values when treating with
-			health devices. The Type entry is only present if the
-			measurement type is known. Otherwise, it is undefined.
+			This callback gets called when a measurement has been
+			scanned in the thermometer.
 
-			Dict is defined as below:
-			{
-				"Exponent" : int8,
-				"Mantissa" : int32,
-				"Unit" : ("Celsius" or "Fahrenheit"),
-				"Time" : uint64,
-				"Type" : ("Armpit", "Body", "Ear", "Finger",
-					"Intestines", "Mouth", "Rectum", "Toe",
-					"Tympanum"),
-				"Measurement" : ("Final" or "Intermediate"),
-			}
+			Measurement:
 
-			For special cases, the exponent shall always be zero and
-			the mantissa should be one of following values:
+				int16 Exponent:
+				int32 Mantissa:
 
-			NRes = -(2**23)
-			NaN = +(2**23-1)
-			INFINITY = (2**23-2)
-			-INFINITY = -(2**23-2)
+					Exponent and Mantissa values as
+					extracted from float value defined by
+					IEEE-11073-20601.
+
+					Measurement value is calculated as
+					(Mantissa) * (10^Exponent)
+
+					For special cases Exponent is
+					set to 0 and Mantissa is set to
+					one of following values:
+
+					+(2^23 - 1)	NaN (invalid or
+							missing data)
+					-(2^23)		NRes
+					+(2^23 - 2)	+Infinity
+					-(2^23 - 2)	-Infinity
+
+				string Unit:
+
+					Possible values: "celsius" or
+							"fahrenheit"
+
+				uint64 Time (optional):
+
+					Time of measurement, if
+					supported by device.
+					Expressed in seconds since epoch.
+
+				string Type (optional):
+
+					Only present if measurement type
+					is known.
+
+					Possible values: "armpit", "body",
+						"ear", "finger", "intestines",
+						"mouth", "rectum", "toe",
+						"tympanum"
+
+				string Measurement:
+
+					Possible values: "final" or
+							"intermediate"

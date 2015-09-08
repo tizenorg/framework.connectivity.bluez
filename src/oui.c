@@ -25,77 +25,50 @@
 #include <config.h>
 #endif
 
-#include <stdio.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/stat.h>
-#include <sys/mman.h>
-
+#include "lib/bluetooth.h"
 #include "oui.h"
 
-/* http://standards.ieee.org/regauth/oui/oui.txt */
+#ifdef HAVE_UDEV_HWDB_NEW
+#include <libudev.h>
 
-char *ouitocomp(const char *oui)
+char *batocomp(const bdaddr_t *ba)
 {
-	struct stat st;
-	char *str, *map, *off, *end;
-	int fd;
+	struct udev *udev;
+	struct udev_hwdb *hwdb;
+	struct udev_list_entry *head, *entry;
+	char modalias[11], *comp = NULL;
 
-	fd = open(OUIFILE, O_RDONLY);
-	if (fd < 0)
+	sprintf(modalias, "OUI:%2.2X%2.2X%2.2X", ba->b[5], ba->b[4], ba->b[3]);
+
+	udev = udev_new();
+	if (!udev)
 		return NULL;
 
-	if (fstat(fd, &st) < 0) {
-		close(fd);
-		return NULL;
+	hwdb = udev_hwdb_new(udev);
+	if (!hwdb)
+		goto done;
+
+	head = udev_hwdb_get_properties_list_entry(hwdb, modalias, 0);
+
+	udev_list_entry_foreach(entry, head) {
+		const char *name = udev_list_entry_get_name(entry);
+
+		if (name && !strcmp(name, "ID_OUI_FROM_DATABASE")) {
+			comp = strdup(udev_list_entry_get_value(entry));
+			break;
+		}
 	}
 
-	str = malloc(128);
-	if (!str) {
-		close(fd);
-		return NULL;
-	}
+	hwdb = udev_hwdb_unref(hwdb);
 
-	memset(str, 0, 128);
+done:
+	udev = udev_unref(udev);
 
-	map = mmap(0, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
-	if (!map || map == MAP_FAILED) {
-		free(str);
-		close(fd);
-		return NULL;
-	}
-
-	off = strstr(map, oui);
-	if (off) {
-		off += 18;
-		end = strpbrk(off, "\r\n");
-		strncpy(str, off, end - off);
-	} else {
-		free(str);
-		str = NULL;
-	}
-
-	munmap(map, st.st_size);
-
-	close(fd);
-
-	return str;
+	return comp;
 }
-
-int oui2comp(const char *oui, char *comp, size_t size)
+#else
+char *batocomp(const bdaddr_t *ba)
 {
-	char *tmp;
-
-	tmp = ouitocomp(oui);
-	if (!tmp)
-		return -1;
-
-	snprintf(comp, size, "%s", tmp);
-
-	free(tmp);
-
-	return 0;
+	return NULL;
 }
+#endif

@@ -39,10 +39,12 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
-#include <bluetooth/l2cap.h>
+#include "lib/bluetooth.h"
+#include "lib/hci.h"
+#include "lib/hci_lib.h"
+#include "lib/l2cap.h"
+
+#include "profiles/audio/a2dp-codecs.h"
 
 #define AVDTP_PSM			25
 
@@ -71,65 +73,6 @@
 #define AVDTP_MEDIA_TYPE_AUDIO		0x00
 #define AVDTP_MEDIA_TYPE_VIDEO		0x01
 #define AVDTP_MEDIA_TYPE_MULTIMEDIA	0x02
-
-#define A2DP_CODEC_SBC			0x00
-#define A2DP_CODEC_MPEG12		0x01
-#define A2DP_CODEC_MPEG24		0x02
-#define A2DP_CODEC_ATRAC		0x03
-
-#define SBC_SAMPLING_FREQ_16000		(1 << 3)
-#define SBC_SAMPLING_FREQ_32000		(1 << 2)
-#define SBC_SAMPLING_FREQ_44100		(1 << 1)
-#define SBC_SAMPLING_FREQ_48000		(1 << 0)
-
-#define SBC_CHANNEL_MODE_MONO		(1 << 3)
-#define SBC_CHANNEL_MODE_DUAL_CHANNEL	(1 << 2)
-#define SBC_CHANNEL_MODE_STEREO		(1 << 1)
-#define SBC_CHANNEL_MODE_JOINT_STEREO	(1 << 0)
-
-#define SBC_BLOCK_LENGTH_4		(1 << 3)
-#define SBC_BLOCK_LENGTH_8		(1 << 2)
-#define SBC_BLOCK_LENGTH_12		(1 << 1)
-#define SBC_BLOCK_LENGTH_16		(1 << 0)
-
-#define SBC_SUBBANDS_4			(1 << 1)
-#define SBC_SUBBANDS_8			(1 << 0)
-
-#define SBC_ALLOCATION_SNR		(1 << 1)
-#define SBC_ALLOCATION_LOUDNESS		(1 << 0)
-
-#define MPEG_CHANNEL_MODE_MONO		(1 << 3)
-#define MPEG_CHANNEL_MODE_DUAL_CHANNEL	(1 << 2)
-#define MPEG_CHANNEL_MODE_STEREO	(1 << 1)
-#define MPEG_CHANNEL_MODE_JOINT_STEREO	(1 << 0)
-
-#define MPEG_LAYER_MP1			(1 << 2)
-#define MPEG_LAYER_MP2			(1 << 1)
-#define MPEG_LAYER_MP3			(1 << 0)
-
-#define MPEG_SAMPLING_FREQ_16000	(1 << 5)
-#define MPEG_SAMPLING_FREQ_22050	(1 << 4)
-#define MPEG_SAMPLING_FREQ_24000	(1 << 3)
-#define MPEG_SAMPLING_FREQ_32000	(1 << 2)
-#define MPEG_SAMPLING_FREQ_44100	(1 << 1)
-#define MPEG_SAMPLING_FREQ_48000	(1 << 0)
-
-#define MPEG_BIT_RATE_VBR		0x8000
-#define MPEG_BIT_RATE_320000		0x4000
-#define MPEG_BIT_RATE_256000		0x2000
-#define MPEG_BIT_RATE_224000		0x1000
-#define MPEG_BIT_RATE_192000		0x0800
-#define MPEG_BIT_RATE_160000		0x0400
-#define MPEG_BIT_RATE_128000		0x0200
-#define MPEG_BIT_RATE_112000		0x0100
-#define MPEG_BIT_RATE_96000		0x0080
-#define MPEG_BIT_RATE_80000		0x0040
-#define MPEG_BIT_RATE_64000		0x0020
-#define MPEG_BIT_RATE_56000		0x0010
-#define MPEG_BIT_RATE_48000		0x0008
-#define MPEG_BIT_RATE_40000		0x0004
-#define MPEG_BIT_RATE_32000		0x0002
-#define MPEG_BIT_RATE_FREE		0x0001
 
 struct avdtp_service_capability {
 	uint8_t category;
@@ -169,28 +112,6 @@ struct avdtp_media_codec_capability {
 	uint8_t data[0];
 } __attribute__ ((packed));
 
-struct sbc_codec_cap {
-	struct avdtp_media_codec_capability cap;
-	uint8_t channel_mode:4;
-	uint8_t frequency:4;
-	uint8_t allocation_method:2;
-	uint8_t subbands:2;
-	uint8_t block_length:4;
-	uint8_t min_bitpool;
-	uint8_t max_bitpool;
-} __attribute__ ((packed));
-
-struct mpeg_codec_cap {
-	struct avdtp_media_codec_capability cap;
-	uint8_t channel_mode:4;
-	uint8_t crc:1;
-	uint8_t layer:3;
-	uint8_t frequency:6;
-	uint8_t mpf:1;
-	uint8_t rfa:1;
-	uint16_t bitrate;
-} __attribute__ ((packed));
-
 #elif __BYTE_ORDER == __BIG_ENDIAN
 
 struct avdtp_header {
@@ -223,28 +144,6 @@ struct avdtp_media_codec_capability {
 	uint8_t data[0];
 } __attribute__ ((packed));
 
-struct sbc_codec_cap {
-	struct avdtp_media_codec_capability cap;
-	uint8_t frequency:4;
-	uint8_t channel_mode:4;
-	uint8_t block_length:4;
-	uint8_t subbands:2;
-	uint8_t allocation_method:2;
-	uint8_t min_bitpool;
-	uint8_t max_bitpool;
-} __attribute__ ((packed));
-
-struct mpeg_codec_cap {
-	struct avdtp_media_codec_capability cap;
-	uint8_t layer:3;
-	uint8_t crc:1;
-	uint8_t channel_mode:4;
-	uint8_t rfa:1;
-	uint8_t mpf:1;
-	uint8_t frequency:6;
-	uint16_t bitrate;
-} __attribute__ ((packed));
-
 #else
 #error "Unknown byte order"
 #endif
@@ -259,8 +158,98 @@ struct getcap_resp {
 	uint8_t caps[0];
 } __attribute__ ((packed));
 
+static void print_aptx(a2dp_aptx_t *aptx)
+{
+	printf("\t\tVendor Specific Value (aptX)");
 
-static void print_mpeg12(struct mpeg_codec_cap *mpeg)
+	printf("\n\t\t\tFrequencies: ");
+	if (aptx->frequency & APTX_SAMPLING_FREQ_16000)
+		printf("16kHz ");
+	if (aptx->frequency & APTX_SAMPLING_FREQ_32000)
+		printf("32kHz ");
+	if (aptx->frequency & APTX_SAMPLING_FREQ_44100)
+		printf("44.1kHz ");
+	if (aptx->frequency & APTX_SAMPLING_FREQ_48000)
+		printf("48kHz ");
+
+	printf("\n\t\t\tChannel modes: ");
+	if (aptx->channel_mode & APTX_CHANNEL_MODE_MONO)
+		printf("Mono ");
+	if (aptx->channel_mode & APTX_CHANNEL_MODE_STEREO)
+		printf("Stereo ");
+
+	printf("\n");
+}
+
+static void print_vendor(a2dp_vendor_codec_t *vendor)
+{
+	uint32_t vendor_id = btohl(vendor->vendor_id);
+	uint16_t codec_id = btohs(vendor->codec_id);
+
+	printf("\tMedia Codec: Vendor Specific A2DP Codec");
+
+	printf("\n\t\tVendor ID 0x%08x", vendor_id);
+
+	printf("\n\t\tVendor Specific Codec ID 0x%04x\n", codec_id);
+
+	if (vendor_id == APTX_VENDOR_ID && codec_id == APTX_CODEC_ID)
+		print_aptx((void *) vendor);
+}
+
+static void print_mpeg24(a2dp_aac_t *aac)
+{
+	unsigned freq = AAC_GET_FREQUENCY(*aac);
+	unsigned bitrate = AAC_GET_BITRATE(*aac);
+
+	printf("\tMedia Codec: MPEG24\n\t\tObject Types: ");
+
+	if (aac->object_type & AAC_OBJECT_TYPE_MPEG2_AAC_LC)
+		printf("MPEG-2 AAC LC ");
+	if (aac->object_type & AAC_OBJECT_TYPE_MPEG4_AAC_LC)
+		printf("MPEG-4 AAC LC ");
+	if (aac->object_type & AAC_OBJECT_TYPE_MPEG4_AAC_LTP)
+		printf("MPEG-4 AAC LTP ");
+	if (aac->object_type & AAC_OBJECT_TYPE_MPEG4_AAC_SCA)
+		printf("MPEG-4 AAC scalable ");
+
+	printf("\n\t\tFrequencies: ");
+	if (freq & AAC_SAMPLING_FREQ_8000)
+		printf("8kHz ");
+	if (freq & AAC_SAMPLING_FREQ_11025)
+		printf("11.025kHz ");
+	if (freq & AAC_SAMPLING_FREQ_12000)
+		printf("12kHz ");
+	if (freq & AAC_SAMPLING_FREQ_16000)
+		printf("16kHz ");
+	if (freq & AAC_SAMPLING_FREQ_22050)
+		printf("22.05kHz ");
+	if (freq & AAC_SAMPLING_FREQ_24000)
+		printf("24kHz ");
+	if (freq & AAC_SAMPLING_FREQ_32000)
+		printf("32kHz ");
+	if (freq & AAC_SAMPLING_FREQ_44100)
+		printf("44.1kHz ");
+	if (freq & AAC_SAMPLING_FREQ_48000)
+		printf("48kHz ");
+	if (freq & AAC_SAMPLING_FREQ_64000)
+		printf("64kHz ");
+	if (freq & AAC_SAMPLING_FREQ_88200)
+		printf("88.2kHz ");
+	if (freq & AAC_SAMPLING_FREQ_96000)
+		printf("96kHz ");
+
+	printf("\n\t\tChannels: ");
+	if (aac->channels & AAC_CHANNELS_1)
+		printf("1 ");
+	if (aac->channels & AAC_CHANNELS_2)
+		printf("2 ");
+
+	printf("\n\t\tBitrate: %u", bitrate);
+
+	printf("\n\t\tVBR: %s", aac->vbr ? "Yes\n" : "No\n");
+}
+
+static void print_mpeg12(a2dp_mpeg_t *mpeg)
 {
 	printf("\tMedia Codec: MPEG12\n\t\tChannel Modes: ");
 
@@ -341,7 +330,7 @@ static void print_mpeg12(struct mpeg_codec_cap *mpeg)
 		printf("RFC-2250\n");
 }
 
-static void print_sbc(struct sbc_codec_cap *sbc)
+static void print_sbc(a2dp_sbc_t *sbc)
 {
 	printf("\tMedia Codec: SBC\n\t\tChannel Modes: ");
 
@@ -388,10 +377,16 @@ static void print_media_codec(struct avdtp_media_codec_capability *cap)
 {
 	switch (cap->media_codec_type) {
 	case A2DP_CODEC_SBC:
-		print_sbc((void *) cap);
+		print_sbc((void *) cap->data);
 		break;
 	case A2DP_CODEC_MPEG12:
-		print_mpeg12((void *) cap);
+		print_mpeg12((void *) cap->data);
+		break;
+	case A2DP_CODEC_MPEG24:
+		print_mpeg24((void *) cap->data);
+		break;
+	case A2DP_CODEC_VENDOR:
+		print_vendor((void *) cap->data);
 		break;
 	default:
 		printf("\tMedia Codec: Unknown\n");
@@ -588,6 +583,7 @@ static int l2cap_connect(bdaddr_t *src, bdaddr_t *dst)
 
 	if (bind(sk, (struct sockaddr *) &l2a, sizeof(l2a)) < 0) {
 		printf("Bind failed. %s (%d)\n", strerror(errno), errno);
+		close(sk);
 		return -errno;
 	}
 
@@ -598,6 +594,7 @@ static int l2cap_connect(bdaddr_t *src, bdaddr_t *dst)
 
 	if (connect(sk, (struct sockaddr *) &l2a, sizeof(l2a)) < 0) {
 		printf("Connect failed. %s(%d)\n", strerror(errno), errno);
+		close(sk);
 		return -errno;
 	}
 

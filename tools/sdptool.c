@@ -36,22 +36,22 @@
 #include <string.h>
 #include <getopt.h>
 #include <sys/socket.h>
-
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
-#include <bluetooth/sdp.h>
-#include <bluetooth/sdp_lib.h>
-
 #include <netinet/in.h>
 
-#include "sdp-xml.h"
+#include "lib/bluetooth.h"
+#include "lib/hci.h"
+#include "lib/hci_lib.h"
+#include "lib/sdp.h"
+#include "lib/sdp_lib.h"
+
+#include "src/sdp-xml.h"
 
 #ifndef APPLE_AGENT_SVCLASS_ID
 #define APPLE_AGENT_SVCLASS_ID 0x2112
 #endif
 
 #define for_each_opt(opt, long, short) while ((opt=getopt_long(argc, argv, short ? short:"+", long, 0)) != -1)
+#define N_ELEMENTS(x) (sizeof(x) / sizeof((x)[0]))
 
 /*
  * Convert a string to a BDADDR, with a few "enhancements" - Jean II
@@ -152,14 +152,14 @@ static struct attrib_def attrib_names[] = {
 	{ 0x2, "ServiceRecordState", NULL, 0 },
 	{ 0x3, "ServiceID", NULL, 0 },
 	{ 0x4, "ProtocolDescriptorList",
-		protocol_members, sizeof(protocol_members)/sizeof(struct member_def) },
+		protocol_members, N_ELEMENTS(protocol_members) },
 	{ 0x5, "BrowseGroupList", NULL, 0 },
 	{ 0x6, "LanguageBaseAttributeIDList",
-		language_members, sizeof(language_members)/sizeof(struct member_def) },
+		language_members, N_ELEMENTS(language_members) },
 	{ 0x7, "ServiceInfoTimeToLive", NULL, 0 },
 	{ 0x8, "ServiceAvailability", NULL, 0 },
 	{ 0x9, "BluetoothProfileDescriptorList",
-		profile_members, sizeof(profile_members)/sizeof(struct member_def) },
+		profile_members, N_ELEMENTS(profile_members) },
 	{ 0xA, "DocumentationURL", NULL, 0 },
 	{ 0xB, "ClientExecutableURL", NULL, 0 },
 	{ 0xC, "IconURL", NULL, 0 },
@@ -167,7 +167,7 @@ static struct attrib_def attrib_names[] = {
 	/* Definitions after that are tricky (per profile or offset) */
 };
 
-const int attrib_max = sizeof(attrib_names)/sizeof(struct attrib_def);
+const int attrib_max = N_ELEMENTS(attrib_names);
 
 /* Name of the various SPD attributes. See BT assigned numbers */
 static struct attrib_def sdp_attrib_names[] = {
@@ -226,9 +226,32 @@ static struct attrib_def audio_attrib_names[] = {
 	{ 0x302, "Remote audio volume control", NULL, 0 },
 };
 
+/* Name of the various IrMCSync attributes. See BT assigned numbers */
+static struct attrib_def irmc_attrib_names[] = {
+	{ 0x0301, "SupportedDataStoresList", NULL, 0 },
+};
+
 /* Name of the various GOEP attributes. See BT assigned numbers */
 static struct attrib_def goep_attrib_names[] = {
 	{ 0x200, "GoepL2capPsm", NULL, 0 },
+};
+
+/* Name of the various PBAP attributes. See BT assigned numbers */
+static struct attrib_def pbap_attrib_names[] = {
+	{ 0x0314, "SupportedRepositories", NULL, 0 },
+	{ 0x0317, "PbapSupportedFeatures", NULL, 0 },
+};
+
+/* Name of the various MAS attributes. See BT assigned numbers */
+static struct attrib_def mas_attrib_names[] = {
+	{ 0x0315, "MASInstanceID", NULL, 0 },
+	{ 0x0316, "SupportedMessageTypes", NULL, 0 },
+	{ 0x0317, "MapSupportedFeatures", NULL, 0 },
+};
+
+/* Name of the various MNS attributes. See BT assigned numbers */
+static struct attrib_def mns_attrib_names[] = {
+	{ 0x0317, "MapSupportedFeatures", NULL, 0 },
 };
 
 /* Same for the UUIDs. See BT assigned numbers */
@@ -258,39 +281,40 @@ static struct uuid_def uuid16_names[] = {
 	{ 0x0100, "L2CAP", NULL, 0 },
 	/* -- Services -- */
 	{ 0x1000, "ServiceDiscoveryServerServiceClassID",
-		sdp_attrib_names, sizeof(sdp_attrib_names)/sizeof(struct attrib_def) },
+		sdp_attrib_names, N_ELEMENTS(sdp_attrib_names) },
 	{ 0x1001, "BrowseGroupDescriptorServiceClassID",
-		browse_attrib_names, sizeof(browse_attrib_names)/sizeof(struct attrib_def) },
+		browse_attrib_names, N_ELEMENTS(browse_attrib_names) },
 	{ 0x1002, "PublicBrowseGroup", NULL, 0 },
 	{ 0x1101, "SerialPort", NULL, 0 },
 	{ 0x1102, "LANAccessUsingPPP", NULL, 0 },
 	{ 0x1103, "DialupNetworking (DUN)", NULL, 0 },
-	{ 0x1104, "IrMCSync", NULL, 0 },
+	{ 0x1104, "IrMCSync",
+		irmc_attrib_names, N_ELEMENTS(irmc_attrib_names) },
 	{ 0x1105, "OBEXObjectPush",
-		goep_attrib_names, sizeof(goep_attrib_names)/sizeof(struct attrib_def) },
+		goep_attrib_names, N_ELEMENTS(goep_attrib_names) },
 	{ 0x1106, "OBEXFileTransfer",
-		goep_attrib_names, sizeof(goep_attrib_names)/sizeof(struct attrib_def) },
+		goep_attrib_names, N_ELEMENTS(goep_attrib_names) },
 	{ 0x1107, "IrMCSyncCommand", NULL, 0 },
 	{ 0x1108, "Headset",
-		audio_attrib_names, sizeof(audio_attrib_names)/sizeof(struct attrib_def) },
+		audio_attrib_names, N_ELEMENTS(audio_attrib_names) },
 	{ 0x1109, "CordlessTelephony", NULL, 0 },
 	{ 0x110a, "AudioSource", NULL, 0 },
 	{ 0x110b, "AudioSink", NULL, 0 },
 	{ 0x110c, "RemoteControlTarget", NULL, 0 },
 	{ 0x110d, "AdvancedAudio", NULL, 0 },
 	{ 0x110e, "RemoteControl", NULL, 0 },
-	{ 0x110f, "VideoConferencing", NULL, 0 },
+	{ 0x110f, "RemoteControlController", NULL, 0 },
 	{ 0x1110, "Intercom", NULL, 0 },
 	{ 0x1111, "Fax", NULL, 0 },
 	{ 0x1112, "HeadsetAudioGateway", NULL, 0 },
 	{ 0x1113, "WAP", NULL, 0 },
 	{ 0x1114, "WAP Client", NULL, 0 },
 	{ 0x1115, "PANU (PAN/BNEP)",
-		pan_attrib_names, sizeof(pan_attrib_names)/sizeof(struct attrib_def) },
+		pan_attrib_names, N_ELEMENTS(pan_attrib_names) },
 	{ 0x1116, "NAP (PAN/BNEP)",
-		pan_attrib_names, sizeof(pan_attrib_names)/sizeof(struct attrib_def) },
+		pan_attrib_names, N_ELEMENTS(pan_attrib_names) },
 	{ 0x1117, "GN (PAN/BNEP)",
-		pan_attrib_names, sizeof(pan_attrib_names)/sizeof(struct attrib_def) },
+		pan_attrib_names, N_ELEMENTS(pan_attrib_names) },
 	{ 0x1118, "DirectPrinting (BPP)", NULL, 0 },
 	{ 0x1119, "ReferencePrinting (BPP)", NULL, 0 },
 	{ 0x111a, "Imaging (BIP)", NULL, 0 },
@@ -304,26 +328,32 @@ static struct uuid_def uuid16_names[] = {
 	{ 0x1122, "BasicPrinting (BPP)", NULL, 0 },
 	{ 0x1123, "PrintingStatus (BPP)", NULL, 0 },
 	{ 0x1124, "HumanInterfaceDeviceService (HID)",
-		hid_attrib_names, sizeof(hid_attrib_names)/sizeof(struct attrib_def) },
+		hid_attrib_names, N_ELEMENTS(hid_attrib_names) },
 	{ 0x1125, "HardcopyCableReplacement (HCR)", NULL, 0 },
 	{ 0x1126, "HCR_Print (HCR)", NULL, 0 },
 	{ 0x1127, "HCR_Scan (HCR)", NULL, 0 },
 	{ 0x1128, "Common ISDN Access (CIP)", NULL, 0 },
-	{ 0x1129, "VideoConferencingGW (VCP)", NULL, 0 },
 	{ 0x112a, "UDI-MT", NULL, 0 },
 	{ 0x112b, "UDI-TA", NULL, 0 },
 	{ 0x112c, "Audio/Video", NULL, 0 },
 	{ 0x112d, "SIM Access (SAP)", NULL, 0 },
 	{ 0x112e, "Phonebook Access (PBAP) - PCE", NULL, 0 },
-	{ 0x112f, "Phonebook Access (PBAP) - PSE", NULL, 0 },
+	{ 0x112f, "Phonebook Access (PBAP) - PSE",
+		pbap_attrib_names, N_ELEMENTS(pbap_attrib_names) },
 	{ 0x1130, "Phonebook Access (PBAP)", NULL, 0 },
+	{ 0x1131, "Headset (HSP)", NULL, 0 },
+	{ 0x1132, "Message Access (MAP) - MAS",
+		mas_attrib_names, N_ELEMENTS(mas_attrib_names) },
+	{ 0x1133, "Message Access (MAP) - MNS",
+		mns_attrib_names, N_ELEMENTS(mns_attrib_names) },
+	{ 0x1134, "Message Access (MAP)", NULL, 0 },
 	/* ... */
 	{ 0x1200, "PnPInformation",
-		did_attrib_names, sizeof(did_attrib_names)/sizeof(struct attrib_def) },
+		did_attrib_names, N_ELEMENTS(did_attrib_names) },
 	{ 0x1201, "GenericNetworking", NULL, 0 },
 	{ 0x1202, "GenericFileTransfer", NULL, 0 },
 	{ 0x1203, "GenericAudio",
-		audio_attrib_names, sizeof(audio_attrib_names)/sizeof(struct attrib_def) },
+		audio_attrib_names, N_ELEMENTS(audio_attrib_names) },
 	{ 0x1204, "GenericTelephony", NULL, 0 },
 	/* ... */
 	{ 0x1303, "VideoSource", NULL, 0 },
@@ -335,7 +365,7 @@ static struct uuid_def uuid16_names[] = {
 	{ 0x2112, "AppleAgent", NULL, 0 },
 };
 
-static const int uuid16_max = sizeof(uuid16_names)/sizeof(struct uuid_def);
+static const int uuid16_max = N_ELEMENTS(uuid16_names);
 
 static void sdp_data_printf(sdp_data_t *, struct attrib_context *, int);
 
@@ -1037,7 +1067,7 @@ static void print_service_desc(void *value, void *user)
 			if (proto == RFCOMM_UUID)
 				printf("    Channel: %d\n", p->val.uint8);
 			else
-				printf("    uint8: 0x%x\n", p->val.uint8);
+				printf("    uint8: 0x%02x\n", p->val.uint8);
 			break;
 		case SDP_UINT16:
 			if (proto == L2CAP_UUID) {
@@ -1049,9 +1079,9 @@ static void print_service_desc(void *value, void *user)
 				if (i == 1)
 					printf("    Version: 0x%04x\n", p->val.uint16);
 				else
-					printf("    uint16: 0x%x\n", p->val.uint16);
+					printf("    uint16: 0x%04x\n", p->val.uint16);
 			else
-				printf("    uint16: 0x%x\n", p->val.uint16);
+				printf("    uint16: 0x%04x\n", p->val.uint16);
 			break;
 		case SDP_SEQ16:
 			printf("    SEQ16:");
@@ -1163,18 +1193,19 @@ static int add_sp(sdp_session_t *session, svc_info_t *si)
 	sdp_uuid16_create(&root_uuid, PUBLIC_BROWSE_GROUP);
 	root = sdp_list_append(0, &root_uuid);
 	sdp_set_browse_groups(&record, root);
-	sdp_list_free(root, 0);
 
 	sdp_uuid16_create(&sp_uuid, SERIAL_PORT_SVCLASS_ID);
 	svclass_id = sdp_list_append(0, &sp_uuid);
 	sdp_set_service_classes(&record, svclass_id);
-	sdp_list_free(svclass_id, 0);
 
 	sdp_uuid16_create(&profile.uuid, SERIAL_PORT_PROFILE_ID);
+#ifdef __TIZEN_PATCH__
+	profile.version = 0x0102;
+#else
 	profile.version = 0x0100;
+#endif
 	profiles = sdp_list_append(0, &profile);
 	sdp_set_profile_descs(&record, profiles);
-	sdp_list_free(profiles, 0);
 
 	sdp_uuid16_create(&l2cap, L2CAP_UUID);
 	proto[0] = sdp_list_append(0, &l2cap);
@@ -1215,6 +1246,9 @@ end:
 	sdp_list_free(proto[1], 0);
 	sdp_list_free(apseq, 0);
 	sdp_list_free(aproto, 0);
+	sdp_list_free(root, 0);
+	sdp_list_free(svclass_id, 0);
+	sdp_list_free(profiles, 0);
 
 	return ret;
 }
@@ -1802,7 +1836,10 @@ end:
 	sdp_list_free(proto[1], 0);
 	sdp_list_free(proto[2], 0);
 	sdp_list_free(apseq, 0);
+	sdp_list_free(pfseq, 0);
 	sdp_list_free(aproto, 0);
+	sdp_list_free(root, 0);
+	sdp_list_free(svclass_id, NULL);
 
 	return ret;
 }
@@ -1874,7 +1911,90 @@ end:
 	sdp_list_free(proto[1], 0);
 	sdp_list_free(proto[2], 0);
 	sdp_list_free(apseq, 0);
+	sdp_list_free(pfseq, 0);
 	sdp_list_free(aproto, 0);
+	sdp_list_free(root, 0);
+	sdp_list_free(svclass_id, 0);
+
+	return ret;
+}
+
+static int add_map(sdp_session_t *session, svc_info_t *si)
+{
+	sdp_list_t *svclass_id, *pfseq, *apseq, *root;
+	uuid_t root_uuid, map_uuid, l2cap_uuid, rfcomm_uuid, obex_uuid;
+	sdp_profile_desc_t profile[1];
+	sdp_list_t *aproto, *proto[3];
+	sdp_record_t record;
+	uint8_t chan = si->channel ? si->channel : 17;
+	sdp_data_t *channel;
+	uint8_t msg_formats[] = {0x0f};
+	uint32_t supp_features[] = {0x0000007f};
+	uint8_t dtd_msg = SDP_UINT8, dtd_sf = SDP_UINT32;
+	sdp_data_t *smlist;
+	sdp_data_t *sflist;
+	int ret = 0;
+
+	memset(&record, 0, sizeof(sdp_record_t));
+	record.handle = si->handle;
+
+	sdp_uuid16_create(&root_uuid, PUBLIC_BROWSE_GROUP);
+	root = sdp_list_append(0, &root_uuid);
+	sdp_set_browse_groups(&record, root);
+
+	sdp_uuid16_create(&map_uuid, MAP_MSE_SVCLASS_ID);
+	svclass_id = sdp_list_append(0, &map_uuid);
+	sdp_set_service_classes(&record, svclass_id);
+
+	sdp_uuid16_create(&profile[0].uuid, MAP_PROFILE_ID);
+	profile[0].version = 0x0100;
+	pfseq = sdp_list_append(0, profile);
+	sdp_set_profile_descs(&record, pfseq);
+
+	sdp_uuid16_create(&l2cap_uuid, L2CAP_UUID);
+	proto[0] = sdp_list_append(0, &l2cap_uuid);
+	apseq = sdp_list_append(0, proto[0]);
+
+	sdp_uuid16_create(&rfcomm_uuid, RFCOMM_UUID);
+	proto[1] = sdp_list_append(0, &rfcomm_uuid);
+	channel = sdp_data_alloc(SDP_UINT8, &chan);
+	proto[1] = sdp_list_append(proto[1], channel);
+	apseq = sdp_list_append(apseq, proto[1]);
+
+	sdp_uuid16_create(&obex_uuid, OBEX_UUID);
+	proto[2] = sdp_list_append(0, &obex_uuid);
+	apseq = sdp_list_append(apseq, proto[2]);
+
+	aproto = sdp_list_append(0, apseq);
+	sdp_set_access_protos(&record, aproto);
+
+	smlist = sdp_data_alloc(dtd_msg, msg_formats);
+	sdp_attr_add(&record, SDP_ATTR_SUPPORTED_MESSAGE_TYPES, smlist);
+
+	sflist = sdp_data_alloc(dtd_sf, supp_features);
+	sdp_attr_add(&record, SDP_ATTR_MAP_SUPPORTED_FEATURES, sflist);
+
+	sdp_set_info_attr(&record, "OBEX Message Access Server", 0, 0);
+
+	if (sdp_device_record_register(session, &interface, &record,
+			SDP_RECORD_PERSIST) < 0) {
+		printf("Service Record registration failed\n");
+		ret = -1;
+		goto end;
+	}
+
+	printf("MAP service registered\n");
+
+end:
+	sdp_data_free(channel);
+	sdp_list_free(proto[0], 0);
+	sdp_list_free(proto[1], 0);
+	sdp_list_free(proto[2], 0);
+	sdp_list_free(apseq, 0);
+	sdp_list_free(pfseq, 0);
+	sdp_list_free(aproto, 0);
+	sdp_list_free(root, 0);
+	sdp_list_free(svclass_id, 0);
 
 	return ret;
 }
@@ -2581,7 +2701,7 @@ static int add_cip(sdp_session_t *session, svc_info_t *si)
 	proto[0] = sdp_list_append(0, &l2cap);
 	apseq = sdp_list_append(0, proto[0]);
 	proto[0] = sdp_list_append(proto[0], sdp_data_alloc(SDP_UINT16, &psm));
-	apseq = sdp_list_append(0, proto[0]);
+	apseq = sdp_list_append(apseq, proto[0]);
 
 	sdp_uuid16_create(&cmtp, CMTP_UUID);
 	proto[1] = sdp_list_append(0, &cmtp);
@@ -3287,6 +3407,9 @@ static unsigned char ngage_uuid[] = {	0x00, 0x00, 0x13, 0x01, 0x00, 0x00, 0x10, 
 static unsigned char apple_uuid[] = {	0xf0, 0x72, 0x2e, 0x20, 0x0f, 0x8b, 0x4e, 0x90,
 					0x8c, 0xc2, 0x1b, 0x46, 0xf5, 0xf2, 0xef, 0xe2 };
 
+static unsigned char iap_uuid[] = {	0x00, 0x00, 0x00, 0x00, 0xde, 0xca, 0xfa, 0xde,
+					0xde, 0xca, 0xde, 0xaf, 0xde, 0xca, 0xca, 0xfe };
+
 static int add_apple(sdp_session_t *session, svc_info_t *si)
 {
 	sdp_record_t record;
@@ -3507,6 +3630,7 @@ struct {
 	{ "SAP",	SAP_SVCLASS_ID,			add_simaccess	},
 	{ "PBAP",	PBAP_SVCLASS_ID,		add_pbap,	},
 
+	{ "MAP",	MAP_SVCLASS_ID,			add_map,	},
 	{ "NAP",	NAP_SVCLASS_ID,			add_nap		},
 	{ "GN",		GN_SVCLASS_ID,			add_gn		},
 	{ "PANU",	PANU_SVCLASS_ID,		add_panu	},
@@ -3540,6 +3664,7 @@ struct {
 	{ "NSYNCML",	0,				NULL,		nsyncml_uuid	},
 	{ "NGAGE",	0,				NULL,		ngage_uuid	},
 	{ "APPLE",	0,				add_apple,	apple_uuid	},
+	{ "IAP",	0,				NULL,		iap_uuid	},
 
 	{ "ISYNC",	APPLE_AGENT_SVCLASS_ID,		add_isync,	},
 	{ "GATT",	GENERIC_ATTRIB_SVCLASS_ID,	add_gatt,	},
@@ -3773,6 +3898,8 @@ static int do_search(bdaddr_t *bdaddr, struct search_context *context)
 	search = sdp_list_append(0, &context->group);
 	if (sdp_service_search_attr_req(sess, search, SDP_ATTR_REQ_RANGE, attrid, &seq)) {
 		printf("Service Search failed: %s\n", strerror(errno));
+		sdp_list_free(attrid, 0);
+		sdp_list_free(search, 0);
 		sdp_close(sess);
 		return -1;
 	}
@@ -3804,9 +3931,10 @@ static int do_search(bdaddr_t *bdaddr, struct search_context *context)
 			break;
 		}
 
+		/* Set the subcontext for browsing the sub tree */
+		memcpy(&sub_context, context, sizeof(struct search_context));
+
 		if (sdp_get_group_id(rec, &sub_context.group) != -1) {
-			/* Set the subcontext for browsing the sub tree */
-			memcpy(&sub_context, context, sizeof(struct search_context));
 			/* Browse the next level down if not done */
 			if (sub_context.group.value.uuid16 != context->group.value.uuid16)
 				do_search(bdaddr, &sub_context);

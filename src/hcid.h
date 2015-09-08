@@ -23,43 +23,41 @@
  *
  */
 
+typedef enum {
+	BT_MODE_DUAL,
+	BT_MODE_BREDR,
+	BT_MODE_LE,
+} bt_mode_t;
+
 struct main_opts {
-	char		host_name[40];
-	unsigned long	flags;
 	char		*name;
 	uint32_t	class;
-	uint16_t	pageto;
 	uint16_t	autoto;
-	uint32_t	discovto;
 	uint32_t	pairto;
-	uint16_t	link_mode;
-	uint16_t	link_policy;
-	gboolean	remember_powered;
+	uint32_t	discovto;
 	gboolean	reverse_sdp;
 	gboolean	name_resolv;
 	gboolean	debug_keys;
-	gboolean	gatt_enabled;
-
-	uint8_t		mode;
+#ifdef __TIZEN_PATCH__
+	gboolean	le_privacy;
+#endif
 
 	uint16_t	did_source;
 	uint16_t	did_vendor;
 	uint16_t	did_product;
 	uint16_t	did_version;
-};
 
-enum {
-	HCID_SET_PAGETO,
+	bt_mode_t	mode;
 };
 
 extern struct main_opts main_opts;
 
-void btd_start_exit_timer(void);
-void btd_stop_exit_timer(void);
-
-gboolean plugin_init(GKeyFile *config, const char *enable,
-							const char *disable);
+gboolean plugin_init(const char *enable, const char *disable);
 void plugin_cleanup(void);
 
 void rfkill_init(void);
 void rfkill_exit(void);
+
+GKeyFile *btd_get_main_conf(void);
+
+void btd_exit(void);

@@ -2,7 +2,7 @@
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
- *  Copyright (C) 2011  David Herrmann <dh.herrmann@googlemail.com>
+ *  Copyright (C) 2011-2012 David Herrmann <dh.herrmann@googlemail.com>
  *
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -25,14 +25,18 @@
 #include <config.h>
 #endif
 
-#include <bluetooth/bluetooth.h>
+#include <stdbool.h>
+
 #include <glib.h>
 
-#include "plugin.h"
-#include "adapter.h"
-#include "device.h"
-#include "log.h"
-#include "storage.h"
+#include "bluetooth/bluetooth.h"
+#include "bluetooth/sdp.h"
+
+#include "src/plugin.h"
+#include "src/adapter.h"
+#include "src/device.h"
+#include "src/log.h"
+#include "src/storage.h"
 
 /*
  * Nintendo Wii Remote devices require the bdaddr of the host as pin input for
@@ -56,31 +60,55 @@
  * is pressed.
  */
 
+static uint16_t wii_ids[][2] = {
+	{ 0x057e, 0x0306 },		/* 1st gen */
+	{ 0x054c, 0x0306 },		/* LEGO wiimote */
+	{ 0x057e, 0x0330 },		/* 2nd gen */
+};
+
+static const char *wii_names[] = {
+	"Nintendo RVL-CNT-01",		/* 1st gen */
+	"Nintendo RVL-CNT-01-TR",	/* 2nd gen */
+	"Nintendo RVL-CNT-01-UC",	/* Wii U Pro Controller */
+	"Nintendo RVL-WBC-01",		/* Balance Board */
+};
+
 static ssize_t wii_pincb(struct btd_adapter *adapter, struct btd_device *device,
-						char *pinbuf, gboolean *display)
+						char *pinbuf, bool *display,
+						unsigned int attempt)
 {
 	uint16_t vendor, product;
-	bdaddr_t sba, dba;
 	char addr[18], name[25];
+	unsigned int i;
 
-	adapter_get_address(adapter, &sba);
-	device_get_address(device, &dba, NULL);
-	ba2str(&dba, addr);
+	/* Only try the pin code once per device. If it's not correct then it's
+	 * an unknown device. */
+	if (attempt > 1)
+		return 0;
+
+	ba2str(device_get_address(device), addr);
 
 	vendor = btd_device_get_vendor(device);
 	product = btd_device_get_product(device);
 
 	device_get_name(device, name, sizeof(name));
-	name[sizeof(name) - 1] = 0;
 
-	if (g_str_equal(name, "Nintendo RVL-CNT-01") ||
-				(vendor == 0x057e && product == 0x0306)) {
-		DBG("Forcing fixed pin on detected wiimote %s", addr);
-		memcpy(pinbuf, &sba, 6);
-		return 6;
+	for (i = 0; i < G_N_ELEMENTS(wii_ids); ++i) {
+		if (vendor == wii_ids[i][0] && product == wii_ids[i][1])
+			goto found;
+	}
+
+	for (i = 0; i < G_N_ELEMENTS(wii_names); ++i) {
+		if (g_str_equal(name, wii_names[i]))
+			goto found;
 	}
 
 	return 0;
+
+found:
+	DBG("Forcing fixed pin on detected wiimote %s", addr);
+	memcpy(pinbuf, btd_adapter_get_address(adapter), 6);
+	return 6;
 }
 
 static int wii_probe(struct btd_adapter *adapter)

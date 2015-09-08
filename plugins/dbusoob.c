@@ -28,21 +28,22 @@
 #endif
 
 #include <errno.h>
-#include <gdbus.h>
+#include "gdbus/gdbus.h"
 
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/hci.h>
 #include <bluetooth/sdp.h>
 
-#include "plugin.h"
-#include "log.h"
-#include "adapter.h"
-#include "device.h"
-#include "manager.h"
-#include "dbus-common.h"
-#include "event.h"
-#include "error.h"
-#include "oob.h"
+#include "src/plugin.h"
+#include "src/log.h"
+#include "src/dbus-common.h"
+#include "src/adapter.h"
+#include "src/oob.h"
+#include "src/device.h"
+#include "src/eir.h"
+#include "src/agent.h"
+#include "src/hcid.h"
+#include "src/error.h"
 
 #define OOB_INTERFACE	"org.bluez.OutOfBand"
 
@@ -111,6 +112,7 @@ static DBusMessage *read_local_data(DBusConnection *conn, DBusMessage *msg,
 {
 	struct btd_adapter *adapter = data;
 	struct oob_request *oob_request;
+	struct oob_handler *handler;
 
 	if (find_oob_request(adapter))
 		return btd_error_in_progress(msg);
@@ -122,6 +124,16 @@ static DBusMessage *read_local_data(DBusConnection *conn, DBusMessage *msg,
 	oob_request->adapter = adapter;
 	oob_requests = g_slist_append(oob_requests, oob_request);
 	oob_request->msg = dbus_message_ref(msg);
+
+	handler = g_new0(struct oob_handler, 1);
+#ifdef __TIZEN_PATCH__
+	handler->read_local_cb = (oob_read_local_cb_t)oob_read_local_data_complete;
+#else
+	handler->read_local_cb = oob_read_local_data_complete;
+#endif
+	handler->user_data = dbus_message_ref(oob_request->msg);
+
+	btd_adapter_set_oob_handler(oob_request->adapter, handler);
 
 	return NULL;
 }
@@ -194,6 +206,9 @@ static int oob_probe(struct btd_adapter *adapter)
 {
 	const char *path = adapter_get_path(adapter);
 
+	DBG("dbusoob probe");
+	DBG("adapter path: %s", path);
+
 	if (!g_dbus_register_interface(connection, path, OOB_INTERFACE,
 				oob_methods, NULL, NULL, adapter, NULL)) {
 			error("OOB interface init failed on path %s", path);
@@ -221,7 +236,7 @@ static int dbusoob_init(void)
 {
 	DBG("Setup dbusoob plugin");
 
-	connection = get_dbus_connection();
+	connection = btd_get_dbus_connection();
 
 	oob_register_cb(read_local_data_complete);
 
@@ -231,8 +246,6 @@ static int dbusoob_init(void)
 static void dbusoob_exit(void)
 {
 	DBG("Cleanup dbusoob plugin");
-
-	manager_foreach_adapter((adapter_cb) oob_remove, NULL);
 
 	btd_unregister_adapter_driver(&oob_driver);
 }
