@@ -294,7 +294,6 @@ void eir_parse(struct eir_data *eir, const uint8_t *eir_data, uint8_t eir_len)
 			eir->manufacturer_data_len = data_len;
 #endif
 			eir_parse_msd(eir, data, data_len);
-
 			break;
 		}
 

@@ -274,13 +274,11 @@ static void connect_cb(GIOChannel *chan, GError *err, gpointer data)
 	if (!nc->session)
 		goto failed;
 
-	perr = bnep_connect(nc->session, bnep_conn_cb, nc);
+	perr = bnep_connect(nc->session, bnep_conn_cb, bnep_disconn_cb, nc, nc);
 	if (perr < 0) {
 		error("bnep connect(): %s (%d)", strerror(-perr), -perr);
 		goto failed;
 	}
-
-	bnep_set_disconnect(nc->session, bnep_disconn_cb, nc);
 
 	if (nc->io) {
 		g_io_channel_unref(nc->io);
@@ -300,21 +298,26 @@ static DBusMessage *local_connect(DBusConnection *conn,
 	struct btd_service *service;
 	struct network_conn *nc;
 	const char *svc;
-	const char *uuid;
 	uint16_t id;
 	int err;
+	char uuid_str[MAX_LEN_UUID_STR];
+	bt_uuid_t uuid16, uuid128;
 
 	if (dbus_message_get_args(msg, NULL, DBUS_TYPE_STRING, &svc,
 						DBUS_TYPE_INVALID) == FALSE)
 		return btd_error_invalid_args(msg);
 
 	id = get_pan_srv_id(svc);
-	uuid = bnep_uuid(id);
-
-	if (uuid == NULL)
+	bt_uuid16_create(&uuid16, id);
+#ifdef  __TIZEN_PATCH__
+	bt_uuid_to_uuid128(&uuid16, &uuid128);
+#else
+	bt_uuid_to_uuid128(&uuid128, &uuid16);
+#endif
+	if (bt_uuid_to_string(&uuid128, uuid_str, MAX_LEN_UUID_STR) < 0)
 		return btd_error_invalid_args(msg);
 
-	service = btd_device_get_service(peer->device, uuid);
+	service = btd_device_get_service(peer->device, uuid_str);
 	if (service == NULL)
 		return btd_error_not_supported(msg);
 
@@ -455,15 +458,29 @@ static gboolean network_property_get_uuid(const GDBusPropertyTable *property,
 {
 	struct network_peer *peer = data;
 	struct network_conn *nc;
-	const char *uuid;
+	char uuid_str[MAX_LEN_UUID_STR];
+#ifdef  __TIZEN_PATCH__
+	const char *uuid = uuid_str;
+#endif
+	bt_uuid_t uuid16, uuid128;
 
 	nc = find_connection_by_state(peer->connections, CONNECTED);
 	if (nc == NULL)
 		return FALSE;
 
-	uuid = bnep_uuid(nc->id);
+	bt_uuid16_create(&uuid16, nc->id);
+#ifdef  __TIZEN_PATCH__
+	bt_uuid_to_uuid128(&uuid16, &uuid128);
+#else
+	bt_uuid_to_uuid128(&uuid128, &uuid16);
+#endif
+	bt_uuid_to_string(&uuid128, uuid_str, MAX_LEN_UUID_STR);
 
+#ifdef  __TIZEN_PATCH__
 	dbus_message_iter_append_basic(iter, DBUS_TYPE_STRING, &uuid);
+#else
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_STRING, &uuid_str);
+#endif
 
 	return TRUE;
 }

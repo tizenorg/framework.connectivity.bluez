@@ -97,6 +97,7 @@ builtin_sources += profiles/health/mcap.h profiles/health/mcap.c \
 endif
 endif
 
+if TIZEN_HEALTH_PLUGIN
 builtin_modules += gap
 builtin_sources += profiles/gap/gas.c
 
@@ -105,6 +106,7 @@ builtin_sources += profiles/scanparam/scan.c
 
 builtin_modules += deviceinfo
 builtin_sources += profiles/deviceinfo/deviceinfo.c
+endif
 
 if EXPERIMENTAL
 if TIZEN_UNUSED_PLUGIN

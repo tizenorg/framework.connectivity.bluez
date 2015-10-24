@@ -1,0 +1,6 @@
+bluez syslogd -w----
+bluez device::sys_logging -w----
+bluez security-server::api-permissions -w----
+bluez dfms-kernel rwx---
+dbus bluez rwx---
+bluez _ rwx---

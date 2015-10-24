@@ -1,5 +1,4 @@
 #ifdef __TIZEN_PATCH__
-#ifdef __BROADCOM_PATCH__
 
 #include <errno.h>
 
@@ -648,5 +647,4 @@ gboolean adapter_le_clear_scan_filter_data(int client_if, int filter_index)
 	return TRUE;
 }
 
-#endif /* __BROADCOM_PATCH__ */
 #endif /* __TIZEN_PATCH__ */

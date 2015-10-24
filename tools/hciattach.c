@@ -1099,9 +1099,21 @@ static int bcm2035(int fd, struct uart_t *u, struct termios *ti)
 	return 0;
 }
 
+#ifdef __TIZEN_PATCH__ /*SPRD add Start*/
+static int init_sprd_config(int fd, struct uart_t *u, struct termios *ti)
+{
+
+	return sprd_config_init(fd, u->bdaddr, ti);
+}
+#endif
+
 struct uart_t uart[] = {
 	{ "any",        0x0000, 0x0000, HCI_UART_H4,   115200, 115200,
 				FLOW_CTL, DISABLE_PM, NULL, NULL     },
+#ifdef __TIZEN_PATCH__ /*SPRD*/
+	{ "sprd",        0x0000, 0x0000, HCI_UART_H4,   3000000, 3000000,
+				FLOW_CTL, DISABLE_PM, NULL, init_sprd_config },
+#endif
 	{ "ericsson",   0x0000, 0x0000, HCI_UART_H4,   57600,  115200,
 				FLOW_CTL, DISABLE_PM, NULL, ericsson },
 

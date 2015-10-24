@@ -335,6 +335,13 @@ static void parse_config(GKeyFile *config)
 
 		g_free(str);
 	}
+
+	boolean = g_key_file_get_boolean(config, "General",
+						"FastConnectable", &err);
+	if (err)
+		g_clear_error(&err);
+	else
+		main_opts.fast_conn = boolean;
 #ifdef __TIZEN_PATCH__
 	boolean = g_key_file_get_boolean(config, "General",
 						"EnableLEPrivacy", &err);
@@ -618,7 +625,7 @@ int main(int argc, char *argv[])
 
 	g_dbus_set_flags(gdbus_flags);
 
-#ifdef __TIZEN_PATCH__
+#if 0
 	gatt_init();
 #endif
 
@@ -687,7 +694,7 @@ int main(int argc, char *argv[])
 
 	adapter_cleanup();
 
-#ifdef __TIZEN_PATCH__
+#if 0
 	gatt_cleanup();
 #endif
 

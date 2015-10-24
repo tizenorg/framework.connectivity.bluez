@@ -38,6 +38,7 @@ struct main_opts {
 	gboolean	reverse_sdp;
 	gboolean	name_resolv;
 	gboolean	debug_keys;
+	gboolean	fast_conn;
 #ifdef __TIZEN_PATCH__
 	gboolean	le_privacy;
 #endif

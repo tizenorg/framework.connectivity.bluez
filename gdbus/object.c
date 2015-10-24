@@ -34,6 +34,7 @@
 #include "gdbus.h"
 
 #ifdef __TIZEN_PATCH__
+#if 0
 #include <syslog.h>
 static void gdbus_dbg(const char *format, ...)
 {
@@ -45,6 +46,7 @@ static void gdbus_dbg(const char *format, ...)
 
 	va_end(ap);
 }
+#endif
 #else
 #define info(fmt...)
 #endif
@@ -1095,8 +1097,10 @@ static DBusHandlerResult generic_message(DBusConnection *connection,
 						iface->user_data) == TRUE)
 			return DBUS_HANDLER_RESULT_HANDLED;
 #ifdef __TIZEN_PATCH__
+#if 0
 		gdbus_dbg("%s: %s.%s()", dbus_message_get_path(message),
 							iface->name, method->name);
+#endif
 #endif
 		return process_message(connection, message, method,
 							iface->user_data);

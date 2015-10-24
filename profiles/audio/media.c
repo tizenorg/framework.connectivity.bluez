@@ -62,7 +62,6 @@
 #include "sink.h"
 #endif
 
-
 #define MEDIA_INTERFACE "org.bluez.Media1"
 #define MEDIA_ENDPOINT_INTERFACE "org.bluez.MediaEndpoint1"
 #define MEDIA_PLAYER_INTERFACE "org.mpris.MediaPlayer2.Player"
@@ -73,6 +72,8 @@
 #define SINK_SUSPEND_TIMEOUT 4		/* 4 seconds */
 
 unsigned int suspend_timer_id = 0;
+static gboolean a2dp_sink_support = false;
+static gboolean a2dp_source_support = true;
 #endif
 
 struct media_adapter {
@@ -1036,7 +1037,17 @@ static DBusMessage *register_endpoint(DBusConnection *conn, DBusMessage *msg,
 	if (parse_properties(&props, &uuid, &delay_reporting, &codec,
 						&capabilities, &size) < 0)
 		return btd_error_invalid_args(msg);
+#ifdef __TIZEN_PATCH__
+	if(!a2dp_sink_support && !g_strcmp0(uuid, A2DP_SINK_UUID)) {
+		error("A2DP sink role is not supported.");
+		return btd_error_not_supported(msg);
+	}
 
+	if(!a2dp_source_support && !g_strcmp0(uuid, A2DP_SOURCE_UUID)) {
+		error("A2DP source role is not supported.");
+		return btd_error_not_supported(msg);
+	}
+#endif
 	if (media_endpoint_create(adapter, sender, path, uuid, delay_reporting,
 				codec, capabilities, size, &err) == NULL) {
 		if (err == -EPROTONOSUPPORT)

@@ -30,6 +30,8 @@
 #include <string.h>
 
 #include "log.h"
+#include "gobex/gobex.h"
+#include "gobex/gobex-apparam.h"
 
 #include "transfer.h"
 #include "session.h"
@@ -135,7 +137,8 @@ static DBusMessage *send_event(DBusConnection *connection,
 {
 	struct mns_data *mns = user_data;
 	struct obc_transfer *transfer;
-	struct sendevent_apparam apparam;
+	guint8 	masinstanceid;
+	GObexApparam *apparam;
 	gchar *event_type;
 	gchar *folder;
 	gchar *old_folder;
@@ -170,12 +173,12 @@ static DBusMessage *send_event(DBusConnection *connection,
 	if (transfer == NULL)
 		goto fail;
 
-	apparam.masinstanceid_tag = MAP_AP_MASINSTANCEID;
-	apparam.masinstanceid_len = 1;
 	/* Obexd currently supports single SDP for MAS */
-	apparam.masinstanceid = 0;
+	masinstanceid = 0;
+	apparam = g_obex_apparam_set_uint8(NULL, MAP_AP_MASINSTANCEID,
+								masinstanceid);
 
-	obc_transfer_set_apparam(transfer, &apparam);
+	obc_transfer_set_apparam(transfer, apparam);
 
 	if (obc_session_queue(mns->session, transfer, NULL, NULL, &err))
 		return dbus_message_new_method_return(message);

@@ -145,7 +145,11 @@ static int open_monitor(const char *path)
 	struct sockaddr_hci addr;
 	int opt = 1;
 
+#ifdef __TIZEN_PATCH__
+	snoop = btsnoop_create(path, BTSNOOP_TYPE_HCI, -1, -1);
+#else
 	snoop = btsnoop_create(path, BTSNOOP_TYPE_HCI);
+#endif
 	if (!snoop)
 		return -1;
 

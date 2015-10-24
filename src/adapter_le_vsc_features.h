@@ -128,8 +128,6 @@ typedef struct {
 	uint8_t service_data_len;
 }adapter_le_service_data_params_t;
 
-#ifdef __BROADCOM_PATCH__
-
 /*****************************************************************************
 **  Defentions for HCI Error Codes that are past in the events
 */
@@ -427,35 +425,4 @@ gboolean adapter_le_set_scan_filter_data(int client_if, int action,
 							int data_len, uint8_t *p_data,
 							int mask_len, uint8_t *p_mask);
 gboolean adapter_le_clear_scan_filter_data(int client_if, int filter_index);
-#else /* __BROADCOM_PATCH__ */
-
-gboolean adapter_le_read_ble_feature_info(void) { return FALSE; }
-gboolean adapter_le_is_supported_multi_advertising(void)  { return FALSE; }
-gboolean adapter_le_is_supported_offloading(void) { return FALSE; }
-int adapter_le_get_max_adv_instance(void) { return 0; }
-int adapter_le_get_scan_filter_size(void) { return 0; }
-
-gboolean adapter_le_set_multi_adv_params (adapter_le_adv_inst_info_t *p_inst,
-					adapter_le_adv_param_t *p_params) { return FALSE; }
-gboolean adapter_le_set_multi_adv_data(uint8_t inst_id, gboolean is_scan_rsp,
-					uint8_t data_len, uint8_t *p_data) { return FALSE; }
-gboolean adapter_le_enable_multi_adv (gboolean enable, uint8_t inst_id)
-					{ return FALSE; }
-
-gboolean adapter_le_enable_scan_filtering (gboolean enable) { return FALSE; }
-gboolean adapter_le_set_scan_filter_params(adapter_le_scan_filter_param_t *params)
-					{ return FALSE; }
-gboolean adapter_le_set_scan_filter_data(int client_if, int action,
-							int filt_type, int filter_index,
-							int company_id,
-							int company_id_mask,
-							int uuid_len, uint8_t *p_uuid,
-							int uuid_mask_len, uint8_t *p_uuid_mask,
-							gchar *string, int addr_type,
-							int data_len, uint8_t *p_data,
-							int mask_len, uint8_t *p_mask)
-					{ return FALSE; }
-gboolean adapter_le_clear_scan_filter_data(int client_if, int filter_index)
-					{ return FALSE; }
-#endif /* __BROADCOM_PATCH__ */
 #endif /* __TIZEN_PATCH__ */

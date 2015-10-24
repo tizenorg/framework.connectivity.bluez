@@ -48,7 +48,12 @@ struct btsnoop_opcode_new_index {
 	char     name[8];
 } __attribute__((packed));
 
+#ifdef __TIZEN_PATCH__
+void btsnoop_create(const char *path, uint32_t type,
+		int16_t rotate_count, ssize_t file_size);
+#else
 void btsnoop_create(const char *path, uint32_t type);
+#endif
 void btsnoop_write(struct timeval *tv, uint32_t flags,
 					const void *data, uint16_t size);
 void btsnoop_write_hci(struct timeval *tv, uint16_t index, uint16_t opcode,

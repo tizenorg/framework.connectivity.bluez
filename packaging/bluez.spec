@@ -1,7 +1,7 @@
 Name:       bluez
 Summary:    Bluetooth utilities
-Version:    5.28
-Release:    1
+Version:    5.30
+Release:    2
 #VCS:        framework/connectivity/bluez#bluez_4.101-slp2+22-132-g5d15421a5bd7101225aecd7c25b592b9a9ca218b
 Group:      Applications/System
 License:    GPL-2.0+ and LGPL-2.1+ and Apache-2.0
@@ -82,19 +82,24 @@ bluez-test contains test utilities for BlueZ testing.
 %if "%{?tizen_profile_name}" == "wearable"
 export CFLAGS="${CFLAGS} -D__TIZEN_PATCH__ -D__BROADCOM_PATCH__ -D__BT_SCMST_FEATURE__ -DSUPPORT_SMS_ONLY -D__BROADCOM_QOS_PATCH__ -DTIZEN_WEARABLE"
 %else
-%if "%{?tizen_profile_name}" == "mobile"
+%if "%{?tizen_profile_name}" == "mobile" || "%{?tizen_profile_name}" == "tv"
 export CFLAGS="${CFLAGS} -D__TIZEN_PATCH__ -DSUPPORT_SMS_ONLY -DBLUEZ5_27_GATT_CLIENT"
+%if "%{?tizen_target_name}" == "Z300H" || "%{?tizen_target_name}" == "TM1"
+export CFLAGS="${CFLAGS} -D__SPRD_QOS_PATCH__"
+%else
 export CFLAGS="${CFLAGS} -D__BROADCOM_PATCH__"
+%endif
 %endif
 %endif
 
 export LDFLAGS=" -lncurses -Wl,--as-needed "
-export CFLAGS+=" -DPBAP_SIM_ENABLE"
+export CFLAGS+=" -DPBAP_SIM_ENABLE -DSUPPORT_AVRCP_TARGET"
 %reconfigure --disable-static \
 			--sysconfdir=%{_sysconfdir} \
 			--localstatedir=%{_localstatedir} \
 			--with-systemdsystemunitdir=%{_libdir}/systemd/system \
 			--with-systemduserunitdir=%{_libdir}/systemd/user \
+			--libexecdir=%{_libdir} \
 			--enable-debug \
 			--enable-pie \
 			--enable-serial \
@@ -120,7 +125,7 @@ export CFLAGS+=" -DPBAP_SIM_ENABLE"
 %endif
 			--enable-experimental \
 			--enable-autopair=no \
-%if "%{?tizen_profile_name}" == "mobile"
+%if "%{?tizen_profile_name}" == "mobile" || "%{?tizen_profile_name}" == "tv"
 			--enable-network \
 			--enable-hid=yes \
 %else
@@ -133,11 +138,16 @@ make %{?jobs:-j%jobs}
 %install
 rm -rf %{buildroot}
 %make_install
+# fixed to support new rpm and build environment
+install -d -m 0755 %{buildroot}/var/lib/bluetooth
+install -d -m 0755 %{buildroot}%{_libdir}/bluetooth/plugins
+install -d -m 0755 %{buildroot}%{_libdir}/bluetooth/obex/plugins
+install -d -m 0755 %{buildroot}%{_libdir}/obex/plugins
 
 %if "%{?tizen_profile_name}" == "wearable"
 install -D -m 0644 src/main_w.conf %{buildroot}%{_sysconfdir}/bluetooth/main.conf
 %else
-%if "%{?tizen_profile_name}" == "mobile"
+%if "%{?tizen_profile_name}" == "mobile" || "%{?tizen_profile_name}" == "tv"
 install -D -m 0644 src/main_m.conf %{buildroot}%{_sysconfdir}/bluetooth/main.conf
 %endif
 %endif
@@ -152,7 +162,11 @@ install -D -m 0644 COPYING %{buildroot}%{_datadir}/license/libbluetooth-devel
 install -D -m 0755 %SOURCE101 %{buildroot}%{_bindir}/obex-root-setup
 install -D -m 0755 %SOURCE102 %{buildroot}%{_sysconfdir}/obex/root-setup.d/000_create-symlinks
 
-#ln -sf bluetooth.service %{buildroot}%{_libdir}/systemd/system/dbus-org.bluez.service
+install -D -m 0644 bluez.rule %{buildroot}%{_sysconfdir}/smack/accesses.d/bluez.rule
+
+%if "%{?tizen_profile_name}" == "common"
+ln -sf bluetooth.service %{buildroot}%{_libdir}/systemd/system/dbus-org.bluez.service
+%endif
 
 %post -n libbluetooth3 -p /sbin/ldconfig
 
@@ -167,6 +181,7 @@ install -D -m 0755 %SOURCE102 %{buildroot}%{_sysconfdir}/obex/root-setup.d/000_c
 %{_sysconfdir}/bluetooth/network.conf
 #%{_sysconfdir}/bluetooth/rfcomm.conf
 %{_sysconfdir}/dbus-1/system.d/bluetooth.conf
+%{_sysconfdir}/smack/accesses.d/bluez.rule
 %{_datadir}/man/*/*
 %{_libexecdir}/bluetooth/bluetoothd
 %{_bindir}/hciconfig
@@ -180,15 +195,22 @@ install -D -m 0755 %SOURCE102 %{buildroot}%{_sysconfdir}/obex/root-setup.d/000_c
 %{_bindir}/mpris-proxy
 %{_bindir}/rfcomm
 %{_bindir}/hcitool
+%{_bindir}/btmon
+%{_bindir}/btsnoop
 %dir %{_libdir}/bluetooth/plugins
-%exclude %{_libdir}/systemd/system/bluetooth.service
-#%exclude %{_libdir}/systemd/system/dbus-org.bluez.service
 %dir %{_localstatedir}/lib/bluetooth
 %dir %{_libexecdir}/bluetooth
-%exclude %{_datadir}/dbus-1/system-services/org.bluez.service
 %{_datadir}/license/bluez
 %{_libdir}/udev/hid2hci
 %{_libdir}/udev/rules.d/97-hid2hci.rules
+%if "%{?tizen_profile_name}" == "common"
+%{_libdir}/systemd/system/bluetooth.service
+%{_libdir}/systemd/system/dbus-org.bluez.service
+%{_datadir}/dbus-1/system-services/org.bluez.service
+%else
+%exclude %{_libdir}/systemd/system/bluetooth.service
+%exclude %{_datadir}/dbus-1/system-services/org.bluez.service
+%endif
 
 %files -n libbluetooth3
 %defattr(-,root,root,-)
@@ -220,7 +242,6 @@ install -D -m 0755 %SOURCE102 %{buildroot}%{_sysconfdir}/obex/root-setup.d/000_c
 %{_bindir}/rctest
 %{_bindir}/bccmd
 %{_bindir}/bluetoothctl
-%{_bindir}/btmon
 %{_bindir}/hcidump
 %{_bindir}/bluemoon
 %{_bindir}/hex2hcd

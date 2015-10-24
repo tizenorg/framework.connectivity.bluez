@@ -78,6 +78,10 @@ static GSList *parse_opts(gatt_option opt1, va_list args)
 	struct attrib_cb *cb;
 	GSList *l = NULL;
 
+#ifdef __TIZEN_PATCH__
+	if (opt == GATT_OPT_INVALID)
+		return NULL;
+#endif
 	info = g_new0(struct gatt_info, 1);
 	l = g_slist_append(l, info);
 
@@ -237,8 +241,8 @@ static gboolean add_descriptor(struct btd_adapter *adapter,
 /*	API not available in bluez 5.25
  * att_put_uuid(info->uuid, &atval[0]);*/
 
-	a = attrib_db_add(adapter, h++, &bt_uuid, ATT_NONE, ATT_NOT_PERMITTED,
-						atval, info->uuid.type / 8);
+	a = attrib_db_add(adapter, h++, &bt_uuid, ATT_AUTHENTICATION,
+			ATT_AUTHENTICATION, atval, info->uuid.type / 8);
 
 	if (a == NULL) {
 		return FALSE;

@@ -55,6 +55,9 @@ int stlc2500_init(int fd, bdaddr_t *bdaddr);
 int bgb2xx_init(int dd, bdaddr_t *bdaddr);
 int ath3k_init(int fd, int speed, int init_speed, char *bdaddr,
 						struct termios *ti);
+#ifdef __TIZEN_PATCH__
+int sprd_config_init(int fd, char *bdaddr, struct termios *ti);
+#endif
 int ath3k_post(int fd, int pm);
 int qualcomm_init(int fd, int speed, struct termios *ti, const char *bdaddr);
 int intel_init(int fd, int init_speed, int *speed, struct termios *ti);

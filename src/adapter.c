@@ -74,6 +74,7 @@
 #include "attrib/gatt.h"
 #include "attrib-server.h"
 #include "gatt-database.h"
+#include "advertising.h"
 #include "eir.h"
 
 #ifdef __TIZEN_PATCH__
@@ -194,6 +195,13 @@ struct adv_info {
 	int slot_id;	/* Reservied slot id is 0 (Single adv) */
 	bool status;		/* Advertising status */
 };
+
+static GSList *read_requests = NULL;
+
+struct le_data_length_read_request {
+	struct btd_adapter *adapter;
+	DBusMessage *msg;
+};
 #endif
 
 struct btd_adapter {
@@ -227,6 +235,9 @@ struct btd_adapter {
 	bool le_privacy_enabled;	/* whether LE Privacy feature enabled */
 	char local_irk[MGMT_IRK_SIZE];	/* adapter local IRK */
 	uint8_t disc_type;
+	bool ipsp_intialized;		/* Ipsp Initialization state */
+	struct le_data_length_read_handler *read_handler;
+	struct le_data_length_read_default_data_length_handler *def_read_handler;
 #endif
 
 	bool discovering;		/* discovering property state */
@@ -250,6 +261,7 @@ struct btd_adapter {
 	sdp_list_t *services;		/* Services associated to adapter */
 
 	struct btd_gatt_database *database;
+	struct btd_advertising *adv_manager;
 
 	gboolean initialized;
 #ifdef __TIZEN_PATCH__
@@ -287,9 +299,11 @@ struct btd_adapter {
 
 	unsigned int pair_device_id;
 	guint pair_device_timeout;
+
 	unsigned int db_id;		/* Service event handler for GATT db */
 #ifdef __TIZEN_PATCH__
 	guint private_addr_timeout;
+	uint8_t central_rpa_res_support;
 #endif
 	bool is_default;		/* true if adapter is default one */
 };
@@ -300,6 +314,11 @@ enum {
 	DISABLE_PRIVACY,
 	ENABLE_PRIVACY,
 	GEN_IRK_THEN_ENABLE_PRIVACY
+};
+
+enum {
+	DEINIT_6LOWPAN,
+	INIT_6LOWPAN
 };
 #endif
 
@@ -1216,6 +1235,13 @@ static void adapter_service_insert(struct btd_adapter *adapter, sdp_record_t *re
 
 	DBG("%s", adapter->path);
 
+#ifdef __TIZEN_PATCH__
+	if (rec == NULL) {
+		DBG("record is NULL return");
+		return;
+	}
+#endif
+
 	/* skip record without a browse group */
 	if (sdp_get_browse_groups(rec, &browse_list) < 0) {
 		DBG("skipping record without browse group");
@@ -1314,6 +1340,7 @@ static void service_auth_cancel(struct service_auth *auth)
 
 	g_free(auth);
 }
+
 #ifdef __TIZEN_PATCH__
 void btd_adapter_unpair_device(struct btd_adapter *adapter,
 				struct btd_device *dev)
@@ -2546,14 +2573,14 @@ static int set_adv_data_device_name(uint8_t *adv_data, int adv_len, char *name)
 			for (j = i; j < adv_len - 2; j++)
 				adv_data[j] = data[j + 2];
 
-			adv_data[j] = name_len + 1;
 			if (name_len > ADV_DATA_MAX_LENGTH - adv_len) {
 				adv_data[j + 1] = EIR_NAME_SHORT;
-				memcpy(adv_data + j + 2, name, ADV_DATA_MAX_LENGTH - adv_len);
+				name_len = ADV_DATA_MAX_LENGTH - adv_len;
 			} else {
 				adv_data[j + 1] = EIR_NAME_COMPLETE;
-				memcpy(adv_data + j + 2, name, name_len);
 			}
+			adv_data[j] = name_len + 1;
+			memcpy(adv_data + j + 2, name, name_len);
 
 			g_free(data);
 			return adv_len + name_len;
@@ -2960,12 +2987,6 @@ static DBusMessage *adapter_set_advertising_data(DBusConnection *conn,
 			return btd_error_failed(msg, "set advertising data failed");
 		}
 	} else {
-		if(adv_len > sizeof(cp)) {
-			g_free(adv_data);
-			DBG("Error: overrun advertising data length");
-			return btd_error_failed(msg, "Overrun advertising data length");
-		}
-
 		memcpy(&cp, adv_data, adv_len);
 
 		if (mgmt_send(adapter->mgmt, MGMT_OP_SET_ADVERTISING_DATA,
@@ -3219,12 +3240,6 @@ static DBusMessage *adapter_set_scan_rsp_data(DBusConnection *conn,
 			return btd_error_failed(msg, "set advertising data failed");
 		}
 	} else {
-		if(adv_len > sizeof(cp)) {
-			g_free(adv_data);
-			DBG("Error: overrun scan response data length");
-			return btd_error_failed(msg, "Overrun scan response data length");
-		}
-
 		memcpy(&cp, adv_data, adv_len);
 
 		if (mgmt_send(adapter->mgmt, MGMT_OP_SET_SCAN_RSP_DATA,
@@ -3584,7 +3599,7 @@ static  void adapter_get_adv_tx_power(void *data)
 	return;
 }
 
-#ifdef __BROADCOM_PATCH__
+//#ifdef __BROADCOM_PATCH__
 static DBusMessage *set_wbs_parameters(DBusConnection *conn,
 				DBusMessage *msg, void *data)
 {
@@ -3669,6 +3684,358 @@ static DBusMessage *set_nb_parameters(DBusConnection *conn,
 
 	return dbus_message_new_method_return(msg);
 }
+
+#ifdef __TIZEN_PATCH__
+void btd_adapter_set_read_le_data_length_handler(
+			struct btd_adapter *adapter,
+			struct le_data_length_read_handler *handler)
+{
+	adapter->read_handler = handler;
+}
+
+static void le_read_maximum_data_length_return_param_complete(
+			uint8_t status, uint16_t length,
+			const void *param, void *user_data)
+{
+	struct btd_adapter *adapter = user_data;
+	const struct mgmt_rp_le_read_maximum_data_length *rp = param;
+	uint16_t max_tx_octects, max_tx_time;
+	uint16_t max_rx_octects, max_rx_time;
+
+	if (status != MGMT_STATUS_SUCCESS) {
+		error("le read maximum data length failed: %s (0x%02x)",
+			mgmt_errstr(status), status);
+		max_tx_octects = 0;
+		max_tx_time =0;
+		max_rx_octects = 0;
+		max_rx_time = 0;
+		return;
+	}
+
+	if (length < sizeof(*rp)) {
+		error("Too small le read maximum data length response");
+		g_free(adapter->read_handler);
+		return;
+	} else {
+		max_tx_octects = rp->max_tx_octets;
+		max_tx_time =rp->max_tx_time;
+		max_rx_octects = rp->max_rx_octets;
+		max_rx_time = rp->max_rx_time;
+	}
+
+	if (!adapter->read_handler ||
+		!adapter->read_handler->read_callback) {
+		g_free(adapter->read_handler);
+		return;
+	}
+
+	adapter->read_handler->read_callback(adapter,
+			max_tx_octects, max_tx_time,
+			max_rx_octects, max_rx_time,
+			adapter->read_handler->user_data);
+
+	g_free(adapter->read_handler);
+	adapter->read_handler = NULL;
+}
+
+int btd_adapter_le_read_maximum_data_length(
+	struct btd_adapter *adapter)
+{
+	if (mgmt_send(adapter->mgmt,
+			 MGMT_OP_LE_READ_MAXIMUM_DATA_LENGTH,
+			 adapter->dev_id, 0, NULL,
+			 le_read_maximum_data_length_return_param_complete,
+			 adapter, NULL) > 0)
+		return 0;
+
+	return -EIO;
+}
+
+static gint read_request_cmp(gconstpointer a, gconstpointer b)
+{
+	const struct le_data_length_read_request *data = a;
+	const struct btd_adapter *adapter = b;
+
+	return data->adapter !=  adapter;
+}
+
+static struct le_data_length_read_request *find_read_le_data_length_request(
+	struct btd_adapter *adapter)
+{
+	GSList *match;
+
+	match = g_slist_find_custom(read_requests, adapter, read_request_cmp);
+
+	if (match)
+		return match->data;
+
+	return NULL;
+}
+
+static void le_read_data_length_complete(
+			struct btd_adapter *adapter,
+			uint16_t max_tx_octects, uint16_t max_tx_time,
+			uint16_t max_rx_octects, uint16_t max_rx_time,
+			void *user_data)
+{
+	DBusMessage *reply;
+	struct le_data_length_read_request *read_request;
+
+	read_request = find_read_le_data_length_request(adapter);
+	if (!read_request)
+		return;
+
+	reply = g_dbus_create_reply(read_request->msg,
+				DBUS_TYPE_UINT16, &max_tx_octects,
+				DBUS_TYPE_UINT16, &max_tx_time,
+				DBUS_TYPE_UINT16, &max_rx_octects,
+				DBUS_TYPE_UINT16, &max_rx_time,
+				DBUS_TYPE_INVALID);
+
+	if (!reply) {
+		btd_error_failed(read_request->msg,
+					"Failed to read max data length.");
+		return;
+	}
+
+	read_requests = g_slist_remove(read_requests, read_request);
+	dbus_message_unref(read_request->msg);
+	g_free(read_request);
+
+	if (!g_dbus_send_message(dbus_conn, reply))
+		error("D-Bus send failed");
+}
+
+static DBusMessage *le_read_maximum_data_length(
+			DBusConnection *conn, DBusMessage *msg,
+			void *user_data)
+{
+	struct btd_adapter *adapter = user_data;
+	struct le_data_length_read_request *read_request;
+	struct le_data_length_read_handler *handler;
+
+	if (find_read_le_data_length_request(adapter))
+		return btd_error_in_progress(msg);
+
+	if (btd_adapter_le_read_maximum_data_length(adapter))
+		return btd_error_failed(msg, "Unable to read maximum le data length");
+
+	read_request = g_new(struct le_data_length_read_request, 1);
+
+	read_request->msg = dbus_message_ref(msg);
+	read_request->adapter = adapter;
+
+	read_requests = g_slist_append(read_requests, read_request);
+
+	handler = g_new0(struct le_data_length_read_handler, 1);
+
+	handler->read_callback =
+		(read_max_data_length_cb_t)le_read_data_length_complete;
+
+	btd_adapter_set_read_le_data_length_handler(
+			read_request->adapter, handler);
+
+	return NULL;
+
+}
+
+void le_write_host_suggested_data_length_return_param_complete(
+			uint8_t status, uint16_t length,
+			const void *param, void *user_data)
+{
+	if (status != MGMT_STATUS_SUCCESS) {
+		error("le write host suggested data length failed: %s (0x%02x)",
+			mgmt_errstr(status), status);
+	}
+
+	return;
+}
+
+static DBusMessage *le_write_host_suggested_default_data_length(
+			DBusConnection *conn, DBusMessage *msg,
+			void *user_data)
+{
+	struct btd_adapter *adapter = user_data;
+	struct mgmt_cp_le_write_host_suggested_data_length cp;
+	dbus_uint16_t def_tx_Octets;
+	dbus_uint16_t def_tx_time;
+
+	if (!(adapter->current_settings & MGMT_SETTING_POWERED))
+		return btd_error_not_ready(msg);
+
+	if (!dbus_message_get_args(msg, NULL,
+					DBUS_TYPE_UINT16, &def_tx_Octets,
+					DBUS_TYPE_UINT16, &def_tx_time,
+					DBUS_TYPE_INVALID))
+		return btd_error_invalid_args(msg);
+
+	memset(&cp, 0, sizeof(cp));
+	cp.def_tx_octets = def_tx_Octets;
+	cp.def_tx_time = def_tx_time;
+
+	if (mgmt_send(adapter->mgmt,
+			 MGMT_OP_LE_WRITE_HOST_SUGGESTED_DATA_LENGTH,
+			 adapter->dev_id, sizeof(cp), &cp,
+			 le_write_host_suggested_data_length_return_param_complete,
+			 adapter, NULL) > 0)
+		return dbus_message_new_method_return(msg);
+
+	return btd_error_failed(msg, "Unable to write host suggested le data length values");
+}
+
+static void le_read_suggested_default_data_length_return_param_complete(
+			uint8_t status, uint16_t length,
+			const void *param, void *user_data)
+{
+	struct btd_adapter *adapter = user_data;
+	const struct mgmt_rp_le_read_host_suggested_data_length *rp = param;
+	uint16_t def_tx_octects, def_tx_time;
+
+	if (status != MGMT_STATUS_SUCCESS) {
+		error("Read host suggested def le data length values failed: %s (0x%02x)",
+			mgmt_errstr(status), status);
+		def_tx_octects = 0;
+		def_tx_time =0;
+		return;
+	}
+
+	if (length < sizeof(*rp)) {
+		goto done;;
+	} else {
+		def_tx_octects = rp->def_tx_octets;
+		def_tx_time =rp->def_tx_time;
+		DBG("retrieving host suggested data length values %d %d", def_tx_octects, def_tx_time);
+	}
+
+	if (!adapter->def_read_handler)
+		return;
+
+	if(!adapter->def_read_handler->read_callback) {
+		goto done;
+	}
+
+	adapter->def_read_handler->read_callback(adapter,
+			def_tx_octects, def_tx_time,
+			adapter->def_read_handler->user_data);
+done:
+	if (adapter->def_read_handler)
+		g_free(adapter->def_read_handler->user_data);
+
+	g_free(adapter->def_read_handler);
+	adapter->def_read_handler = NULL;
+}
+
+int btd_adapter_le_read_suggested_default_data_length(
+	struct btd_adapter *adapter)
+{
+	if (mgmt_send(adapter->mgmt,
+			 MGMT_OP_LE_READ_HOST_SUGGESTED_DATA_LENGTH,
+			 adapter->dev_id, 0, NULL,
+			 le_read_suggested_default_data_length_return_param_complete,
+			 adapter, NULL) > 0) {
+		return 0;
+	}
+
+	return -EIO;
+}
+
+static void le_read_host_suggested_default_length_complete(
+			struct btd_adapter *adapter,
+			uint16_t def_tx_octects, uint16_t def_tx_time,
+			void *user_data)
+{
+	DBusMessage *reply;
+	struct le_data_length_read_request *read_request;
+
+	read_request = find_read_le_data_length_request(adapter);
+	if (!read_request)
+		return;
+
+	reply = g_dbus_create_reply(read_request->msg,
+			DBUS_TYPE_UINT16, &def_tx_octects,
+			DBUS_TYPE_UINT16, &def_tx_time,
+			DBUS_TYPE_INVALID);
+
+	if (!reply) {
+		btd_error_failed(read_request->msg,
+			"Failed to read host suggested def data length values");
+		return;
+	}
+
+	read_requests = g_slist_remove(read_requests, read_request);
+	dbus_message_unref(read_request->msg);
+	g_free(read_request);
+
+	if (!g_dbus_send_message(dbus_conn, reply))
+		error("D-Bus send failed");
+}
+
+static DBusMessage *le_read_host_suggested_default_data_length(
+			DBusConnection *conn, DBusMessage *msg,
+			void *user_data)
+{
+	struct btd_adapter *adapter = user_data;
+	struct le_data_length_read_request *read_request;
+	struct le_data_length_read_default_data_length_handler *handler;
+
+	if (find_read_le_data_length_request(adapter))
+		return btd_error_in_progress(msg);
+
+	if (btd_adapter_le_read_suggested_default_data_length(adapter))
+		return btd_error_failed(msg, "Unable to read host suggested def data length");
+
+	read_request = g_new(struct le_data_length_read_request, 1);
+
+	read_request->msg = dbus_message_ref(msg);
+	read_request->adapter = adapter;
+
+	read_requests = g_slist_append(read_requests, read_request);
+
+	handler = g_new0(struct le_data_length_read_default_data_length_handler, 1);
+
+	handler->read_callback =
+		(read_host_suggested_default_data_length_cb_t)le_read_host_suggested_default_length_complete;
+
+	read_request->adapter->def_read_handler = handler;
+
+	return NULL;
+}
+
+void le_set_data_length_return_param_complete(
+			uint8_t status, uint16_t length,
+			const void *param, void *user_data)
+{
+	if (status != MGMT_STATUS_SUCCESS) {
+		error("le_set_data_length failed: %s (0x%02x)",
+			mgmt_errstr(status), status);
+	}
+
+	return;
+}
+
+int btd_adapter_le_set_data_length(struct btd_adapter *adapter, bdaddr_t *bdaddr,
+				uint16_t max_tx_octets, uint16_t max_tx_time)
+{
+	struct mgmt_cp_le_set_data_length cp;
+
+	memset(&cp, 0, sizeof(cp));
+
+	bacpy(&cp.bdaddr, bdaddr);
+
+	cp.max_tx_octets = max_tx_octets;
+	cp.max_tx_time = max_tx_time;
+
+	if (mgmt_send(adapter->mgmt, MGMT_OP_LE_SET_DATA_LENGTH,
+			adapter->dev_id, sizeof(cp), &cp,
+			le_set_data_length_return_param_complete,
+			adapter, NULL) > 0)
+		return 0;
+
+	return -EIO;
+}
+
+#endif
+
 static DBusMessage *adapter_set_manufacturer_data(DBusConnection *conn,
 						DBusMessage *msg, void *data)
 {
@@ -3699,7 +4066,7 @@ static DBusMessage *adapter_set_manufacturer_data(DBusConnection *conn,
 
 	return btd_error_failed(msg, "Set manufacturer data failed");
 }
-#endif /* __BROADCOM_PATCH__ */
+//#endif /* __BROADCOM_PATCH__ */
 #endif /* __TIZEN_PATCH__ */
 
 static DBusMessage *stop_discovery(DBusConnection *conn,
@@ -4003,11 +4370,13 @@ static void property_set_mode(struct btd_adapter *adapter, uint32_t setting,
 	data->adapter = adapter;
 	data->id = id;
 
-#ifdef __TIZEN_PATCH__
+/* Because of timing issue, sometimes pscan / iscan value was wrong. */
+#if 0
+/* #ifdef __TIZEN_PATCH__ */
 	/*
-	 * Use mgmt_reply to avoid dbus timeout in a state of bonding.
+	 * Use mgmt_send_nowait to avoid dbus timeout in a state of bonding.
 	 */
-	if (mgmt_reply(adapter->mgmt, opcode, adapter->dev_id, len, param,
+	if (mgmt_send_nowait(adapter->mgmt, opcode, adapter->dev_id, len, param,
 				property_set_mode_complete, data, g_free) > 0)
 #else
 	if (mgmt_send(adapter->mgmt, opcode, adapter->dev_id, len, param,
@@ -4042,14 +4411,6 @@ static void property_set_powered(const GDBusPropertyTable *property,
 							"Powering down");
 		return;
 	}
-
-#ifdef __TIZEN_PATCH__
-	if (adapter_le_read_ble_feature_info())
-		g_dbus_emit_property_changed(dbus_conn, adapter->path,
-			ADAPTER_INTERFACE, "SupportedLEFeatures");
-
-	adapter_get_adv_tx_power(adapter);
-#endif
 
 	property_set_mode(adapter, MGMT_SETTING_POWERED, iter, id);
 }
@@ -4308,6 +4669,24 @@ static gboolean property_get_supported_le_features(
 	return TRUE;
 }
 
+static gboolean property_get_ipsp_init_state(
+					const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct btd_adapter *adapter = data;
+	dbus_bool_t ipsp_initialized;
+
+	DBG("property_get_ipsp_init_state called");
+	if (adapter->ipsp_intialized)
+		ipsp_initialized = TRUE;
+	else
+		ipsp_initialized = FALSE;
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_BOOLEAN,
+					&ipsp_initialized);
+
+	return TRUE;
+}
 #endif
 
 static gboolean property_get_uuids(const GDBusPropertyTable *property,
@@ -4471,6 +4850,152 @@ static DBusMessage *find_device(DBusConnection *conn, DBusMessage *msg,
 
 	return reply;
 }
+
+static gboolean adapter_ipsp_connected(struct btd_adapter *adapter)
+{
+	GSList *l, *next;
+
+	DBG("%s", adapter->path);
+
+	for (l = adapter->connections; l != NULL; l = next) {
+		struct btd_device *dev = l->data;
+
+		next = g_slist_next(l);
+
+		if (device_is_ipsp_connected(dev))
+			return TRUE;
+	}
+
+	return FALSE;
+}
+
+static void adapter_set_ipsp_init_state(struct btd_adapter *adapter, gboolean initialized)
+{
+	if (adapter->ipsp_intialized == initialized)
+		return;
+
+	adapter->ipsp_intialized = initialized;
+
+	DBG("Set Ipsp init state for adapter %s", adapter->path);
+
+	g_dbus_emit_property_changed(dbus_conn, adapter->path,
+						ADAPTER_INTERFACE, "IpspInitStateChanged");
+}
+
+static void deinitialize_6lowpan_complete(uint8_t status, uint16_t length,
+	const void *param, void *user_data)
+{
+	struct btd_adapter *adapter = user_data;
+	bool initialized = FALSE;
+
+	if (status != MGMT_STATUS_SUCCESS)
+		error("De-Initialize BT 6lowpan failed for hci%u: %s (0x%02x)",
+			adapter->dev_id, mgmt_errstr(status), status);
+	else {
+		adapter_set_ipsp_init_state(adapter, initialized);
+		DBG("De-Initialize BT 6lowpan successfully for hci%u",
+			adapter->dev_id);
+	}
+}
+
+static bool deinitialize_6lowpan(struct btd_adapter *adapter)
+{
+	struct mgmt_cp_enable_6lowpan cp;
+
+	memset(&cp, 0, sizeof(cp));
+
+	cp.enable_6lowpan = DEINIT_6LOWPAN;
+	if (mgmt_send(adapter->mgmt, MGMT_OP_ENABLE_6LOWPAN,
+			adapter->dev_id, sizeof(cp), &cp,
+			deinitialize_6lowpan_complete, adapter, NULL) > 0)
+		return true;
+
+	error("Failed to de-initialize BT 6Lowpan for index %u",
+		adapter->dev_id);
+	return false;
+}
+
+static void initialize_6lowpan_complete(uint8_t status, uint16_t length,
+	const void *param, void *user_data)
+{
+	struct btd_adapter *adapter = user_data;
+	bool initialized = TRUE;
+
+	if (status != MGMT_STATUS_SUCCESS)
+		error("Initialize BT 6lowpan failed for hci%u: %s (0x%02x)",
+			adapter->dev_id, mgmt_errstr(status), status);
+	else {
+		adapter_set_ipsp_init_state(adapter, initialized);
+		DBG("Initialize BT 6lowpan successfully for hci%u",
+			adapter->dev_id);
+	}
+}
+
+static bool initialize_6lowpan(struct btd_adapter *adapter)
+{
+	struct mgmt_cp_enable_6lowpan cp;
+
+	memset(&cp, 0, sizeof(cp));
+
+	cp.enable_6lowpan = INIT_6LOWPAN;
+	if (mgmt_send(adapter->mgmt, MGMT_OP_ENABLE_6LOWPAN,
+			adapter->dev_id, sizeof(cp), &cp,
+			initialize_6lowpan_complete, adapter, NULL) > 0)
+		return true;
+
+	error("Failed to initialize BT 6Lowpan for index %u",
+		adapter->dev_id);
+	return false;
+}
+
+static DBusMessage *adapter_initialize_ipsp(DBusConnection *conn,
+					DBusMessage *msg, void *data)
+{
+	struct btd_adapter *adapter = data;
+	dbus_bool_t err;
+
+	DBG("Initialize IPSP");
+
+	if (!(adapter->current_settings & MGMT_SETTING_POWERED))
+		return btd_error_not_ready(msg);
+
+	if (adapter->ipsp_intialized)
+		return btd_error_already_exists(msg);
+
+	/* Enable BT 6lowpan in kernel */
+	err = initialize_6lowpan(adapter);
+
+	if (!err)
+		return btd_error_failed(msg, "Failed to initialize BT 6lowpan");
+
+	return dbus_message_new_method_return(msg);
+}
+
+static DBusMessage *adapter_deinitialize_ipsp(DBusConnection *conn,
+					DBusMessage *msg, void *data)
+{
+	struct btd_adapter *adapter = data;
+	dbus_bool_t err;
+
+	DBG("De-initialize IPSP");
+
+	if (!(adapter->current_settings & MGMT_SETTING_POWERED))
+		return btd_error_not_ready(msg);
+
+	if (!adapter->ipsp_intialized)
+		return btd_error_not_permitted(msg, "IPSP not initialized");
+
+	if (adapter_ipsp_connected(adapter))
+		return btd_error_not_permitted(msg, "IPSP Client device found connected");
+
+	/* Disable BT 6lowpan in kernel */
+	err = deinitialize_6lowpan(adapter);
+
+	if (!err)
+		return btd_error_failed(msg, "Failed to deinitialize BT 6lowpan");
+
+	return dbus_message_new_method_return(msg);
+}
 #endif
 
 static DBusMessage *remove_device(DBusConnection *conn,
@@ -4494,7 +5019,7 @@ static DBusMessage *remove_device(DBusConnection *conn,
 
 	device = list->data;
 
-	btd_device_set_temporary(device, TRUE);
+	btd_device_set_temporary(device, true);
 
 	if (!btd_device_is_connected(device)) {
 		btd_adapter_remove_device(adapter, device);
@@ -4546,7 +5071,6 @@ static const GDBusMethodTable adapter_methods[] = {
 				{ "interval", "u" },
 				{ "window", "u" }), NULL,
 			adapter_le_set_scan_params) },
-#ifdef __TIZEN_PATCH__	/* scan filter method - refered bt_gatt_client.h */
 	{ GDBUS_ASYNC_METHOD("scan_filter_param_setup",
 			GDBUS_ARGS({ "client_if", "i" }, { "action", "i" },
 				{ "filt_index", "i" }, { "feat_seln", "i"},
@@ -4570,7 +5094,12 @@ static const GDBusMethodTable adapter_methods[] = {
 	{ GDBUS_ASYNC_METHOD("scan_filter_enable",
 			GDBUS_ARGS({ "client_if", "i" }, { "enable", "b" }), NULL,
 			adapter_le_scan_filter_enable) },
-#endif	/* scan filter method */
+	{ GDBUS_METHOD("InitializeIpsp",
+			NULL, NULL,
+			adapter_initialize_ipsp) },
+	{ GDBUS_METHOD("DeinitializeIpsp",
+			NULL, NULL,
+			adapter_deinitialize_ipsp) },
 	{ GDBUS_METHOD("SetScanRespData",
 			GDBUS_ARGS({ "value", "ay" },
 				{ "slot_id", "i" }), NULL,
@@ -4607,7 +5136,7 @@ static const GDBusMethodTable adapter_methods[] = {
 			GDBUS_ARGS({ "address", "s" }),
 			GDBUS_ARGS({ "device", "o" }),
 			find_device) },
-#ifdef __BROADCOM_PATCH__
+#ifdef __TIZEN_PATCH__
 	{ GDBUS_METHOD("SetWbsParameters",
 			GDBUS_ARGS({ "role", "s" }, { "bt_address", "s" }),
 			NULL,
@@ -4626,6 +5155,18 @@ static const GDBusMethodTable adapter_methods[] = {
 #endif
 	{ GDBUS_ASYNC_METHOD("RemoveDevice",
 			GDBUS_ARGS({ "device", "o" }), NULL, remove_device) },
+#ifdef __TIZEN_PATCH__
+	{ GDBUS_ASYNC_METHOD("LEReadMaximumDataLength", NULL,
+			GDBUS_ARGS({"maxTxOctets", "q" }, { "maxTxTime", "q" },
+				{"maxRxOctets", "q" }, { "maxRxTime", "q" }),
+			le_read_maximum_data_length)},
+	{ GDBUS_ASYNC_METHOD("LEWriteHostSuggestedDataLength",
+			GDBUS_ARGS({"def_tx_octets", "q" }, { "def_tx_time", "q" }), NULL,
+			le_write_host_suggested_default_data_length)},
+	{ GDBUS_ASYNC_METHOD("LEReadHostSuggestedDataLength", NULL,
+			GDBUS_ARGS({"def_tx_octets", "q" }, { "def_tx_time", "q" }),
+			le_read_host_suggested_default_data_length)},
+#endif
 	{ }
 };
 
@@ -4681,6 +5222,7 @@ static const GDBusPropertyTable adapter_properties[] = {
 					property_set_connectable },
 	{ "Version", "s", property_get_version },
 	{ "SupportedLEFeatures", "as", property_get_supported_le_features},
+	{ "IpspInitStateChanged", "b", property_get_ipsp_init_state},
 #endif
 
 	{ }
@@ -5289,7 +5831,7 @@ static void load_devices(struct btd_adapter *adapter)
 		if (!device)
 			goto free;
 
-		btd_device_set_temporary(device, FALSE);
+		btd_device_set_temporary(device, false);
 		adapter->devices = g_slist_append(adapter->devices, device);
 
 		/* TODO: register services from pre-loaded list of primaries */
@@ -5559,6 +6101,13 @@ const char *btd_adapter_get_name(struct btd_adapter *adapter)
 
 	return NULL;
 }
+
+#ifdef __TIZEN_PATCH__
+uint8_t btd_adapter_get_rpa_res_support_value(struct btd_adapter *adapter)
+{
+	return adapter->central_rpa_res_support;
+}
+#endif
 
 int adapter_connect_list_add(struct btd_adapter *adapter,
 					struct btd_device *device)
@@ -5858,6 +6407,14 @@ void adapter_auto_connect_remove(struct btd_adapter *adapter,
 
 static void adapter_start(struct btd_adapter *adapter)
 {
+#ifdef __TIZEN_PATCH__
+	if (adapter_le_read_ble_feature_info())
+		g_dbus_emit_property_changed(dbus_conn, adapter->path,
+			ADAPTER_INTERFACE, "SupportedLEFeatures");
+
+	adapter_get_adv_tx_power(adapter);
+#endif
+
 	g_dbus_emit_property_changed(dbus_conn, adapter->path,
 						ADAPTER_INTERFACE, "Powered");
 
@@ -6932,6 +7489,8 @@ static struct btd_adapter *btd_adapter_new(uint16_t index)
 		DBG("LE Privacy is enabled.");
 	else
 		DBG("LE Privacy is disabled.");
+
+	adapter->central_rpa_res_support = 0x00;
 #endif
 	adapter->auths = g_queue_new();
 
@@ -6980,6 +7539,9 @@ static void adapter_remove(struct btd_adapter *adapter)
 #else
 	btd_adapter_gatt_server_stop(adapter);
 #endif
+
+	btd_advertising_manager_destroy(adapter->adv_manager);
+	adapter->adv_manager = NULL;
 
 	g_slist_free(adapter->pin_callbacks);
 	adapter->pin_callbacks = NULL;
@@ -7196,6 +7758,7 @@ static void update_found_devices(struct btd_adapter *adapter,
 	}
 
 	device_set_last_addr_type(dev, bdaddr_type);
+	device_set_ipsp_connected(dev, FALSE);
 #else
 	if (device_is_temporary(dev) && !adapter->discovery_list) {
 		eir_data_free(&eir_data);
@@ -7211,17 +7774,21 @@ static void update_found_devices(struct btd_adapter *adapter,
 
 	/* Report an unknown name to the kernel even if there is a short name
 	 * known, but still update the name with the known short name. */
+	name_known = device_name_known(dev);
+
+	if (eir_data.name && (eir_data.name_complete || !name_known))
+		btd_device_device_set_name(dev, eir_data.name);
+
 #ifdef __TIZEN_PATCH__
+	/* As this logic,  (eir_data.name_complete || !name_known) is always true.
+	    So some abnormal UI bug occurs. Such like complete name display and
+	    next time short name display.
+	*/
 	if (eir_data.name_complete)
 		name_known = device_name_known(dev);
 	else
 		name_known = false;
-#else
-	name_known = device_name_known(dev);
 #endif
-
-	if (eir_data.name && (eir_data.name_complete || !name_known))
-		btd_device_device_set_name(dev, eir_data.name);
 
 	if (eir_data.class != 0)
 		device_set_class(dev, eir_data.class);
@@ -7602,9 +8169,6 @@ static gboolean process_auth_queue(gpointer user_data)
 		if (auth->svc_id > 0)
 			return FALSE;
 
-/* The below patch should be removed after we provide the API
- * to control autorization for the specific UUID.
- */
 		if (device_is_trusted(device) == TRUE) {
 			auth->cb(NULL, auth->user_data);
 			goto next;
@@ -8329,6 +8893,67 @@ static void multi_adv_state_change_callback(uint16_t index, uint16_t length,
 			ev->state_change_reason == 0)
 		adapter_le_enable_multi_adv(TRUE, ev->adv_instance);
 }
+
+static void bt_6lowpan_conn_state_change_callback(uint16_t index, uint16_t length,
+					const void *param, void *user_data)
+{
+	const struct mgmt_ev_6lowpan_conn_state_changed *ev = param;
+	struct btd_adapter *adapter = user_data;
+	struct btd_device *device;
+	char addr[18];
+	gboolean connected = 0;
+
+	if (length < sizeof(*ev)) {
+		error("Too small device connected event");
+		return;
+	}
+
+	ba2str(&ev->addr.bdaddr, addr);
+
+	DBG("hci%u device %s", index, addr);
+
+	device = btd_adapter_find_device(adapter, &ev->addr.bdaddr,
+								ev->addr.type);
+	if (!device) {
+		error("Unable to get device object for %s", addr);
+		return;
+	}
+
+	if (ev->connected)
+		connected = TRUE;
+	else
+		connected = FALSE;
+
+	device_set_ipsp_connected(device, connected);
+}
+
+static void bt_le_data_length_changed_callback(uint16_t index, uint16_t length,
+					const void *param, void *user_data)
+{
+	const struct mgmt_ev_le_data_length_changed *ev = param;
+	struct btd_adapter *adapter = user_data;
+	struct btd_device *device;
+	char addr[18];
+
+	if (length < sizeof(*ev)) {
+		error("Too small data length changed event");
+		return;
+	}
+
+	ba2str(&ev->addr.bdaddr, addr);
+
+	DBG("hci%u device %s", index, addr);
+
+	device = btd_adapter_find_device(adapter, &ev->addr.bdaddr,
+								ev->addr.type);
+	if (!device) {
+		error("Unable to get device object for %s", addr);
+		return;
+	}
+
+	device_le_data_length_changed(device, ev->max_tx_octets, ev->max_tx_time,
+		ev->max_rx_octets, ev->max_rx_time);
+}
 #endif
 
 struct btd_adapter_pin_cb_iter *btd_adapter_pin_cb_iter_new(
@@ -8855,9 +9480,6 @@ static void new_link_key_callback(uint16_t index, uint16_t length,
 								key->pin_len);
 
 		device_set_bonded(device, BDADDR_BREDR);
-
-		if (device_is_temporary(device))
-			btd_device_set_temporary(device, FALSE);
 	}
 
 	bonding_complete(adapter, &addr->bdaddr, addr->type, 0);
@@ -8973,9 +9595,6 @@ static void new_long_term_key_callback(uint16_t index, uint16_t length,
 					key->type, key->enc_size, ediv, rand);
 
 		device_set_bonded(device, addr->type);
-
-		if (device_is_temporary(device))
-			btd_device_set_temporary(device, FALSE);
 	}
 
 	bonding_complete(adapter, &addr->bdaddr, addr->type, 0);
@@ -9076,8 +9695,7 @@ static void new_csrk_callback(uint16_t index, uint16_t length,
 	store_csrk(bdaddr, &key->addr.bdaddr, key->addr.type, key->val, 0,
 								key->type);
 
-	if (device_is_temporary(device))
-		btd_device_set_temporary(device, FALSE);
+	btd_device_set_temporary(device, false);
 }
 
 static void store_irk(struct btd_adapter *adapter, const bdaddr_t *peer,
@@ -9164,8 +9782,7 @@ static void new_irk_callback(uint16_t index, uint16_t length,
 
 	store_irk(adapter, &addr->bdaddr, addr->type, irk->val);
 
-	if (device_is_temporary(device))
-		btd_device_set_temporary(device, FALSE);
+	btd_device_set_temporary(device, false);
 }
 
 static void store_conn_param(struct btd_adapter *adapter, const bdaddr_t *peer,
@@ -9338,12 +9955,14 @@ static void read_local_oob_data_complete(uint8_t status, uint16_t length,
 						mgmt_errstr(status), status);
 		hash = NULL;
 		randomizer = NULL;
+#ifndef __TIZEN_PATCH__
 	} else if (length < sizeof(*rp)) {
 		error("Too small read local OOB data response");
 		return;
+#endif
 	} else {
-		hash = rp->hash;
-		randomizer = rp->randomizer;
+		hash = rp->hash192;
+		randomizer = rp->rand192;
 	}
 
 	if (!adapter->oob_handler || !adapter->oob_handler->read_local_cb)
@@ -9442,7 +10061,6 @@ static int set_did(struct btd_adapter *adapter, uint16_t vendor,
 	return -EIO;
 }
 
-#ifndef __TIZEN_PATCH__
 static void services_modified(struct gatt_db_attribute *attrib, void *user_data)
 {
 	struct btd_adapter *adapter = user_data;
@@ -9450,14 +10068,11 @@ static void services_modified(struct gatt_db_attribute *attrib, void *user_data)
 	g_dbus_emit_property_changed(dbus_conn, adapter->path,
 						ADAPTER_INTERFACE, "UUIDs");
 }
-#endif
 
 static int adapter_register(struct btd_adapter *adapter)
 {
 	struct agent *agent;
-#ifndef __TIZEN_PATCH__
 	struct gatt_db *db;
-#endif
 
 	if (powering_down)
 		return -EBUSY;
@@ -9492,7 +10107,6 @@ static int adapter_register(struct btd_adapter *adapter)
 		agent_unref(agent);
 	}
 
-#ifndef __TIZEN_PATCH__
 	adapter->database = btd_gatt_database_new(adapter);
 	if (!adapter->database) {
 		error("Failed to create GATT database for adapter");
@@ -9504,10 +10118,23 @@ static int adapter_register(struct btd_adapter *adapter)
 	adapter->db_id = gatt_db_register(db, services_modified,
 							services_modified,
 							adapter, NULL);
-#else
+
+/* Disable Old GATT Server */
+#if 0
 	btd_adapter_gatt_server_start(adapter);
 #endif
 
+	/* Don't start advertising managers on non-LE controllers. */
+	if (adapter->supported_settings & MGMT_SETTING_LE) {
+		adapter->adv_manager = btd_advertising_manager_new(adapter);
+
+		/* LEAdvertisingManager1 is experimental so optional */
+		if (!adapter->adv_manager)
+			error("Failed to register LEAdvertisingManager1 "
+						"interface for adapter");
+	} else {
+		info("Not starting LEAdvertisingManager, LE not supported");
+	}
 	load_config(adapter);
 	fix_storage(adapter);
 	load_drivers(adapter);
@@ -9862,6 +10489,44 @@ static bool set_privacy(struct btd_adapter *adapter, bool privacy)
 
 	return false;
 }
+
+int btd_adapter_connect_ipsp(struct btd_adapter *adapter,
+						const bdaddr_t *bdaddr,
+						uint8_t bdaddr_type)
+
+{
+	struct mgmt_cp_connect_6lowpan cp;
+
+	memset(&cp, 0, sizeof(cp));
+	bacpy(&cp.addr.bdaddr, bdaddr);
+	cp.addr.type = bdaddr_type;
+
+	if (mgmt_send(adapter->mgmt, MGMT_OP_CONNECT_6LOWPAN,
+				adapter->dev_id, sizeof(cp), &cp,
+				NULL, NULL, NULL) > 0)
+		return 0;
+
+	return -EIO;
+}
+
+int btd_adapter_disconnect_ipsp(struct btd_adapter *adapter,
+						const bdaddr_t *bdaddr,
+						uint8_t bdaddr_type)
+
+{
+	struct mgmt_cp_disconnect_6lowpan cp;
+
+	memset(&cp, 0, sizeof(cp));
+	bacpy(&cp.addr.bdaddr, bdaddr);
+	cp.addr.type = bdaddr_type;
+
+	if (mgmt_send(adapter->mgmt, MGMT_OP_DISCONNECT_6LOWPAN,
+				adapter->dev_id, sizeof(cp), &cp,
+				NULL, NULL, NULL) > 0)
+		return 0;
+
+	return -EIO;
+}
 #endif
 
 static void clear_devices_complete(uint8_t status, uint16_t length,
@@ -9983,9 +10648,17 @@ static void read_info_complete(uint8_t status, uint16_t length,
 		break;
 	}
 
-#if 0
 	if (missing_settings & MGMT_SETTING_SECURE_CONN)
 		set_mode(adapter, MGMT_OP_SET_SECURE_CONN, 0x01);
+	if (main_opts.fast_conn &&
+			(missing_settings & MGMT_SETTING_FAST_CONNECTABLE))
+		set_mode(adapter, MGMT_OP_SET_FAST_CONNECTABLE, 0x01);
+
+#ifdef __TIZEN_PATCH__
+	/* Set the RPA resolution value to '1' if privacy is supported */
+	if (adapter->le_privacy_enabled &&
+			adapter->supported_settings & MGMT_SETTING_PRIVACY)
+		adapter->central_rpa_res_support = 0x01;
 #endif
 
 	err = adapter_register(adapter);
@@ -10156,6 +10829,16 @@ static void read_info_complete(uint8_t status, uint16_t length,
 				adapter->dev_id,
 				multi_adv_state_change_callback,
 				adapter, NULL);
+
+	mgmt_register(adapter->mgmt, MGMT_EV_6LOWPAN_CONN_STATE_CHANGED,
+						adapter->dev_id,
+						bt_6lowpan_conn_state_change_callback,
+						adapter, NULL);
+
+	mgmt_register(adapter->mgmt, MGMT_EV_LE_DATA_LENGTH_CHANGED,
+						adapter->dev_id,
+						bt_le_data_length_changed_callback,
+						adapter, NULL);
 #endif
 
 	set_dev_class(adapter);

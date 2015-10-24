@@ -56,7 +56,12 @@ struct btsnoop_opcode_new_index {
 struct btsnoop;
 
 struct btsnoop *btsnoop_open(const char *path, unsigned long flags);
+#ifdef __TIZEN_PATCH__
+struct btsnoop *btsnoop_create(const char *path, uint32_t type,
+		int16_t rotate_count, ssize_t file_size);
+#else
 struct btsnoop *btsnoop_create(const char *path, uint32_t type);
+#endif
 
 struct btsnoop *btsnoop_ref(struct btsnoop *btsnoop);
 void btsnoop_unref(struct btsnoop *btsnoop);

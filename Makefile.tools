@@ -122,7 +122,8 @@ if TOOLS
 bin_PROGRAMS += tools/hciattach tools/hciconfig tools/hcitool tools/hcidump \
 			tools/rfcomm tools/rctest tools/l2test tools/l2ping \
 			tools/sdptool tools/ciptool tools/bccmd \
-			tools/bluemoon tools/hex2hcd tools/mpris-proxy
+			tools/bluemoon tools/hex2hcd tools/mpris-proxy \
+			tools/btsnoop
 
 tools_hciattach_SOURCES = tools/hciattach.c tools/hciattach.h \
 						tools/hciattach_st.c \
@@ -131,6 +132,8 @@ tools_hciattach_SOURCES = tools/hciattach.c tools/hciattach.h \
 						tools/hciattach_ath3k.c \
 						tools/hciattach_qualcomm.c \
 						tools/hciattach_intel.c \
+						tools/hciattach_sprd.c \
+						tools/pskey_get.c \
 						tools/hciattach_bcm43xx.c
 #						src/log.c 
 #						tools/hciattach_bcm43xx.c
@@ -202,6 +205,9 @@ tools_mcaptest_SOURCES = tools/mcaptest.c \
 				profiles/health/mcap.h profiles/health/mcap.c
 tools_mcaptest_LDADD = lib/libbluetooth-internal.la @GLIB_LIBS@ -lrt
 
+tools_btsnoop_SOURCES = tools/btsnoop.c
+tools_btsnoop_LDADD = src/libshared-mainloop.la
+
 dist_man_MANS += tools/hciattach.1 tools/hciconfig.1 \
 			tools/hcitool.1 tools/hcidump.1 \
 			tools/rfcomm.1 tools/rctest.1 tools/l2ping.1 \
@@ -230,10 +236,10 @@ noinst_PROGRAMS += tools/bdaddr tools/avinfo tools/avtest \
 			tools/scotest tools/amptest tools/hwdb \
 			tools/hcieventmask tools/hcisecfilter \
 			tools/btmgmt tools/btinfo tools/btattach \
-			tools/btsnoop tools/btproxy \
-			tools/btiotest tools/mcaptest tools/cltest \
-			tools/oobtest tools/seq2bseq tools/ibeacon \
-			tools/btgatt-client tools/btgatt-server
+			tools/btproxy \
+			tools/btiotest tools/bneptest tools/mcaptest \
+			tools/cltest tools/oobtest tools/seq2bseq \
+			tools/ibeacon tools/btgatt-client tools/btgatt-server
 
 tools_bdaddr_SOURCES = tools/bdaddr.c src/oui.h src/oui.c
 tools_bdaddr_LDADD = lib/libbluetooth-internal.la @UDEV_LIBS@
@@ -260,9 +266,6 @@ tools_btinfo_LDADD = src/libshared-mainloop.la
 tools_btattach_SOURCES = tools/btattach.c monitor/bt.h
 tools_btattach_LDADD = src/libshared-mainloop.la
 
-tools_btsnoop_SOURCES = tools/btsnoop.c
-tools_btsnoop_LDADD = src/libshared-mainloop.la
-
 tools_btproxy_SOURCES = tools/btproxy.c monitor/bt.h
 tools_btproxy_LDADD = src/libshared-mainloop.la
 
@@ -274,6 +277,12 @@ tools_mcaptest_SOURCES = tools/mcaptest.c \
 				src/log.c src/log.h \
 				profiles/health/mcap.h profiles/health/mcap.c
 tools_mcaptest_LDADD = lib/libbluetooth-internal.la @GLIB_LIBS@
+
+tools_bneptest_SOURCES = tools/bneptest.c \
+				btio/btio.h btio/btio.c \
+				src/log.h src/log.c \
+				profiles/network/bnep.h profiles/network/bnep.c
+tools_bneptest_LDADD = lib/libbluetooth-internal.la @GLIB_LIBS@
 
 tools_cltest_SOURCES = tools/cltest.c
 tools_cltest_LDADD = lib/libbluetooth-internal.la src/libshared-mainloop.la
@@ -370,4 +379,4 @@ test_scripts += test/sap_client.py test/bluezutils.py \
 		test/service-ftp.xml test/simple-player test/test-nap \
 		test/test-heartrate test/test-alert test/test-hfp \
 		test/test-cyclingspeed test/opp-client test/ftp-client \
-		test/pbap-client test/map-client
+		test/pbap-client test/map-client test/advertisement-example

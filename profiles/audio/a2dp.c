@@ -375,13 +375,6 @@ static void stream_state_changed(struct avdtp_stream *stream,
 		return;
 	}
 
-#ifdef __TIZEN_PATCH__
-	if (new_state == AVDTP_STATE_STREAMING && sep->suspend_timer) {
-		g_source_remove(sep->suspend_timer);
-		sep->suspend_timer = 0;
-	}
-#endif
-
 	if (new_state != AVDTP_STATE_IDLE)
 		return;
 
@@ -405,7 +398,6 @@ static gboolean auto_config(gpointer data)
 {
 	struct a2dp_setup *setup = data;
 	struct btd_device *dev = NULL;
-
 	struct btd_service *service;
 
 	/* Check if configuration was aborted */
@@ -453,6 +445,41 @@ static void endpoint_setconf_cb(struct a2dp_setup *setup, gboolean ret)
 	}
 
 	auto_config(setup);
+}
+
+static gboolean endpoint_match_codec_ind(struct avdtp *session,
+				struct avdtp_media_codec_capability *codec,
+				void *user_data)
+{
+	struct a2dp_sep *sep = user_data;
+	a2dp_vendor_codec_t *remote_codec;
+	a2dp_vendor_codec_t *local_codec;
+	uint8_t *capabilities;
+	size_t length;
+
+	if (codec->media_codec_type != A2DP_CODEC_VENDOR)
+		return TRUE;
+
+	if (sep->endpoint == NULL)
+		return FALSE;
+
+	length = sep->endpoint->get_capabilities(sep, &capabilities,
+							sep->user_data);
+	if (length < sizeof(a2dp_vendor_codec_t))
+		return FALSE;
+
+	local_codec = (a2dp_vendor_codec_t *) capabilities;
+	remote_codec = (a2dp_vendor_codec_t *) codec->data;
+
+	if (remote_codec->vendor_id != local_codec->vendor_id)
+		return FALSE;
+
+	if (remote_codec->codec_id != local_codec->codec_id)
+		return FALSE;
+
+	DBG("vendor 0x%08x codec 0x%04x", btohl(remote_codec->vendor_id),
+						btohs(remote_codec->codec_id));
+	return TRUE;
 }
 
 static gboolean endpoint_setconf_ind(struct avdtp *session,
@@ -1122,6 +1149,7 @@ static struct avdtp_sep_cfm cfm = {
 };
 
 static struct avdtp_sep_ind endpoint_ind = {
+	.match_codec		= endpoint_match_codec_ind,
 	.get_capability		= endpoint_getcap_ind,
 	.set_configuration	= endpoint_setconf_ind,
 	.get_configuration	= getconf_ind,
@@ -1330,6 +1358,13 @@ struct avdtp *a2dp_avdtp_get(struct btd_device *device)
 		if (!chan)
 			return NULL;
 	}
+
+#ifdef __TIZEN_PATCH__
+	if (chan->auth_id) {
+		DBG("auth is already going...");
+		return NULL;
+	}
+#endif
 
 	if (chan->session)
 		return avdtp_ref(chan->session);
@@ -1769,9 +1804,11 @@ static struct a2dp_sep *a2dp_find_sep(struct avdtp *session, GSList *list,
 
 	for (; list; list = list->next) {
 		struct a2dp_sep *sep = list->data;
+#ifdef __TIZEN_PATCH__
 		struct avdtp_remote_sep *rsep;
 		struct avdtp_media_codec_capability *cap;
 		struct avdtp_service_capability *service;
+#endif
 
 		/* Use sender's endpoint if available */
 		if (sender) {
@@ -1784,7 +1821,7 @@ static struct a2dp_sep *a2dp_find_sep(struct avdtp *session, GSList *list,
 			if (g_strcmp0(sender, name) != 0)
 				continue;
 		}
-
+#ifdef __TIZEN_PATCH__
 		rsep = avdtp_find_remote_sep(session, sep->lsep);
 		if (rsep == NULL)
 			continue;
@@ -1792,19 +1829,18 @@ static struct a2dp_sep *a2dp_find_sep(struct avdtp *session, GSList *list,
 		service = avdtp_get_codec(rsep);
 		cap = (struct avdtp_media_codec_capability *) service->data;
 
-#ifdef __TIZEN_PATCH__
 		if (cap->media_codec_type != A2DP_CODEC_VENDOR) {
 			selected_sep = sep;
 			continue;
 		}
 #else
-		if (cap->media_codec_type != A2DP_CODEC_VENDOR)
-			return sep;
-#endif
-
 		if (check_vendor_codec(sep, cap->data,
 					service->length - sizeof(*cap)))
 			return sep;
+
+#endif
+		return sep;
+
 	}
 
 #ifdef __TIZEN_PATCH__

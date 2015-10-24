@@ -773,7 +773,11 @@ int obex_put_stream_start(struct obex_session *os, const char *filename)
 	int err;
 
 	os->object = os->driver->open(filename, O_WRONLY | O_CREAT | O_TRUNC,
+#ifdef __TIZEN_PATCH__
+					0644, os->service_data,
+#else
 					0600, os->service_data,
+#endif
 					os->size != OBJECT_SIZE_UNKNOWN ?
 					(size_t *) &os->size : NULL, &err);
 	if (os->object == NULL) {

@@ -1710,6 +1710,52 @@ typedef struct {
 } __attribute__ ((packed)) le_test_end_rp;
 #define LE_TEST_END_RP_SIZE 3
 
+#ifdef __TIZEN_PATCH__
+#define OCF_LE_READ_MAXIMUM_DATA_LENGTH	0x002F
+typedef struct {
+	uint8_t status;
+	uint16_t max_tx_octets;
+	uint16_t max_tx_time;
+	uint16_t max_rx_octets;
+	uint16_t max_rx_time;
+} __attribute__ ((packed))
+le_read_maximum_data_length_rp;
+#define LE_READ_MAXIMUM_DATA_LENGTH_SIZE 9
+
+#define OCF_LE_WRITE_HOST_SUGGESTED_DATA_LENGTH	0x0030
+typedef struct {
+	uint16_t def_tx_octets;
+	uint16_t def_tx_time;
+} __attribute__ ((packed))
+le_write_host_suggested_data_length_cp;
+#define LE_WRITE_HOST_SUGGESTED_DATA_LENGTH_CP_SIZE 4
+
+#define OCF_LE_READ_HOST_SUGGESTED_DATA_LENGTH	0x0024
+typedef struct {
+	uint8_t status;
+	uint16_t def_tx_octets;
+	uint16_t def_tx_time;
+} __attribute__ ((packed))
+le_read_host_suggested_data_length_rp;
+#define LE_READ_HOST_SUGGESTED_DATA_LENGTH_SIZE 5
+
+#define OCF_LE_SET_DATA_LENGTH	0x0022
+typedef struct {
+	bdaddr_t bdaddr;
+	uint16_t max_tx_octets;
+	uint16_t max_tx_time;
+} __attribute__ ((packed))
+le_set_data_length_cp;
+#define LE_SET_DATA_LENGTH_CP_SIZE 10
+
+typedef struct {
+	uint16_t handle;
+	uint8_t status;
+} __attribute__ ((packed))
+le_set_data_length_rp;
+#define LE_SET_DATA_LENGTH_RP_SIZE 3
+#endif
+
 #define OCF_LE_ADD_DEVICE_TO_RESOLV_LIST	0x0027
 typedef struct {
 	uint8_t		bdaddr_type;

@@ -130,6 +130,9 @@ extern "C" {
 #define GATT_CHARAC_SOFTWARE_REVISION_STRING		0x2A28
 #define GATT_CHARAC_MANUFACTURER_NAME_STRING		0x2A29
 #define GATT_CHARAC_PNP_ID				0x2A50
+#ifdef __TIZEN_PATCH__
+#define GATT_CHARAC_CENTRAL_RPA_RESOLUTION		0x2AA6
+#endif
 
 /* GATT Characteristic Descriptors */
 #define GATT_CHARAC_EXT_PROPER_UUID			0x2900
@@ -141,6 +144,11 @@ extern "C" {
 #define GATT_CHARAC_VALID_RANGE_UUID			0x2906
 #define GATT_EXTERNAL_REPORT_REFERENCE			0x2907
 #define GATT_REPORT_REFERENCE				0x2908
+
+#ifdef __TIZEN_PATCH__
+/* GATT Service UUIDs : Defined  by SIG */
+#define GATT_IPSP_UUID		0x1820
+#endif
 
 typedef struct {
 	enum {

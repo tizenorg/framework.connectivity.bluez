@@ -66,7 +66,16 @@ static uint32_t btsnoop_type = 0;
 static int btsnoop_fd = -1;
 static uint16_t btsnoop_index = 0xffff;
 
+#ifdef __TIZEN_PATCH__
+static char *btsnoop_path = NULL;
+static int16_t btsnoop_rotate = -1;
+static ssize_t btsnoop_size = -1;
+
+void btsnoop_create(const char *path, uint32_t type,
+		int16_t rotate_count, ssize_t file_size)
+#else
 void btsnoop_create(const char *path, uint32_t type)
+#endif
 {
 	struct btsnoop_hdr hdr;
 	ssize_t written;
@@ -91,7 +100,102 @@ void btsnoop_create(const char *path, uint32_t type)
 		btsnoop_fd = -1;
 		return;
 	}
+
+#ifdef __TIZEN_PATCH__
+	if (rotate_count > 0 && file_size > 0) {
+		btsnoop_path = strdup(path);
+		btsnoop_rotate = rotate_count;
+		btsnoop_size = file_size;
+	}
+#endif
 }
+
+#ifdef __TIZEN_PATCH__
+static void btsnoop_create_2(void)
+{
+	struct btsnoop_hdr hdr;
+	ssize_t written;
+
+	if (btsnoop_fd >= 0)
+		close(btsnoop_fd);
+
+	btsnoop_fd = open(btsnoop_path,
+			O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
+			S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+	if (btsnoop_fd < 0)
+		goto fail;
+
+	memcpy(hdr.id, btsnoop_id, sizeof(btsnoop_id));
+	hdr.version = htobe32(btsnoop_version);
+	hdr.type = htobe32(btsnoop_type);
+
+	written = write(btsnoop_fd, &hdr, BTSNOOP_HDR_SIZE);
+	if (written < 0) {
+		close(btsnoop_fd);
+		btsnoop_fd = -1;
+		goto fail;
+	}
+
+	return;
+
+fail:
+	free(btsnoop_path);
+	btsnoop_rotate = -1;
+	btsnoop_size = -1;
+	btsnoop_index = 0xffff;
+
+	return;
+}
+
+static void btsnoop_rotate_files(void)
+{
+	char *filename = NULL;
+	char *new_filename = NULL;
+	int i;
+	int postfix_width = 0;
+	int err;
+
+	if (btsnoop_rotate <= 1)
+		return;
+
+	for (i = btsnoop_rotate / 10; i; i /= 10)
+		postfix_width++;
+
+	for (i = btsnoop_rotate - 2; i >= 0; i--) {
+		if (i == 0) {
+			filename = strdup(btsnoop_path);
+			err = (filename == NULL) ? -1 : 0;
+		} else {
+			err = asprintf(&filename, "%s.%0*d",
+					btsnoop_path, postfix_width, i);
+		}
+
+		if (err < 0 || access(filename, F_OK) < 0)
+			goto done;
+
+		err = asprintf(&new_filename, "%s.%0*d",
+				btsnoop_path, postfix_width, i + 1);
+		if (err < 0)
+			goto done;
+
+		err = rename(filename, new_filename)
+
+done:
+		if (new_filename) {
+			free(new_filename);
+			new_filename = NULL;
+		}
+
+		if (filename) {
+			free(filename);
+			filename = NULL;
+		}
+
+		if (err < 0)
+			break;
+	}
+}
+#endif
 
 void btsnoop_write(struct timeval *tv, uint32_t flags,
 					const void *data, uint16_t size)
@@ -107,6 +211,17 @@ void btsnoop_write(struct timeval *tv, uint32_t flags,
 	pkt.flags = htobe32(flags);
 	pkt.drops = htobe32(0);
 	pkt.ts    = htobe64(ts + 0x00E03AB44A676000ll);
+
+#ifdef __TIZEN_PATCH__
+	if ((btsnoop_rotate > 0 && btsnoop_size > 0) &&
+			lseek(btsnoop_fd, 0x00, SEEK_CUR) +
+			BTSNOOP_PKT_SIZE + size > btsnoop_size) {
+		btsnoop_rotate_files();
+		btsnoop_create_2();
+		if (btsnoop_fd < 0)
+			return;
+	}
+#endif
 
 	written = write(btsnoop_fd, &pkt, BTSNOOP_PKT_SIZE);
 	if (written < 0)
@@ -422,6 +537,15 @@ void btsnoop_close(void)
 {
 	if (btsnoop_fd < 0)
 		return;
+
+#ifdef __TIZEN_PATCH__
+	if (btsnoop_path) {
+		free(btsnoop_path);
+		btsnoop_path = NULL;
+	}
+	btsnoop_rotate = -1;
+	btsnoop_size = -1;
+#endif
 
 	close(btsnoop_fd);
 	btsnoop_fd = -1;

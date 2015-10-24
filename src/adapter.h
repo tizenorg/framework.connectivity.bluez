@@ -267,4 +267,32 @@ void btd_adapter_set_le_auto_connect(struct btd_adapter *adapter, gboolean auto_
 gboolean btd_adapter_disable_le_auto_connect(struct btd_adapter *adapter);
 void adapter_check_version(struct btd_adapter *adapter, uint8_t hci_ver);
 GSList *btd_adapter_get_connections(struct btd_adapter *adapter);
+int btd_adapter_connect_ipsp(struct btd_adapter *adapter,
+						const bdaddr_t *bdaddr,
+						uint8_t bdaddr_type);
+int btd_adapter_disconnect_ipsp(struct btd_adapter *adapter,
+						const bdaddr_t *bdaddr,
+						uint8_t bdaddr_type);
+
+typedef void (*read_max_data_length_cb_t) (struct btd_adapter *adapter,
+					const uint16_t max_txOctects,
+					const uint16_t max_txTime,
+					const uint16_t max_rxOctects,
+					const uint16_t max_rxTime,
+					void *user_data);
+
+struct le_data_length_read_handler {
+	read_max_data_length_cb_t read_callback;
+	void *user_data;
+};
+
+typedef void (*read_host_suggested_default_data_length_cb_t) (struct btd_adapter *adapter,
+					const uint16_t def_txOctects,
+					const uint16_t def_txTime,
+					void *user_data);
+
+struct le_data_length_read_default_data_length_handler {
+	read_host_suggested_default_data_length_cb_t read_callback;
+	void *user_data;
+};
 #endif

@@ -66,6 +66,10 @@ static void usage(void)
 		"\t-T, --date             Show time and date information\n"
 		"\t-S, --sco              Dump SCO traffic\n"
 		"\t-E, --ellisys [ip]     Send Ellisys HCI Injection\n"
+#ifdef __TIZEN_PATCH__
+		"\t-C, --count <num>      Save traces by <num> rotation\n"
+		"\t-W, --size <num>       Save traces at most <num> size\n"
+#endif
 		"\t-h, --help             Show help options\n");
 }
 
@@ -79,6 +83,10 @@ static const struct option main_options[] = {
 	{ "date",    no_argument,       NULL, 'T' },
 	{ "sco",     no_argument,	NULL, 'S' },
 	{ "ellisys", required_argument, NULL, 'E' },
+#ifdef __TIZEN_PATCH__
+	{ "count",   required_argument, NULL, 'C' },
+	{ "size",    required_argument, NULL, 'W' },
+#endif
 	{ "todo",    no_argument,       NULL, '#' },
 	{ "version", no_argument,       NULL, 'v' },
 	{ "help",    no_argument,       NULL, 'h' },
@@ -93,6 +101,10 @@ int main(int argc, char *argv[])
 	const char *analyze_path = NULL;
 	const char *ellisys_server = NULL;
 	unsigned short ellisys_port = 0;
+#ifdef __TIZEN_PATCH__
+	int16_t rotate_count = -1;
+	ssize_t file_size = -1;
+#endif
 	const char *str;
 	int exit_status;
 	sigset_t mask;
@@ -104,8 +116,13 @@ int main(int argc, char *argv[])
 	for (;;) {
 		int opt;
 
+#ifdef __TIZEN_PATCH__
+		opt = getopt_long(argc, argv, "r:w:a:s:i:tTSE:C:W:vh",
+						main_options, NULL);
+#else
 		opt = getopt_long(argc, argv, "r:w:a:s:i:tTSE:vh",
 						main_options, NULL);
+#endif
 		if (opt < 0)
 			break;
 
@@ -149,6 +166,14 @@ int main(int argc, char *argv[])
 			ellisys_server = optarg;
 			ellisys_port = 24352;
 			break;
+#ifdef __TIZEN_PATCH__
+		case 'C':
+			rotate_count = atoi(optarg);
+			break;
+		case 'W':
+			file_size = atoll(optarg);
+			break;
+#endif
 		case '#':
 			packet_todo();
 			lmp_todo();
@@ -199,10 +224,18 @@ int main(int argc, char *argv[])
 		return EXIT_SUCCESS;
 	}
 
+#ifdef __TIZEN_PATCH__
+	if (writer_path && !control_writer(writer_path,
+				rotate_count, file_size)) {
+		printf("Failed to open '%s'\n", writer_path);
+		return EXIT_FAILURE;
+	}
+#else
 	if (writer_path && !control_writer(writer_path)) {
 		printf("Failed to open '%s'\n", writer_path);
 		return EXIT_FAILURE;
 	}
+#endif
 
 	if (ellisys_server)
 		ellisys_enable(ellisys_server, ellisys_port);

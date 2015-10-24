@@ -24,7 +24,11 @@
 
 #include <stdint.h>
 
+#ifdef __TIZEN_PATCH__
+bool control_writer(const char *path, int16_t rotate_count, ssize_t file_size);
+#else
 bool control_writer(const char *path);
+#endif
 void control_reader(const char *path);
 void control_server(const char *path);
 int control_tracing(void);

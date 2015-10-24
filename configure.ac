@@ -1,5 +1,5 @@
 AC_PREREQ(2.60)
-AC_INIT(bluez, 5.28)
+AC_INIT(bluez, 5.30)
 
 AM_INIT_AUTOMAKE([foreign subdir-objects color-tests silent-rules
 					tar-pax no-dist-gzip dist-xz])
@@ -220,7 +220,7 @@ AC_ARG_ENABLE(manpages, AC_HELP_STRING([--enable-manpages],
 AM_CONDITIONAL(MANPAGES, test "${enable_manpages}" = "yes")
 
 AC_ARG_ENABLE(experimental, AC_HELP_STRING([--enable-experimental],
-			[enable experimental plugins (NFC, ...)]),
+			[enable experimental plugins (SAP, NFC, ...)]),
 					[enable_experimental=${enableval}])
 AM_CONDITIONAL(EXPERIMENTAL, test "${enable_experimental}" = "yes")
 

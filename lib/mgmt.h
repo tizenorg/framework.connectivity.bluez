@@ -46,6 +46,8 @@
 #define MGMT_STATUS_CANCELLED		0x10
 #define MGMT_STATUS_INVALID_INDEX	0x11
 #define MGMT_STATUS_RFKILLED		0x12
+#define MGMT_STATUS_ALREADY_PAIRED	0x13
+#define MGMT_STATUS_PERMISSION_DENIED	0x14
 
 struct mgmt_hdr {
 	uint16_t opcode;
@@ -272,14 +274,10 @@ struct mgmt_cp_user_passkey_neg_reply {
 
 #define MGMT_OP_READ_LOCAL_OOB_DATA	0x0020
 struct mgmt_rp_read_local_oob_data {
-	uint8_t hash[16];
-	uint8_t randomizer[16];
-} __packed;
-struct mgmt_rp_read_local_oob_ext_data {
 	uint8_t hash192[16];
-	uint8_t randomizer192[16];
+	uint8_t rand192[16];
 	uint8_t hash256[16];
-	uint8_t randomizer256[16];
+	uint8_t rand256[16];
 } __packed;
 
 #define MGMT_OP_ADD_REMOTE_OOB_DATA	0x0021
@@ -455,7 +453,67 @@ struct mgmt_cp_start_service_discovery {
 	uint16_t uuid_count;
 	uint8_t uuids[0][16];
 } __packed;
-#define MGMT_START_SERVICE_DISCOVERY_SIZE	4
+
+#define MGMT_OP_READ_LOCAL_OOB_EXT_DATA	0x003B
+struct mgmt_cp_read_local_oob_ext_data {
+	uint8_t  type;
+} __packed;
+struct mgmt_rp_read_local_oob_ext_data {
+	uint8_t  type;
+	uint16_t eir_len;
+	uint8_t  eir[0];
+} __packed;
+
+#define MGMT_OP_READ_EXT_INDEX_LIST	0x003C
+struct mgmt_rp_read_ext_index_list {
+	uint16_t num_controllers;
+	struct {
+		uint16_t index;
+		uint8_t type;
+		uint8_t bus;
+	} entry[0];
+} __packed;
+
+#define MGMT_OP_READ_ADV_FEATURES	0x003D
+struct mgmt_rp_read_adv_features {
+	uint32_t supported_flags;
+	uint8_t  max_adv_data_len;
+	uint8_t  max_scan_rsp_len;
+	uint8_t  max_instances;
+	uint8_t  num_instances;
+	uint8_t  instance[0];
+} __packed;
+
+#define MGMT_OP_ADD_ADVERTISING		0x003E
+struct mgmt_cp_add_advertising {
+	uint8_t  instance;
+	uint32_t flags;
+	uint16_t duration;
+	uint16_t timeout;
+	uint8_t  adv_data_len;
+	uint8_t  scan_rsp_len;
+	uint8_t  data[0];
+} __packed;
+struct mgmt_rp_add_advertising {
+	uint8_t instance;
+} __packed;
+
+#define MGMT_ADV_FLAG_CONNECTABLE	(1 << 0)
+#define MGMT_ADV_FLAG_DISCOV		(1 << 1)
+#define MGMT_ADV_FLAG_LIMITED_DISCOV	(1 << 2)
+#define MGMT_ADV_FLAG_MANAGED_FLAGS	(1 << 3)
+#define MGMT_ADV_FLAG_TX_POWER		(1 << 4)
+#define MGMT_ADV_FLAG_APPEARANCE	(1 << 5)
+#define MGMT_ADV_FLAG_LOCAL_NAME	(1 << 6)
+
+#define MGMT_OP_REMOVE_ADVERTISING	0x003F
+struct mgmt_cp_remove_advertising {
+	uint8_t instance;
+} __packed;
+#define MGMT_REMOVE_ADVERTISING_SIZE	1
+struct mgmt_rp_remove_advertising {
+	uint8_t instance;
+} __packed;
 
 #define MGMT_EV_CMD_COMPLETE		0x0001
 struct mgmt_ev_cmd_complete {
@@ -483,7 +541,7 @@ struct mgmt_ev_controller_error {
 
 #define MGMT_EV_CLASS_OF_DEV_CHANGED	0x0007
 struct mgmt_ev_class_of_dev_changed {
-	uint8_t class_of_dev[3];
+	uint8_t dev_class[3];
 } __packed;
 
 #define MGMT_EV_LOCAL_NAME_CHANGED	0x0008
@@ -640,6 +698,35 @@ struct mgmt_ev_new_conn_param {
 
 #define MGMT_EV_NEW_CONFIG_OPTIONS	0x001f
 
+#define MGMT_EV_EXT_INDEX_ADDED		0x0020
+struct mgmt_ev_ext_index_added {
+	uint8_t type;
+	uint8_t bus;
+} __packed;
+
+#define MGMT_EV_EXT_INDEX_REMOVED	0x0021
+struct mgmt_ev_ext_index_removed {
+	uint8_t type;
+	uint8_t bus;
+} __packed;
+
+#define MGMT_EV_LOCAL_OOB_DATA_UPDATED	0x0022
+struct mgmt_ev_local_oob_data_updated {
+	uint8_t  type;
+	uint16_t eir_len;
+	uint8_t  eir[0];
+} __packed;
+
+#define MGMT_EV_ADVERTISING_ADDED	0x0023
+struct mgmt_ev_advertising_added {
+	uint8_t instance;
+} __packed;
+
+#define MGMT_EV_ADVERTISING_REMOVED	0x0024
+struct mgmt_ev_advertising_removed {
+	uint8_t instance;
+} __packed;
+
 static const char *mgmt_op[] = {
 	"<0x0000>",
 	"Read Version",
@@ -649,7 +736,7 @@ static const char *mgmt_op[] = {
 	"Set Powered",
 	"Set Discoverable",
 	"Set Connectable",
-	"Set Fast Connectable",		/* 0x0008 */
+	"Set Fast Connectable",			/* 0x0008 */
 	"Set Bondable",
 	"Set Link Security",
 	"Set Secure Simple Pairing",
@@ -657,7 +744,7 @@ static const char *mgmt_op[] = {
 	"Set Low Energy",
 	"Set Dev Class",
 	"Set Local Name",
-	"Add UUID",			/* 0x0010 */
+	"Add UUID",					/* 0x0010 */
 	"Remove UUID",
 	"Load Link Keys",
 	"Load Long Term Keys",
@@ -665,7 +752,7 @@ static const char *mgmt_op[] = {
 	"Get Connections",
 	"PIN Code Reply",
 	"PIN Code Neg Reply",
-	"Set IO Capability",		/* 0x0018 */
+	"Set IO Capability",				/* 0x0018 */
 	"Pair Device",
 	"Cancel Pair Device",
 	"Unpair Device",
@@ -673,7 +760,7 @@ static const char *mgmt_op[] = {
 	"User Confirm Neg Reply",
 	"User Passkey Reply",
 	"User Passkey Neg Reply",
-	"Read Local OOB Data",		/* 0x0020 */
+	"Read Local OOB Data",				/* 0x0020 */
 	"Add Remote OOB Data",
 	"Remove Remove OOB Data",
 	"Start Discovery",
@@ -681,7 +768,7 @@ static const char *mgmt_op[] = {
 	"Confirm Name",
 	"Block Device",
 	"Unblock Device",
-	"Set Device ID",
+	"Set Device ID",				/* 0x0028 */
 	"Set Advertising",
 	"Set BR/EDR",
 	"Set Static Address",
@@ -689,7 +776,7 @@ static const char *mgmt_op[] = {
 	"Set Secure Connections",
 	"Set Debug Keys",
 	"Set Privacy",
-	"Load Identity Resolving Keys",
+	"Load Identity Resolving Keys",			/* 0x0030 */
 	"Get Connection Information",
 	"Get Clock Information",
 	"Add Device",
@@ -697,9 +784,14 @@ static const char *mgmt_op[] = {
 	"Load Connection Parameters",
 	"Read Unconfigured Index List",
 	"Read Controller Configuration Information",
-	"Set External Configuration",
+	"Set External Configuration",			/* 0x0038 */
 	"Set Public Address",
 	"Start Service Discovery",
+	"Read Local Out Of Band Extended Data",
+	"Read Extended Controller Index List",
+	"Read Advertising Features",
+	"Add Advertising",
+	"Remove Advertising",
 };
 
 static const char *mgmt_ev[] = {
@@ -735,6 +827,11 @@ static const char *mgmt_ev[] = {
 	"Unconfigured Index Added",
 	"Unconfigured Index Removed",
 	"New Configuration Options",
+	"Extended Index Added",
+	"Extended Index Removed",
+	"Local Out Of Band Extended Data Updated",
+	"Advertising Added",
+	"Advertising Removed",
 };
 
 static const char *mgmt_status[] = {
@@ -757,6 +854,8 @@ static const char *mgmt_status[] = {
 	"Cancelled",
 	"Invalid Index",
 	"Blocked through rfkill",
+	"Already Paired",
+	"Permission Denied",
 };
 
 #ifdef __TIZEN_PATCH__
@@ -893,6 +992,51 @@ struct mgmt_rp_get_adv_tx_power {
 	int8_t adv_tx_power;
 } __packed;
 
+#define MGMT_OP_ENABLE_6LOWPAN		(TIZEN_OP_CODE_BASE + 0x12)
+struct mgmt_cp_enable_6lowpan {
+	uint8_t enable_6lowpan;
+} __packed;
+
+#define MGMT_OP_CONNECT_6LOWPAN	(TIZEN_OP_CODE_BASE + 0x13)
+struct mgmt_cp_connect_6lowpan {
+	struct mgmt_addr_info addr;
+} __packed;
+
+#define MGMT_OP_DISCONNECT_6LOWPAN	(TIZEN_OP_CODE_BASE + 0x14)
+struct mgmt_cp_disconnect_6lowpan {
+	struct mgmt_addr_info addr;
+} __packed;
+
+#define MGMT_OP_LE_READ_MAXIMUM_DATA_LENGTH	(TIZEN_OP_CODE_BASE + 0x15)
+struct mgmt_rp_le_read_maximum_data_length {
+	uint8_t status;
+	uint16_t max_tx_octets;
+	uint16_t max_tx_time;
+	uint16_t max_rx_octets;
+	uint16_t max_rx_time;
+} __packed;
+
+#define MGMT_OP_LE_WRITE_HOST_SUGGESTED_DATA_LENGTH	(TIZEN_OP_CODE_BASE + 0x16)
+struct mgmt_cp_le_write_host_suggested_data_length {
+	uint16_t def_tx_octets;
+	uint16_t def_tx_time;
+} __packed;
+
+#define MGMT_OP_LE_READ_HOST_SUGGESTED_DATA_LENGTH	(TIZEN_OP_CODE_BASE + 0x17)
+struct mgmt_rp_le_read_host_suggested_data_length {
+	uint8_t status;
+	uint16_t def_tx_octets;
+	uint16_t def_tx_time;
+} __packed;
+
+#define MGMT_OP_LE_SET_DATA_LENGTH	(TIZEN_OP_CODE_BASE + 0x18)
+struct mgmt_cp_le_set_data_length {
+	bdaddr_t bdaddr;
+	uint16_t max_tx_octets;
+	uint16_t max_tx_time;
+} __packed;
+#define MGMT_LE_SET_DATA_LENGTH_SIZE	 10
+
 /*  Currently there is no support in kernel for below MGMT cmd opcodes. */
 #if 0 // Not defined in kernel
 #define MGMT_OP_READ_RSSI			(TIZEN_OP_CODE_BASE + 0x11)
@@ -1018,6 +1162,22 @@ struct mgmt_ev_vendor_specific_multi_adv_state_changed {
 	int16_t	connection_handle;
 } __packed;
 
+#define MGMT_EV_6LOWPAN_CONN_STATE_CHANGED		(TIZEN_EV_BASE + 0x0c)
+struct mgmt_ev_6lowpan_conn_state_changed {
+	struct	mgmt_addr_info addr;
+	uint8_t	connected;
+} __packed;
+
+
+#define MGMT_EV_LE_DATA_LENGTH_CHANGED		(TIZEN_EV_BASE + 0x0d)
+struct mgmt_ev_le_data_length_changed {
+	struct	mgmt_addr_info addr;
+	int16_t max_tx_octets;
+	int16_t max_tx_time;
+	int16_t max_rx_octets;
+	int16_t max_rx_time;
+} __packed;
+
 /*  Currently there is no support in kernel for below MGMT events. */
 #if 0 // Not defined in kernel
 #define MGMT_EV_NEW_LOCAL_IRK			(TIZEN_EV_BASE + 0x0b)
@@ -1044,7 +1204,9 @@ static const char *mgmt_tizen_op[] = {
 	"Set Manufacturer Data",
 	"LE Set Scan Parameters",
 	"Set Voice Setting",
-	"Get Adv Tx Power"
+	"Get Adv Tx Power",
+	"Connect BT 6LOWPAN",
+	"Disconnect BT 6LOWPAN"
 };
 
 static const char *mgmt_tizen_ev[] = {
@@ -1060,6 +1222,7 @@ static const char *mgmt_tizen_ev[] = {
 	"LE Connection Update Failed",
 	"LE Device Found",
 	"Multi Adv State Change",
+	"BT 6LOWPAN state Change"
 };
 #endif /* End of __TIZEN_PATCH__ */
 

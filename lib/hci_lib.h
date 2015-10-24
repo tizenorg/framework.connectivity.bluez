@@ -141,7 +141,18 @@ int hci_le_clear_resolving_list(int dd, int to);
 int hci_le_read_resolving_list_size(int dd, uint8_t *size, int to);
 int hci_le_set_address_resolution_enable(int dev_id, uint8_t enable, int to);
 int hci_le_read_remote_features(int dd, uint16_t handle, uint8_t *features, int to);
-
+#ifdef __TIZEN_PATCH__
+int hci_le_read_maximum_data_length(
+	int dd, uint8_t *status, uint16_t *tx_octets,
+	uint16_t *tx_time, uint16_t *rx_octets,
+	uint16_t *rx_time, int to );
+int hci_le_write_host_suggested_data_length(int dd, uint16_t *def_tx_octets,
+	uint16_t *def_tx_time, int to);
+int hci_le_read_host_suggested_data_length(int dd, uint8_t *status,
+	uint16_t *def_tx_octets, uint16_t *def_tx_time, int to);
+int hci_le_set_data_length(int dd, const bdaddr_t *bdaddr,
+		uint16_t *max_tx_octets, uint16_t *max_tx_time, int to);
+#endif
 int hci_for_each_dev(int flag, int(*func)(int dd, int dev_id, long arg), long arg);
 int hci_get_route(bdaddr_t *bdaddr);
 

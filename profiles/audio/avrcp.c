@@ -274,6 +274,7 @@ void avrcp_stop_position_timer(void);
 unsigned int pos_timer_id = 0;
 #endif
 
+#ifdef SUPPORT_AVRCP_CONTROL
 static sdp_record_t *avrcp_ct_record(void)
 {
 	sdp_list_t *svclass_id, *pfseq, *apseq, *apseq1, *root;
@@ -285,8 +286,13 @@ static sdp_record_t *avrcp_ct_record(void)
 	uint16_t lp = AVCTP_CONTROL_PSM, ap = AVCTP_BROWSING_PSM;
 #ifdef __TIZEN_PATCH__
 	uint16_t avrcp_ver = 0x0103, avctp_ver = 0x0104;
-	uint16_t feat = AVRCP_FEATURE_CATEGORY_1;
-
+	uint16_t feat = 0;
+#ifdef ENABLE_AVRCP_CATEGORY1
+	feat = AVRCP_FEATURE_CATEGORY_1;
+#endif
+#ifdef ENABLE_AVRCP_CATEGORY2
+	feat = feat | AVRCP_FEATURE_CATEGORY_2;
+#endif
 #else
 	uint16_t avrcp_ver = 0x0105, avctp_ver = 0x0103;
 	uint16_t feat = ( AVRCP_FEATURE_CATEGORY_1 |
@@ -373,7 +379,9 @@ static sdp_record_t *avrcp_ct_record(void)
 
 	return record;
 }
+#endif
 
+#ifdef SUPPORT_AVRCP_TARGET
 static sdp_record_t *avrcp_tg_record(void)
 {
 	sdp_list_t *svclass_id, *pfseq, *apseq, *root, *apseq_browsing;
@@ -390,8 +398,14 @@ static sdp_record_t *avrcp_tg_record(void)
 	uint16_t lp_browsing = AVCTP_BROWSING_PSM;
 #ifdef __TIZEN_PATCH__
 	uint16_t avrcp_ver = 0x0103, avctp_ver = 0x0104;
-	uint16_t feat = AVRCP_FEATURE_CATEGORY_1 |
-					AVRCP_FEATURE_PLAYER_SETTINGS;
+	uint16_t feat = 0;
+#ifdef ENABLE_AVRCP_CATEGORY1
+	feat = AVRCP_FEATURE_CATEGORY_1 |
+		AVRCP_FEATURE_PLAYER_SETTINGS;
+#endif
+#ifdef ENABLE_AVRCP_CATEGORY2
+	feat = feat | AVRCP_FEATURE_CATEGORY_2;
+#endif
 #else
 	uint16_t avrcp_ver = 0x0104, avctp_ver = 0x0103;
 	uint16_t feat = ( AVRCP_FEATURE_CATEGORY_1 |
@@ -477,6 +491,7 @@ static sdp_record_t *avrcp_tg_record(void)
 
 	return record;
 }
+#endif
 
 static unsigned int attr_get_max_val(uint8_t attr)
 {
@@ -3428,12 +3443,18 @@ static gboolean avrcp_get_capabilities_resp(struct avctp *conn,
 		case AVRCP_EVENT_ADDRESSED_PLAYER_CHANGED:
 		case AVRCP_EVENT_UIDS_CHANGED:
 		case AVRCP_EVENT_AVAILABLE_PLAYERS_CHANGED:
+			/* These events above are controller specific */
+			if (!session->controller)
+				break;
 		case AVRCP_EVENT_VOLUME_CHANGED:
 #endif
 			avrcp_register_notification(session, event);
 			break;
 		}
 	}
+
+	if (!session->controller)
+		return FALSE;
 
 	if (!(events & (1 << AVRCP_EVENT_SETTINGS_CHANGED)))
 		avrcp_list_player_attributes(session);
@@ -3555,6 +3576,7 @@ static void avrcp_connect_browsing(struct avrcp *session)
 							session);
 }
 
+#ifdef SUPPORT_AVRCP_TARGET
 static void target_init(struct avrcp *session)
 {
 	struct avrcp_server *server = session->server;
@@ -3571,8 +3593,7 @@ static void target_init(struct avrcp *session)
 	DBG("%p version 0x%04x", target, target->version);
 
 	service = btd_device_get_service(session->dev, AVRCP_REMOTE_UUID);
-	if (service != NULL)
-		btd_service_connecting_complete(service, 0);
+	btd_service_connecting_complete(service, 0);
 
 	player = g_slist_nth_data(server->players, 0);
 	if (player != NULL) {
@@ -3608,7 +3629,9 @@ static void target_init(struct avrcp *session)
 
 	avrcp_connect_browsing(session);
 }
+#endif
 
+#ifdef SUPPORT_AVRCP_CONTROL
 static void controller_init(struct avrcp *session)
 {
 	struct avrcp_player *player;
@@ -3639,8 +3662,7 @@ static void controller_init(struct avrcp *session)
 #endif
 
 	service = btd_device_get_service(session->dev, AVRCP_TARGET_UUID);
-	if (service != NULL)
-		btd_service_connecting_complete(service, 0);
+	btd_service_connecting_complete(service, 0);
 
 	/* Only create player if category 1 is supported */
 	if (!(controller->features & AVRCP_FEATURE_CATEGORY_1))
@@ -3668,6 +3690,7 @@ static void controller_init(struct avrcp *session)
 
 	avrcp_connect_browsing(session);
 }
+#endif
 
 static void session_init_control(struct avrcp *session)
 {
@@ -3681,28 +3704,23 @@ static void session_init_control(struct avrcp *session)
 							handle_vendordep_pdu,
 							session);
 	session->control_handlers = control_handlers;
-
+#ifdef SUPPORT_AVRCP_CONTROL
 	if (btd_device_get_service(session->dev, AVRCP_TARGET_UUID) != NULL)
 		controller_init(session);
+#endif
+#ifdef SUPPORT_AVRCP_TARGET
 	if (btd_device_get_service(session->dev, AVRCP_REMOTE_UUID) != NULL)
 		target_init(session);
+#endif
 }
 
 static void controller_destroy(struct avrcp *session)
 {
 	struct avrcp_data *controller = session->controller;
-	struct btd_service *service;
 
 	DBG("%p", controller);
 
 	g_slist_free_full(controller->players, player_destroy);
-
-	service = btd_device_get_service(session->dev, AVRCP_TARGET_UUID);
-
-	if (session->control_id == 0)
-		btd_service_connecting_complete(service, -EIO);
-	else
-		btd_service_disconnecting_complete(service, 0);
 
 	g_free(controller);
 }
@@ -3711,30 +3729,39 @@ static void target_destroy(struct avrcp *session)
 {
 	struct avrcp_data *target = session->target;
 	struct avrcp_player *player = target->player;
-	struct btd_service *service;
 
 	DBG("%p", target);
 
 	if (player != NULL)
 		player->sessions = g_slist_remove(player->sessions, session);
 
-	service = btd_device_get_service(session->dev, AVRCP_REMOTE_UUID);
-
-	if (session->control_id == 0)
-		btd_service_connecting_complete(service, -EIO);
-	else
-		btd_service_disconnecting_complete(service, 0);
-
 	g_free(target);
 }
 
-static void session_destroy(struct avrcp *session)
+static void session_destroy(struct avrcp *session, int err)
 {
 	struct avrcp_server *server = session->server;
+	struct btd_service *service;
 
 	server->sessions = g_slist_remove(server->sessions, session);
 
 	session_abort_pending_pdu(session);
+
+	service = btd_device_get_service(session->dev, AVRCP_TARGET_UUID);
+	if (service != NULL) {
+		if (session->control_id == 0)
+			btd_service_connecting_complete(service, err);
+		else
+			btd_service_disconnecting_complete(service, 0);
+	}
+
+	service = btd_device_get_service(session->dev, AVRCP_REMOTE_UUID);
+	if (service != NULL) {
+		if (session->control_id == 0)
+			btd_service_connecting_complete(service, err);
+		else
+			btd_service_disconnecting_complete(service, 0);
+	}
 
 	if (session->browsing_timer > 0)
 		g_source_remove(session->browsing_timer);
@@ -3773,7 +3800,8 @@ static struct avrcp *session_create(struct avrcp_server *server,
 }
 
 static void state_changed(struct btd_device *device, avctp_state_t old_state,
-				avctp_state_t new_state, void *user_data)
+					avctp_state_t new_state, int err,
+					void *user_data)
 {
 	struct avrcp_server *server;
 	struct avrcp *session;
@@ -3789,7 +3817,7 @@ static void state_changed(struct btd_device *device, avctp_state_t old_state,
 		if (session == NULL)
 			break;
 
-		session_destroy(session);
+		session_destroy(session, err);
 
 		break;
 	case AVCTP_STATE_CONNECTING:
@@ -4008,6 +4036,7 @@ static void avrcp_target_remove(struct btd_service *service)
 	control_unregister(service);
 }
 
+#ifdef SUPPORT_AVRCP_TARGET
 static void avrcp_target_server_remove(struct btd_profile *p,
 						struct btd_adapter *adapter)
 {
@@ -4027,7 +4056,9 @@ static void avrcp_target_server_remove(struct btd_profile *p,
 	if (server->ct_record_id == 0)
 		avrcp_server_unregister(server);
 }
+#endif
 
+#ifdef SUPPORT_AVRCP_TARGET
 static int avrcp_target_server_probe(struct btd_profile *p,
 						struct btd_adapter *adapter)
 {
@@ -4062,6 +4093,7 @@ done:
 
 	return 0;
 }
+#endif
 
 static struct btd_profile avrcp_target_profile = {
 	.name		= "audio-avrcp-target",
@@ -4072,9 +4104,10 @@ static struct btd_profile avrcp_target_profile = {
 
 	.connect	= avrcp_connect,
 	.disconnect	= avrcp_disconnect,
-
+#ifdef SUPPORT_AVRCP_TARGET
 	.adapter_probe	= avrcp_target_server_probe,
 	.adapter_remove = avrcp_target_server_remove,
+#endif
 };
 
 static int avrcp_controller_probe(struct btd_service *service)
@@ -4091,6 +4124,7 @@ static void avrcp_controller_remove(struct btd_service *service)
 	control_unregister(service);
 }
 
+#ifdef SUPPORT_AVRCP_CONTROL
 static void avrcp_controller_server_remove(struct btd_profile *p,
 						struct btd_adapter *adapter)
 {
@@ -4110,7 +4144,9 @@ static void avrcp_controller_server_remove(struct btd_profile *p,
 	if (server->tg_record_id == 0)
 		avrcp_server_unregister(server);
 }
+#endif
 
+#ifdef SUPPORT_AVRCP_CONTROL
 static int avrcp_controller_server_probe(struct btd_profile *p,
 						struct btd_adapter *adapter)
 {
@@ -4145,6 +4181,7 @@ done:
 
 	return 0;
 }
+#endif
 
 static struct btd_profile avrcp_controller_profile = {
 	.name		= "avrcp-controller",
@@ -4155,8 +4192,10 @@ static struct btd_profile avrcp_controller_profile = {
 
 	.connect	= avrcp_connect,
 	.disconnect	= avrcp_disconnect,
+#ifdef SUPPORT_AVRCP_CONTROL
 	.adapter_probe	= avrcp_controller_server_probe,
 	.adapter_remove = avrcp_controller_server_remove,
+#endif
 };
 
 static int avrcp_init(void)

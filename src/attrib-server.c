@@ -269,7 +269,14 @@ static int attribute_uuid_cmp(gconstpointer a, gconstpointer b)
 	const struct attribute *attrib1 = a;
 	const bt_uuid_t *uuid = b;
 
-	return bt_uuid_cmp(&attrib1->uuid, uuid);
+	if (attrib1->uuid.value.u16 != GATT_PRIM_SVC_UUID) {
+		return bt_uuid_cmp(&attrib1->uuid, uuid);
+	} else {
+		bt_uuid_t prim_uuid;
+		prim_uuid = att_get_uuid(attrib1->data, attrib1->len);
+
+		return bt_uuid_cmp(&prim_uuid, uuid);
+	}
 }
 
 struct attribute *attribute_find(struct btd_adapter *adapter, const bt_uuid_t *uuid)
@@ -736,7 +743,7 @@ static uint16_t find_info(struct gatt_channel *channel, uint16_t start,
 		put_le16(a->handle, value);
 
 		/* Attribute Value */
-		put_uuid_le(&a->uuid, &value[2]);
+		bt_uuid_to_le(&a->uuid, &value[2]);
 	}
 
 	length = enc_find_info_resp(format, adl, pdu, len);
@@ -791,7 +798,6 @@ static uint16_t find_by_type(struct gatt_channel *channel, uint16_t start,
 			if (bt_uuid_cmp(&a->uuid, &prim_uuid) == 0 ||
 					bt_uuid_cmp(&a->uuid, &snd_uuid) == 0)
 				range = NULL;
-
 			else
 				range->end = a->handle;
 		}
@@ -1432,19 +1438,24 @@ static gboolean register_core_services(struct gatt_server *server)
 #ifdef __TIZEN_PATCH__
 	/* GATT service: service changed characteristic */
 	service_changed_handle = 0x0008;
-	bt_uuid16_create(&uuid, GATT_CLIENT_CHARAC_CFG_UUID);
+	bt_uuid16_create(&uuid, GATT_CHARAC_UUID);
 
-	atval[0] = GATT_CHR_PROP_READ;
+	atval[0] = GATT_CHR_PROP_INDICATE;
 	put_le16(service_changed_handle, &atval[1]);
 	put_le16(GATT_CHARAC_SERVICE_CHANGED, &atval[3]);
-	put_le16(GATT_CLIENT_CHARAC_CFG_IND_BIT, atval);
+
 	attrib_db_add_new(server, 0x0007, &uuid, ATT_NONE, ATT_NOT_PERMITTED,
-								atval, 4);
+			atval, 5);
 
 	/* GATT service: service changed attribute */
 	bt_uuid16_create(&uuid, GATT_CHARAC_SERVICE_CHANGED);
-	attrib_db_add_new(server, service_changed_handle, &uuid, ATT_NONE,
+	attrib_db_add_new(server, service_changed_handle, &uuid, ATT_NOT_PERMITTED,
 						ATT_NOT_PERMITTED, NULL, 0);
+
+	bt_uuid16_create(&uuid, GATT_CLIENT_CHARAC_CFG_UUID);
+	atval[0] = GATT_CHR_PROP_READ | GATT_CHR_PROP_WRITE;
+	atval[1] = 0;
+	attrib_db_add_new(server, 0x0009, &uuid, ATT_NONE, ATT_NONE, atval, 2);
 #endif
 
 	server->gatt_sdp_handle = attrib_create_sdp_new(server, 0x0006,

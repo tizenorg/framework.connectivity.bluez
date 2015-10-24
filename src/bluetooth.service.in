@@ -5,10 +5,11 @@ Documentation=man:bluetoothd(8)
 [Service]
 Type=dbus
 BusName=org.bluez
-ExecStart=@libexecdir@/bluetoothd
+ExecStart=@libexecdir@/bluetoothd -d -C
 NotifyAccess=main
 #WatchdogSec=10
-#Restart=on-failure
+Restart=always
+RestartSec=1
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 LimitNPROC=1
 

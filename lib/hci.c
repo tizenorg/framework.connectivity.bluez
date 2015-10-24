@@ -592,7 +592,8 @@ static hci_map commands_map[] = {
 	{ "LE Receiver Test",				228 },
 	{ "LE Transmitter Test",			229 },
 	{ "LE Test End",				230 },
-	{ "Reserved",					231 },
+	{ "LE Read Maximum Data Length",		231 },
+	{ "Reserved",					232 },
 
 	{ NULL }
 };
@@ -3117,3 +3118,133 @@ int hci_le_read_remote_features(int dd, uint16_t handle, uint8_t *features, int 
 
 	return 0;
 }
+
+#ifdef __TIZEN_PATCH__
+int hci_le_read_maximum_data_length(
+	int dd, uint8_t *status, uint16_t *tx_octets,
+	uint16_t *tx_time, uint16_t *rx_octets,
+	uint16_t *rx_time, int to)
+{
+	le_read_maximum_data_length_rp rp;
+	struct hci_request rq;
+
+	memset(&rq, 0, sizeof(rq));
+	memset(&rp, 0, sizeof(rp));
+
+	rq.ogf = OGF_LE_CTL;
+	rq.ocf = OCF_LE_READ_MAXIMUM_DATA_LENGTH;
+	rq.rparam = &rp;
+	rq.rlen = LE_READ_MAXIMUM_DATA_LENGTH_SIZE;
+
+	if (hci_send_req(dd, &rq, to) < 0)
+		return -1;
+
+	if (rp.status) {
+		errno = EIO;
+		return -1;
+	}
+
+	*tx_octets = rp.max_tx_octets;
+	*tx_time = rp.max_tx_time;
+	*rx_octets = rp.max_rx_octets;
+	*rx_time = rp.max_rx_time;
+	*status = rp.status;
+	return 0;
+}
+
+int hci_le_write_host_suggested_data_length(
+		int dd, uint16_t *def_tx_octets,
+		uint16_t *def_tx_time, int to)
+{
+	le_write_host_suggested_data_length_cp cp;
+	struct hci_request rq;
+	uint8_t status;
+
+	memset(&cp, 0, sizeof(cp));
+	cp.def_tx_octets = def_tx_octets;
+	cp.def_tx_time = def_tx_time;
+
+	memset(&rq, 0, sizeof(rq));
+	rq.ogf = OGF_LE_CTL;
+	rq.ocf = OCF_LE_WRITE_HOST_SUGGESTED_DATA_LENGTH;
+	rq.cparam = &cp;
+	rq.clen = LE_WRITE_HOST_SUGGESTED_DATA_LENGTH_CP_SIZE;
+	rq.rparam = &status;
+	rq.rlen = 1;
+
+	if (hci_send_req(dd, &rq, to) < 0)
+		return -1;
+
+	if (status) {
+		errno = EIO;
+		return -1;
+	}
+
+	return 0;
+}
+
+int hci_le_read_host_suggested_data_length(
+	int dd, uint8_t *status, uint16_t *def_tx_octets,
+	uint16_t *def_tx_time, int to)
+{
+	le_read_host_suggested_data_length_rp rp;
+	struct hci_request rq;
+
+	memset(&rp, 0, sizeof(rp));
+	memset(&rq, 0, sizeof(rq));
+
+	rq.ogf = OGF_LE_CTL;
+	rq.ocf = OCF_LE_READ_HOST_SUGGESTED_DATA_LENGTH;
+	rq.rparam = &rp;
+	rq.rlen = LE_READ_HOST_SUGGESTED_DATA_LENGTH_SIZE;
+
+	if (hci_send_req(dd, &rq, to) < 0)
+		return -1;
+
+	if (rp.status) {
+		errno = EIO;
+		return -1;
+	}
+
+	*def_tx_octets = rp.def_tx_octets;
+	*def_tx_time = rp.def_tx_time;
+	*status = rp.status;
+	return 0;
+}
+
+int hci_le_set_data_length(
+		int dd, const bdaddr_t *bdaddr, uint16_t *max_tx_octets,
+		uint16_t *max_tx_time, int to)
+{
+	le_set_data_length_cp cp;
+	le_set_data_length_rp rp;
+	struct hci_request rq;
+	uint8_t status;
+
+	memset(&cp, 0, sizeof(cp));
+	memset(&rp, 0, sizeof(rp));
+
+	bacpy(&cp.bdaddr, bdaddr);
+	cp.max_tx_octets = max_tx_octets;
+	cp.max_tx_time = max_tx_time;
+
+	memset(&rq, 0, sizeof(rq));
+	rq.ogf = OGF_LE_CTL;
+	rq.ocf = OCF_LE_SET_DATA_LENGTH;
+	rq.cparam = &cp;
+	rq.clen = LE_SET_DATA_LENGTH_CP_SIZE;
+	rq.rparam = &rp;
+	rq.rlen = LE_SET_DATA_LENGTH_RP_SIZE;
+
+	if (hci_send_req(dd, &rq, to) < 0)
+		return -1;
+
+	if (rp.status) {
+		errno = EIO;
+		return -1;
+	}
+
+	return 0;
+}
+
+#endif

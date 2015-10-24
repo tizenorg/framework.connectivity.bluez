@@ -107,7 +107,7 @@ bool device_is_bonded(struct btd_device *device, uint8_t bdaddr_type);
 gboolean device_is_trusted(struct btd_device *device);
 void device_set_paired(struct btd_device *dev, uint8_t bdaddr_type);
 void device_set_unpaired(struct btd_device *dev, uint8_t bdaddr_type);
-void btd_device_set_temporary(struct btd_device *device, gboolean temporary);
+void btd_device_set_temporary(struct btd_device *device, bool temporary);
 void btd_device_set_trusted(struct btd_device *device, gboolean trusted);
 void device_set_bonded(struct btd_device *device, uint8_t bdaddr_type);
 void device_set_legacy(struct btd_device *device, bool legacy);
@@ -156,6 +156,8 @@ void device_set_adv_report_info(struct btd_device *device, void *data,
 void device_set_payload_timeout(struct btd_device *device,
 			uint16_t payload_timeout);
 void device_set_last_addr_type(struct btd_device *device, uint8_t type);
+gboolean device_is_ipsp_connected(struct btd_device * device);
+void device_set_ipsp_connected(struct btd_device *device, gboolean connected);
 #endif
 
 struct btd_device *btd_device_ref(struct btd_device *device);

@@ -157,6 +157,13 @@ Properties	string UUID [read-only]
 			descriptor objects will become available via
 			ObjectManager as soon as they get discovered.
 
+#ifdef __TIZEN_PATCH__
+		string Unicast [read-only]
+
+			12:34:56:78:9A:BC remote device address, if address is set then
+			notifications or indications shall be sent to only "XX_XX_XX_XX_XX_XX"
+			device otherwise notification or indication shall be multicasted.
+#endif
 
 Characteristic Descriptors hierarchy
 ====================================

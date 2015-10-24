@@ -218,7 +218,11 @@ static char *build_phonebook_path(const char *location, const char *item)
 		internal = TRUE;
 	} else if (!g_ascii_strncasecmp(location, "sim", 3)) {
 		if (strlen(location) == 3)
+#ifdef __TIZEN_PATCH__
+			tmp = g_strdup("SIM1");
+#else
 			tmp = g_strdup("sim1");
+#endif
 		else
 			tmp = g_ascii_strup(location, 4);
 

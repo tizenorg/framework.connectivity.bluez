@@ -178,9 +178,14 @@ static void mas_disconnect(struct obex_session *os, void *user_data)
 	DBG("");
 
 	manager_unregister_session(os);
-	messages_disconnect(mas->backend_data);
+#ifdef __TIZEN_PATCH__
+	if (mas)
+#endif
+	{
+		messages_disconnect(mas->backend_data);
 
-	mas_clean(mas);
+		mas_clean(mas);
+	}
 }
 
 static int mas_get(struct obex_session *os, void *user_data)

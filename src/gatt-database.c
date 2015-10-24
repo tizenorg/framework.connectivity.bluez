@@ -23,6 +23,7 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <errno.h>
 
 #include "lib/bluetooth.h"
 #include "lib/sdp.h"
@@ -41,6 +42,7 @@
 #include "device.h"
 #include "gatt-database.h"
 #include "dbus-common.h"
+#include "profile.h"
 
 #ifndef ATT_CID
 #define ATT_CID 4
@@ -75,6 +77,7 @@ struct btd_gatt_database {
 	struct gatt_db_attribute *svc_chngd;
 	struct gatt_db_attribute *svc_chngd_ccc;
 	struct queue *services;
+	struct queue *profiles;
 };
 
 struct external_service {
@@ -89,6 +92,14 @@ struct external_service {
 	uint16_t attr_cnt;
 	struct queue *chrcs;
 	struct queue *descs;
+};
+
+struct external_profile {
+	struct btd_gatt_database *database;
+	char *owner;
+	char *path;	/* Path to GattProfile1 */
+	unsigned int id;
+	struct queue *profiles; /* btd_profile list */
 };
 
 struct external_chrc {
@@ -118,7 +129,11 @@ struct pending_op {
 	unsigned int id;
 	struct gatt_db_attribute *attrib;
 	struct queue *owner_queue;
-	void *setup_data;
+	struct iovec data;
+#ifdef __TIZEN_PATCH__
+	bdaddr_t bdaddr;
+	uint8_t bdaddr_type;
+#endif
 };
 
 struct device_state {
@@ -196,6 +211,31 @@ find_device_state(struct btd_gatt_database *database, bdaddr_t *bdaddr,
 
 	return queue_find(database->device_states, dev_state_match, &dev_info);
 }
+
+#ifdef __TIZEN_PATCH__
+static bool dev_addr_match(const void *a, const void *b)
+{
+	const struct device_state *dev_state = a;
+	const struct device_info *dev_info = b;
+
+	if (bacmp(&dev_state->bdaddr, &dev_info->bdaddr) == 0)
+		return TRUE;
+
+	return FALSE;
+}
+
+static struct device_state *
+find_device_state_from_address(struct btd_gatt_database *database, bdaddr_t *bdaddr)
+{
+	struct device_info dev_info;
+
+	memset(&dev_info, 0, sizeof(dev_info));
+
+	bacpy(&dev_info.bdaddr, bdaddr);
+
+	return queue_find(database->device_states, dev_addr_match, &dev_info);
+}
+#endif
 
 static bool ccc_state_match(const void *a, const void *b)
 {
@@ -364,6 +404,52 @@ static void service_free(void *data)
 	free(service);
 }
 
+static void profile_remove(void *data)
+{
+	struct btd_profile *p = data;
+
+	DBG("Removed \"%s\"", p->name);
+
+	adapter_foreach(adapter_remove_profile, p);
+
+	g_free((void *) p->name);
+	g_free((void *) p->remote_uuid);
+
+	free(p);
+}
+
+static void profile_release(struct external_profile *profile)
+{
+	DBusMessage *msg;
+
+	if (!profile->id)
+		return;
+
+	DBG("Releasing \"%s\"", profile->owner);
+
+	g_dbus_remove_watch(btd_get_dbus_connection(), profile->id);
+
+	msg = dbus_message_new_method_call(profile->owner, profile->path,
+						"org.bluez.GattProfile1",
+						"Release");
+	if (msg)
+		g_dbus_send_message(btd_get_dbus_connection(), msg);
+}
+
+static void profile_free(void *data)
+{
+	struct external_profile *profile = data;
+
+	queue_destroy(profile->profiles, profile_remove);
+
+	profile_release(profile);
+
+	g_free(profile->owner);
+	g_free(profile->path);
+
+	free(profile);
+}
+
 static void gatt_database_free(void *data)
 {
 	struct btd_gatt_database *database = data;
@@ -390,6 +476,7 @@ static void gatt_database_free(void *data)
 
 	queue_destroy(database->device_states, device_state_free);
 	queue_destroy(database->services, service_free);
+	queue_destroy(database->profiles, profile_free);
 	queue_destroy(database->ccc_callbacks, ccc_cb_free);
 	database->device_states = NULL;
 	database->ccc_callbacks = NULL;
@@ -494,6 +581,33 @@ done:
 	gatt_db_attribute_read_result(attrib, id, error, value, len);
 }
 
+#ifdef __TIZEN_PATCH__
+static void gap_rpa_res_support_read_cb(struct gatt_db_attribute *attrib,
+					unsigned int id, uint16_t offset,
+					uint8_t opcode, struct bt_att *att,
+					void *user_data)
+{
+	struct btd_gatt_database *database = user_data;
+	uint8_t error = 0;
+	size_t len = 1;
+	const uint8_t *value = NULL;
+	uint8_t rpa_res_support = 0x00;
+
+	rpa_res_support = btd_adapter_get_rpa_res_support_value(database->adapter);
+
+	if (offset > 1) {
+		error = BT_ATT_ERROR_INVALID_OFFSET;
+		goto done;
+	}
+
+	len -= offset;
+	value = len ? &rpa_res_support : NULL;
+
+done:
+	gatt_db_attribute_read_result(attrib, id, error, value, len);
+}
+#endif
+
 static sdp_record_t *record_new(uuid_t *uuid, uint16_t start, uint16_t end)
 {
 	sdp_list_t *svclass_id, *apseq, *proto[2], *root, *aproto;
@@ -589,7 +703,13 @@ static void populate_gap_service(struct btd_gatt_database *database)
 
 	/* Add the GAP service */
 	bt_uuid16_create(&uuid, UUID_GAP);
+
+#ifndef __TIZEN_PATCH__
 	service = gatt_db_add_service(database->db, &uuid, true, 5);
+#else
+	service = gatt_db_add_service(database->db, &uuid, true, 7);
+#endif
+
 	database->gap_handle = database_add_record(database, UUID_GAP, service,
 						"Generic Access Profile");
 
@@ -610,6 +730,15 @@ static void populate_gap_service(struct btd_gatt_database *database)
 							BT_GATT_CHRC_PROP_READ,
 							gap_appearance_read_cb,
 							NULL, database);
+
+#ifdef __TIZEN_PATCH__
+	/* Central address resolution characteristic */
+	bt_uuid16_create(&uuid, GATT_CHARAC_CENTRAL_RPA_RESOLUTION);
+	gatt_db_service_add_characteristic(service, &uuid, BT_ATT_PERM_READ,
+							BT_GATT_CHRC_PROP_READ,
+							gap_rpa_res_support_read_cb,
+							NULL, database);
+#endif
 
 	gatt_db_service_set_active(service, true);
 }
@@ -901,6 +1030,32 @@ static void send_notification_to_devices(struct btd_gatt_database *database,
 	queue_foreach(database->device_states, send_notification_to_device,
 								&notify);
 }
+
+#ifdef __TIZEN_PATCH__
+static void send_unicast_notification_to_device(struct btd_gatt_database *database,
+					uint16_t handle, const uint8_t *value,
+					uint16_t len, uint16_t ccc_handle,
+					bool indicate, bdaddr_t *unicast_addr)
+{
+	struct notify notify;
+	struct device_state *dev_state;
+
+	memset(&notify, 0, sizeof(notify));
+
+	notify.database = database;
+	notify.handle = handle;
+	notify.ccc_handle = ccc_handle;
+	notify.value = value;
+	notify.len = len;
+	notify.indicate = indicate;
+
+	 /* Find and return a device state. */
+	dev_state = find_device_state_from_address(database, unicast_addr);
+
+	if (dev_state)
+		send_notification_to_device(dev_state, &notify);
+}
+#endif
 
 static void send_service_changed(struct btd_gatt_database *database,
 					struct gatt_db_attribute *attrib)
@@ -1366,6 +1521,7 @@ static bool parse_uuid(GDBusProxy *proxy, bt_uuid_t *uuid)
 static bool parse_primary(GDBusProxy *proxy, bool *primary)
 {
 	DBusMessageIter iter;
+	dbus_bool_t val;
 
 	if (!g_dbus_proxy_get_property(proxy, "Primary", &iter))
 		return false;
@@ -1373,7 +1529,10 @@ static bool parse_primary(GDBusProxy *proxy, bool *primary)
 	if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_BOOLEAN)
 		return false;
 
-	dbus_message_iter_get_basic(&iter, primary);
+	dbus_message_iter_get_basic(&iter, &val);
+
+	*primary = val;
+
 	return true;
 }
 
@@ -1460,17 +1619,41 @@ static void pending_op_free(void *data)
 	free(op);
 }
 
+#ifdef __TIZEN_PATCH__
+static struct pending_op *pending_read_new(struct queue *owner_queue,
+					struct gatt_db_attribute *attrib,
+					struct bt_att *att,
+					unsigned int id)
+#else
 static struct pending_op *pending_read_new(struct queue *owner_queue,
 					struct gatt_db_attribute *attrib,
 					unsigned int id)
+#endif
 {
 	struct pending_op *op;
+#ifdef __TIZEN_PATCH__
+	bdaddr_t bdaddr;
+	uint8_t bdaddr_type;
+	char address[18];
+#endif
 
 	op = new0(struct pending_op, 1);
 	if (!op)
 		return NULL;
 
+#ifdef __TIZEN_PATCH__
+	if (!get_dst_info(att, &bdaddr, &bdaddr_type)) {
+		free(op);
+		return NULL;
+	}
+#endif
+
 	op->owner_queue = owner_queue;
+#ifdef __TIZEN_PATCH__
+	memcpy(&op->bdaddr, &bdaddr, sizeof(bdaddr_t));
+	op->bdaddr_type = bdaddr_type;
+#endif
+
 	op->attrib = attrib;
 	op->id = id;
 	queue_push_tail(owner_queue, op);
@@ -1478,22 +1661,59 @@ static struct pending_op *pending_read_new(struct queue *owner_queue,
 	return op;
 }
 
+#ifdef __TIZEN_PATCH__
+static void read_setup_cb(DBusMessageIter *iter, void *user_data)
+{
+	struct pending_op *op = user_data;
+	char dstaddr[18] = { 0 };
+	char *addr_value = NULL;
+	uint16_t offset = 0;
+
+	ba2str(&op->bdaddr, dstaddr);
+	addr_value = g_strdup(dstaddr);
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_STRING,
+							&addr_value);
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_BYTE,
+							&op->id);
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT16,
+							&offset);
+}
+#endif
+
+#ifdef __TIZEN_PATCH__
+static void send_read(struct gatt_db_attribute *attrib, struct bt_att *att,
+						GDBusProxy *proxy, struct queue *owner_queue,
+						unsigned int id)
+#else
 static void send_read(struct gatt_db_attribute *attrib, GDBusProxy *proxy,
 						struct queue *owner_queue,
 						unsigned int id)
+#endif
 {
 	struct pending_op *op;
 	uint8_t ecode = BT_ATT_ERROR_UNLIKELY;
 
+#ifdef __TIZEN_PATCH__
+	op = pending_read_new(owner_queue, attrib, att, id);
+#else
 	op = pending_read_new(owner_queue, attrib, id);
+#endif
 	if (!op) {
 		error("Failed to allocate memory for pending read call");
 		ecode = BT_ATT_ERROR_INSUFFICIENT_RESOURCES;
 		goto error;
 	}
 
+#ifdef __TIZEN_PATCH__
+	if (g_dbus_proxy_method_call(proxy, "ReadValue", read_setup_cb, read_reply_cb,
+						op, pending_op_free) == TRUE)
+#else
 	if (g_dbus_proxy_method_call(proxy, "ReadValue", NULL, read_reply_cb,
 						op, pending_op_free) == TRUE)
+#endif
 		return;
 
 	pending_op_free(op);
@@ -1505,12 +1725,30 @@ error:
 static void write_setup_cb(DBusMessageIter *iter, void *user_data)
 {
 	struct pending_op *op = user_data;
-	struct iovec *iov = op->setup_data;
 	DBusMessageIter array;
+#ifdef __TIZEN_PATCH__
+	char dstaddr[18] = { 0 };
+	char *addr_value = NULL;
+	uint16_t offset = 0;
+#endif
+
+#ifdef __TIZEN_PATCH__
+	ba2str(&op->bdaddr, dstaddr);
+	addr_value = g_strdup(dstaddr);
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_STRING,
+							&addr_value);
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_BYTE,
+							&op->id);
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT16,
+							&offset);
+#endif
 
 	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, "y", &array);
 	dbus_message_iter_append_fixed_array(&array, DBUS_TYPE_BYTE,
-						&iov->iov_base, iov->iov_len);
+					&op->data.iov_base, op->data.iov_len);
 	dbus_message_iter_close_container(iter, &array);
 }
 
@@ -1550,40 +1788,71 @@ done:
 	gatt_db_attribute_write_result(op->attrib, op->id, ecode);
 }
 
+#ifdef __TIZEN_PATCH__
+static struct pending_op *pending_write_new(struct queue *owner_queue,
+					struct gatt_db_attribute *attrib, struct bt_att *att,
+					unsigned int id,
+					const uint8_t *value,
+					size_t len)
+#else
 static struct pending_op *pending_write_new(struct queue *owner_queue,
 					struct gatt_db_attribute *attrib,
 					unsigned int id,
 					const uint8_t *value,
 					size_t len)
+#endif
 {
 	struct pending_op *op;
-	struct iovec iov;
+#ifdef __TIZEN_PATCH__
+	bdaddr_t bdaddr;
+	uint8_t bdaddr_type;
+	char address[18];
+#endif
 
 	op = new0(struct pending_op, 1);
 	if (!op)
 		return NULL;
+#ifdef __TIZEN_PATCH__
+	if (!get_dst_info(att, &bdaddr, &bdaddr_type)) {
+		free(op);
+		return NULL;
+	}
+#endif
 
-	iov.iov_base = (uint8_t *) value;
-	iov.iov_len = len;
+	op->data.iov_base = (uint8_t *) value;
+	op->data.iov_len = len;
+#ifdef __TIZEN_PATCH__
+	memcpy(&op->bdaddr, &bdaddr, sizeof(bdaddr_t));
+	op->bdaddr_type = bdaddr_type;
+#endif
 
 	op->owner_queue = owner_queue;
 	op->attrib = attrib;
 	op->id = id;
-	op->setup_data = &iov;
 	queue_push_tail(owner_queue, op);
 
 	return op;
 }
 
+#ifdef __TIZEN_PATCH__
+static void send_write(struct gatt_db_attribute *attrib, struct bt_att *att,
+					GDBusProxy *proxy, struct queue *owner_queue,
+					unsigned int id, const uint8_t *value, size_t len)
+#else
 static void send_write(struct gatt_db_attribute *attrib, GDBusProxy *proxy,
 					struct queue *owner_queue,
 					unsigned int id,
 					const uint8_t *value, size_t len)
+#endif
 {
 	struct pending_op *op;
 	uint8_t ecode = BT_ATT_ERROR_UNLIKELY;
 
+#ifdef __TIZEN_PATCH__
+	op = pending_write_new(owner_queue, attrib, att, id, value, len);
+#else
 	op = pending_write_new(owner_queue, attrib, id, value, len);
+#endif
 	if (!op) {
 		error("Failed to allocate memory for pending read call");
 		ecode = BT_ATT_ERROR_INSUFFICIENT_RESOURCES;
@@ -1677,7 +1946,63 @@ static void property_changed_cb(GDBusProxy *proxy, const char *name,
 	DBusMessageIter array;
 	uint8_t *value = NULL;
 	int len = 0;
+#ifdef __TIZEN_PATCH__
+	const bdaddr_t *unicast_addr = NULL;
+#endif
 
+#ifdef __TIZEN_PATCH__
+	if (strcmp(name, "Value") == 0) {
+		if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_ARRAY) {
+			DBG("Malformed \"Value\" property received");
+			return;
+		}
+
+		dbus_message_iter_recurse(iter, &array);
+		dbus_message_iter_get_fixed_array(&array, &value, &len);
+
+		if (len < 0) {
+			DBG("Malformed \"Value\" property received");
+			return;
+		}
+
+		/* Truncate the value if it's too large */
+		len = MIN(BT_ATT_MAX_VALUE_LEN, len);
+		value = len ? value : NULL;
+	} else if (strcmp(name, "Unicast") == 0) {
+		const char *address = NULL;
+		if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_STRING) {
+			DBG("Malformed \"Value\" property received");
+			return;
+		}
+
+		dbus_message_iter_get_basic(iter, &address);
+
+		if (address) {
+			/* Set the address for unicast notification/indication */
+			set_ccc_unicast_address(chrc->ccc, address);
+		}
+		return;
+	} else
+		return;
+
+	unicast_addr = get_ccc_unicast_address(chrc->ccc);
+
+	if (unicast_addr && bacmp(unicast_addr, BDADDR_ANY)) {
+		send_unicast_notification_to_device(chrc->service->database,
+				gatt_db_attribute_get_handle(chrc->attrib),
+				value, len,
+				gatt_db_attribute_get_handle(chrc->ccc),
+				chrc->props & BT_GATT_CHRC_PROP_INDICATE,
+				unicast_addr);
+		/* reset the unicast address */
+		set_ccc_unicast_address(chrc->ccc, NULL);
+	} else
+		send_notification_to_devices(chrc->service->database,
+					gatt_db_attribute_get_handle(chrc->attrib),
+					value, len,
+					gatt_db_attribute_get_handle(chrc->ccc),
+					chrc->props & BT_GATT_CHRC_PROP_INDICATE);
+#else
 	if (strcmp(name, "Value"))
 		return;
 
@@ -1703,6 +2028,7 @@ static void property_changed_cb(GDBusProxy *proxy, const char *name,
 				value, len,
 				gatt_db_attribute_get_handle(chrc->ccc),
 				chrc->props & BT_GATT_CHRC_PROP_INDICATE);
+#endif
 }
 
 static bool database_add_ccc(struct external_service *service,
@@ -1783,8 +2109,11 @@ static void desc_read_cb(struct gatt_db_attribute *attrib,
 		error("Read callback called with incorrect attribute");
 		return;
 	}
-
+#ifdef __TIZEN_PATCH__
+	send_read(attrib, att, desc->proxy, desc->pending_reads, id);
+#else
 	send_read(attrib, desc->proxy, desc->pending_reads, id);
+#endif
 }
 
 static void desc_write_cb(struct gatt_db_attribute *attrib,
@@ -1800,7 +2129,11 @@ static void desc_write_cb(struct gatt_db_attribute *attrib,
 		return;
 	}
 
+#ifdef __TIZEN_PATCH__
+	send_write(attrib, att, desc->proxy, desc->pending_writes, id, value, len);
+#else
 	send_write(attrib, desc->proxy, desc->pending_writes, id, value, len);
+#endif
 }
 
 static bool database_add_desc(struct external_service *service,
@@ -1842,7 +2175,11 @@ static void chrc_read_cb(struct gatt_db_attribute *attrib,
 		return;
 	}
 
+#ifdef __TIZEN_PATCH__
+	send_read(attrib, att, chrc->proxy, chrc->pending_reads, id);
+#else
 	send_read(attrib, chrc->proxy, chrc->pending_reads, id);
+#endif
 }
 
 static void chrc_write_cb(struct gatt_db_attribute *attrib,
@@ -1858,8 +2195,31 @@ static void chrc_write_cb(struct gatt_db_attribute *attrib,
 		return;
 	}
 
+#ifdef __TIZEN_PATCH__
+	send_write(attrib, att, chrc->proxy, chrc->pending_writes, id, value, len);
+#else
 	send_write(attrib, chrc->proxy, chrc->pending_writes, id, value, len);
+#endif
 }
+
+#ifdef __TIZEN_PATCH__
+static bool database_check_ccc_desc(struct external_desc *desc)
+{
+	bt_uuid_t uuid, uuid_ccc;
+	char uuidstr[MAX_LEN_UUID_STR];
+
+	if (!parse_uuid(desc->proxy, &uuid)) {
+		error("Failed to read \"UUID\" property of descriptor");
+		return false;
+	}
+
+	bt_uuid16_create(&uuid_ccc, GATT_CLIENT_CHARAC_CFG_UUID);
+	if (bt_uuid_cmp(&uuid, &uuid_ccc) == 0)
+		return true;
+	else
+		return false;
+}
+#endif
 
 static bool database_add_chrc(struct external_service *service,
 						struct external_chrc *chrc)
@@ -1893,8 +2253,13 @@ static bool database_add_chrc(struct external_service *service,
 		return false;
 	}
 
+#ifndef __TIZEN_PATCH__
+	/* Existing implementation adds CCC descriptor by default
+	  * if notification and indication properties are set. But as per the requirment
+	  * CCCD shall be added by the application */
 	if (!database_add_ccc(service, chrc))
 		return false;
+#endif
 
 	if (!database_add_cep(service, chrc))
 		return false;
@@ -1904,15 +2269,34 @@ static bool database_add_chrc(struct external_service *service,
 	while (entry) {
 		struct external_desc *desc = entry->data;
 
-		if (desc->handled || g_strcmp0(desc->chrc_path, chrc->path))
+		if (desc->handled || g_strcmp0(desc->chrc_path, chrc->path)) {
+#ifdef __TIZEN_PATCH__
+			entry = entry->next;
+#endif
 			continue;
-
+		}
+#ifdef __TIZEN_PATCH__
+		/* Check if Application wants to add CCC and use existing
+		 * implemenation to add CCC descriptors */
+		if (database_check_ccc_desc(desc)) {
+			if (!database_add_ccc(service, chrc)) {
+				chrc->attrib = NULL;
+				return false;
+			}
+			desc->attrib = chrc->ccc;
+			desc->handled = true;
+		} else if (!database_add_desc(service, desc)) {
+			chrc->attrib = NULL;
+			error("Failed to create descriptor entry");
+				return false;
+		}
+#else
 		if (!database_add_desc(service, desc)) {
 			chrc->attrib = NULL;
 			error("Failed to create descriptor entry");
 			return false;
 		}
-
+#endif
 		entry = entry->next;
 	}
 
@@ -2132,14 +2516,226 @@ static DBusMessage *manager_unregister_service(DBusConnection *conn,
 	return dbus_message_new_method_return(msg);
 }
 
+static void profile_exited(DBusConnection *conn, void *user_data)
+{
+	struct external_profile *profile = user_data;
+
+	DBG("\"%s\" exited", profile->owner);
+
+	profile->id = 0;
+
+	queue_remove(profile->database->profiles, profile);
+
+	profile_free(profile);
+}
+
+static int profile_add(struct external_profile *profile, const char *uuid)
+{
+	struct btd_profile *p;
+
+	p = new0(struct btd_profile, 1);
+	if (!p)
+		goto fail;
+	/* Assign directly to avoid having extra fields */
+	p->name = (const void *) g_strdup_printf("%s%s/%s", profile->owner,
+							profile->path, uuid);
+	if (!p->name)
+		goto fail;
+
+	p->remote_uuid = (const void *) g_strdup(uuid);
+	if (!p->remote_uuid)
+		goto fail;
+
+	p->auto_connect = true;
+
+	queue_push_tail(profile->profiles, p);
+
+	DBG("Added \"%s\"", p->name);
+
+	return 0;
+fail:
+	error("Fail to add profile");
+
+	if (p) {
+		g_free(p->name);
+		g_free(p->remote_uuid);
+		free(p);
+	}
+
+	return -ENOMEM;
+}
+
+static void add_profile(void *data, void *user_data)
+{
+	struct btd_adapter *adapter = user_data;
+
+	adapter_add_profile(adapter, data);
+}
+
+static int profile_create(DBusConnection *conn,
+				struct btd_gatt_database *database,
+				const char *sender, const char *path,
+				DBusMessageIter *iter)
+{
+	struct external_profile *profile;
+	DBusMessageIter uuids;
+
+	if (!path || !g_str_has_prefix(path, "/"))
+		return -EINVAL;
+
+	profile = new0(struct external_profile, 1);
+	if (!profile)
+		return -ENOMEM;
+
+	profile->owner = g_strdup(sender);
+	if (!profile->owner)
+		goto fail;
+
+	profile->path = g_strdup(path);
+	if (!profile->path)
+		goto fail;
+
+	profile->profiles = queue_new();
+	if (!profile->profiles)
+		goto fail;
+
+	profile->database = database;
+	profile->id = g_dbus_add_disconnect_watch(conn, sender, profile_exited,
+								profile, NULL);
+
+	dbus_message_iter_recurse(iter, &uuids);
+
+	while (dbus_message_iter_get_arg_type(&uuids) == DBUS_TYPE_STRING) {
+		const char *uuid;
+
+		dbus_message_iter_get_basic(&uuids, &uuid);
+
+		if (profile_add(profile, uuid) < 0)
+			goto fail;
+
+		dbus_message_iter_next(&uuids);
+	}
+
+	if (queue_isempty(profile->profiles))
+		goto fail;
+
+	queue_foreach(profile->profiles, add_profile, database->adapter);
+	queue_push_tail(database->profiles, profile);
+
+	return 0;
+
+fail:
+	profile_free(profile);
+	return -EINVAL;
+}
+
+static bool match_profile(const void *a, const void *b)
+{
+	const struct external_profile *profile = a;
+	const struct svc_match_data *data = b;
+
+	return g_strcmp0(profile->path, data->path) == 0 &&
+				g_strcmp0(profile->owner, data->sender) == 0;
+}
+
+static DBusMessage *manager_register_profile(DBusConnection *conn,
+					DBusMessage *msg, void *user_data)
+{
+	struct btd_gatt_database *database = user_data;
+	const char *sender = dbus_message_get_sender(msg);
+	DBusMessageIter args;
+	const char *path;
+	struct svc_match_data match_data;
+
+	DBG("sender %s", sender);
+
+	if (!dbus_message_iter_init(msg, &args))
+		return btd_error_invalid_args(msg);
+
+	if (dbus_message_iter_get_arg_type(&args) != DBUS_TYPE_OBJECT_PATH)
+		return btd_error_invalid_args(msg);
+
+	dbus_message_iter_get_basic(&args, &path);
+
+	match_data.path = path;
+	match_data.sender = sender;
+
+	if (queue_find(database->profiles, match_profile, &match_data))
+		return btd_error_already_exists(msg);
+
+	dbus_message_iter_next(&args);
+	if (dbus_message_iter_get_arg_type(&args) != DBUS_TYPE_ARRAY)
+		return btd_error_invalid_args(msg);
+
+	if (profile_create(conn, database, sender, path, &args) < 0)
+		return btd_error_failed(msg, "Failed to register profile");
+
+	return dbus_message_new_method_return(msg);
+}
+
+static DBusMessage *manager_unregister_profile(DBusConnection *conn,
+					DBusMessage *msg, void *user_data)
+{
+	struct btd_gatt_database *database = user_data;
+	const char *sender = dbus_message_get_sender(msg);
+	const char *path;
+	DBusMessageIter args;
+	struct external_profile *profile;
+	struct svc_match_data match_data;
+
+	if (!dbus_message_iter_init(msg, &args))
+		return btd_error_invalid_args(msg);
+
+	if (dbus_message_iter_get_arg_type(&args) != DBUS_TYPE_OBJECT_PATH)
+		return btd_error_invalid_args(msg);
+
+	dbus_message_iter_get_basic(&args, &path);
+
+	match_data.path = path;
+	match_data.sender = sender;
+
+	profile = queue_remove_if(database->profiles, match_profile,
+								&match_data);
+	if (!profile)
+		return btd_error_does_not_exist(msg);
+
+	profile_free(profile);
+
+	return dbus_message_new_method_return(msg);
+}
+
 static const GDBusMethodTable manager_methods[] = {
+#ifdef __TIZEN_PATCH__
+	{ GDBUS_ASYNC_METHOD("RegisterService",
+			GDBUS_ARGS({ "service", "o" }, { "options", "a{sv}" }),
+			NULL, manager_register_service) },
+	{ GDBUS_ASYNC_METHOD("UnregisterService",
+					GDBUS_ARGS({ "service", "o" }),
+					NULL, manager_unregister_service) },
+	{ GDBUS_ASYNC_METHOD("RegisterProfile",
+			GDBUS_ARGS({ "profile", "o" }, { "UUIDs", "as" },
+			{ "options", "a{sv}" }), NULL,
+			manager_register_profile) },
+	{ GDBUS_ASYNC_METHOD("UnregisterProfile",
+					GDBUS_ARGS({ "profile", "o" }),
+					NULL, manager_unregister_profile) },
+	{ }
+#else
 	{ GDBUS_EXPERIMENTAL_ASYNC_METHOD("RegisterService",
 			GDBUS_ARGS({ "service", "o" }, { "options", "a{sv}" }),
 			NULL, manager_register_service) },
 	{ GDBUS_EXPERIMENTAL_ASYNC_METHOD("UnregisterService",
 					GDBUS_ARGS({ "service", "o" }),
 					NULL, manager_unregister_service) },
+	{ GDBUS_EXPERIMENTAL_ASYNC_METHOD("RegisterProfile",
+			GDBUS_ARGS({ "profile", "o" }, { "UUIDs", "as" },
+			{ "options", "a{sv}" }), NULL,
+			manager_register_profile) },
+	{ GDBUS_EXPERIMENTAL_ASYNC_METHOD("UnregisterProfile",
+					GDBUS_ARGS({ "profile", "o" }),
+					NULL, manager_unregister_profile) },
 	{ }
+#endif
 };
 
 struct btd_gatt_database *btd_gatt_database_new(struct btd_adapter *adapter)
@@ -2166,6 +2762,10 @@ struct btd_gatt_database *btd_gatt_database_new(struct btd_adapter *adapter)
 
 	database->services = queue_new();
 	if (!database->services)
+		goto fail;
+
+	database->profiles = queue_new();
+	if (!database->profiles)
 		goto fail;
 
 	database->ccc_callbacks = queue_new();
