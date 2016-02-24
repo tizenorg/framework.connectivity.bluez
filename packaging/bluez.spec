@@ -92,7 +92,6 @@ export CFLAGS="${CFLAGS} -D__BROADCOM_PATCH__"
 %endif
 %endif
 
-export CFLAGS="${CFLAGS} -DGATT_NO_RELAY"
 export LDFLAGS=" -lncurses -Wl,--as-needed "
 export CFLAGS+=" -DPBAP_SIM_ENABLE -DSUPPORT_AVRCP_TARGET"
 %reconfigure --disable-static \

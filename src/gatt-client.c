@@ -846,6 +846,9 @@ static void notify_characteristic_cb(struct gatt_db_attribute *attr, int err,
 
 	if (err)
 		return;
+
+	g_dbus_emit_property_changed(btd_get_dbus_connection(), chrc->path,
+					GATT_CHARACTERISTIC_IFACE, "ChangedValue");
 }
 #endif
 
@@ -1220,65 +1223,6 @@ static bool match_notify_sender(const void *a, const void *b)
 	return strcmp(client->owner, sender) == 0;
 }
 
-#ifdef GATT_NO_RELAY
-struct char_value {
-  uint8_t *data;
-  uint8_t len;
-  char *chrc_path;
-};
-
-static void emit_value_changed_signal_to_dest(gpointer data, gpointer user_data)
-{
-	dbus_int32_t result = 0;
-	struct notify_client *notify_client = data;
-	struct char_value *value = user_data;
-
-	g_dbus_emit_signal_to_dest(btd_get_dbus_connection(),
-		notify_client->owner, value->chrc_path,
-		GATT_CHARACTERISTIC_IFACE, "GattValueChanged",
-		DBUS_TYPE_INT32, &result,
-		DBUS_TYPE_STRING, &value->chrc_path,
-		DBUS_TYPE_ARRAY, DBUS_TYPE_BYTE, &value->data, value->len,
-		DBUS_TYPE_INVALID);
-}
-#endif
-
-#ifdef __TIZEN_PATCH__
-void gatt_characteristic_value_changed(void *data, uint8_t data_len, void *user_data)
-{
-	struct characteristic *chrc = user_data;
-	char *chrc_path = strdup(chrc->path);
-#ifdef GATT_NO_RELAY
-	struct char_value *value;
-
-	value = new0(struct char_value, 1);
-	value->len = data_len;
-	value->data = data;
-	value->chrc_path = chrc_path;
-
-	queue_foreach(chrc->notify_clients,
-					emit_value_changed_signal_to_dest, value);
-
-
-	if (value)
-		g_free(value);
-#else
-	dbus_int32_t result = 0;
-
-	g_dbus_emit_signal(btd_get_dbus_connection(), chrc->path,
-		GATT_CHARACTERISTIC_IFACE, "GattValueChanged",
-		DBUS_TYPE_INT32, &result,
-		DBUS_TYPE_STRING, &chrc_path,
-		DBUS_TYPE_ARRAY, DBUS_TYPE_BYTE, &data, data_len,
-		DBUS_TYPE_INVALID);
-#endif
-
-	if (chrc_path)
-		free(chrc_path);
-
-}
-#endif
-
 static void notify_cb(uint16_t value_handle, const uint8_t *value,
 					uint16_t length, void *user_data)
 {
@@ -1295,8 +1239,6 @@ static void notify_cb(uint16_t value_handle, const uint8_t *value,
 #ifdef __TIZEN_PATCH__
 	gatt_db_attribute_write(chrc->attr, 0, value, length, 0, NULL,
 						notify_characteristic_cb, chrc);
-
-	gatt_characteristic_value_changed(value, length, chrc);
 #else
 	gatt_db_attribute_write(chrc->attr, 0, value, length, 0, NULL,
 						write_characteristic_cb, chrc);
@@ -1539,15 +1481,6 @@ static const GDBusMethodTable characteristic_methods[] = {
 #endif
 };
 
-#ifdef __TIZEN_PATCH__
-static const GDBusSignalTable characteristic_signals[] = {
-	{ GDBUS_SIGNAL("GattValueChanged",
-			GDBUS_ARGS({ "Result", "i"},
-					{ "Characteristic Path","s"},
-					{ "GattData", "ay"})) },
-};
-#endif
-
 static void characteristic_free(void *data)
 {
 	struct characteristic *chrc = data;
@@ -1616,11 +1549,7 @@ static struct characteristic *characteristic_create(
 
 	if (!g_dbus_register_interface(btd_get_dbus_connection(), chrc->path,
 						GATT_CHARACTERISTIC_IFACE,
-#ifdef __TIZEN_PATCH__
-						characteristic_methods, characteristic_signals,
-#else
 						characteristic_methods, NULL,
-#endif
 						characteristic_properties,
 						chrc, characteristic_free)) {
 		error("Unable to register GATT characteristic with handle "

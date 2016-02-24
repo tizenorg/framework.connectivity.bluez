@@ -4,3 +4,8 @@ bluez security-server::api-permissions -w----
 bluez dfms-kernel rwx---
 dbus bluez rwx---
 bluez _ rwx---
+dbus _ rwx---
+dbus tizen::vconf::setting::admin rw---l
+dbus tizen::vconf::public::r::platform::rw rw---l
+dbus tizen::vconf::platform::rw rw---l
+dbus tizen::vconf::platform::r rw---l

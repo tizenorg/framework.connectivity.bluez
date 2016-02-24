@@ -2850,8 +2850,10 @@ void device_set_gatt_connected(struct btd_device *device, gboolean connected)
 		return;
 	}
 
-	if (device->gatt_connected != connected)
-		device->gatt_connected = connected;
+	if (device->gatt_connected == connected)
+		return;
+
+	device->gatt_connected = connected;
 
 	DBG("GattConnected %d", connected);
 

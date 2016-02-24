@@ -225,7 +225,7 @@ static bool dev_addr_match(const void *a, const void *b)
 }
 
 static struct device_state *
-find_device_state_from_address(struct btd_gatt_database *database, const bdaddr_t *bdaddr)
+find_device_state_from_address(struct btd_gatt_database *database, bdaddr_t *bdaddr)
 {
 	struct device_info dev_info;
 
@@ -965,177 +965,10 @@ struct notify {
 	bool indicate;
 };
 
-#ifdef __TIZEN_PATCH__
-struct notify_indicate {
-	struct btd_gatt_database *database;
-	GDBusProxy *proxy;
-	uint16_t handle, ccc_handle;
-	const uint8_t *value;
-	uint16_t len;
-	bool indicate;
-};
-
-struct notify_indicate_cb {
-	GDBusProxy *proxy;
-	struct btd_device *device;
-};
-
-static void indicate_confirm_free(void *data)
-{
-	struct notify_indicate_cb *indicate = data;
-
-	if (indicate)
-		free(indicate);
-}
-
-static void indicate_confirm_setup_cb(DBusMessageIter *iter, void *user_data)
-{
-	struct btd_device *device = user_data;
-	char dstaddr[18] = { 0 };
-	char *addr_value = NULL;
-	gboolean complete = FALSE;
-
-	ba2str(device_get_address(device), dstaddr);
-	addr_value = g_strdup(dstaddr);
-
-	dbus_message_iter_append_basic(iter, DBUS_TYPE_STRING,
-							&addr_value);
-
-	complete = TRUE;
-	dbus_message_iter_append_basic(iter, DBUS_TYPE_BOOLEAN,
-							&complete);
-}
-
-static void indicate_confirm_reply_cb(DBusMessage *message, void *user_data)
-{
-	DBusError error;
-
-	dbus_error_init(&error);
-
-	if (dbus_set_error_from_message(&error, message) == TRUE) {
-		DBG("Failed to send indication/notification");
-		dbus_error_free(&error);
-		return;
-	}
-}
-#endif
-
 static void conf_cb(void *user_data)
 {
 	DBG("GATT server received confirmation");
-#ifdef __TIZEN_PATCH__
-	struct notify_indicate_cb *confirm = user_data;
-
-	if (confirm) {
-		/* Send confirmation to application */
-		if (g_dbus_proxy_method_call(confirm->proxy, "IndicateConfirm",
-							indicate_confirm_setup_cb,
-							indicate_confirm_reply_cb, confirm->device,
-							NULL) == TRUE)
-			return;
-	}
-#endif
 }
-
-#ifdef __TIZEN_PATCH__
-static void send_notification_indication_to_device(void *data, void *user_data)
-{
-	struct device_state *device_state = data;
-	struct notify_indicate *notify_indicate = user_data;
-	struct ccc_state *ccc;
-	struct btd_device *device;
-	struct notify_indicate_cb *confirm;
-
-	ccc = find_ccc_state(device_state, notify_indicate->ccc_handle);
-	if (!ccc)
-		return;
-
-	if (!ccc->value[0] || (notify_indicate->indicate && !(ccc->value[0] & 0x02)))
-		return;
-
-	device = btd_adapter_get_device(notify_indicate->database->adapter,
-						&device_state->bdaddr,
-						device_state->bdaddr_type);
-	if (!device)
-		return;
-
-	confirm = new0(struct notify_indicate_cb, 1);
-	confirm->proxy = notify_indicate->proxy;
-	confirm->device = device;
-	/*
-	 * TODO: If the device is not connected but bonded, send the
-	 * notification/indication when it becomes connected.
-	 */
-	if (!notify_indicate->indicate) {
-		DBG("GATT server sending notification");
-		bt_gatt_server_send_notification(
-					btd_device_get_gatt_server(device),
-					notify_indicate->handle, notify_indicate->value,
-					notify_indicate->len);
-		/* In case of Notification, send response to application
-		 * as remote device do not respond for notification */
-		conf_cb(confirm);
-		return;
-	}
-
-	DBG("GATT server sending indication");
-
-	bt_gatt_server_send_indication(btd_device_get_gatt_server(device),
-							notify_indicate->handle,
-							notify_indicate->value,
-							notify_indicate->len, conf_cb,
-							confirm, indicate_confirm_free);
-}
-
-static void send_notification_indication_to_devices(GDBusProxy *proxy,
-					struct btd_gatt_database *database,
-					uint16_t handle, const uint8_t *value,
-					uint16_t len, uint16_t ccc_handle,
-					bool indicate)
-{
-	struct notify_indicate notify_indicate;
-	DBG("");
-	memset(&notify_indicate, 0, sizeof(notify_indicate));
-
-	notify_indicate.database = database;
-	notify_indicate.proxy = proxy;
-	notify_indicate.handle = handle;
-	notify_indicate.ccc_handle = ccc_handle;
-	notify_indicate.value = value;
-	notify_indicate.len = len;
-	notify_indicate.indicate = indicate;
-
-	queue_foreach(database->device_states, send_notification_indication_to_device,
-								&notify_indicate);
-}
-
-static void send_unicast_notification_indication_to_device(GDBusProxy *proxy,
-					struct btd_gatt_database *database,
-					uint16_t handle, const uint8_t *value,
-					uint16_t len, uint16_t ccc_handle,
-					bool indicate, const bdaddr_t *unicast_addr)
-{
-	struct device_state *dev_state;
-	struct notify_indicate notify_indicate;
-	DBG("");
-
-	memset(&notify_indicate, 0, sizeof(notify_indicate));
-
-	notify_indicate.database = database;
-	notify_indicate.proxy = proxy;
-	notify_indicate.handle = handle;
-	notify_indicate.ccc_handle = ccc_handle;
-	notify_indicate.value = value;
-	notify_indicate.len = len;
-	notify_indicate.indicate = indicate;
-
-	 /* Find and return a device state. */
-	dev_state = find_device_state_from_address(database, unicast_addr);
-
-	if (dev_state)
-		send_notification_indication_to_device(dev_state, &notify_indicate);
-}
-#endif
 
 static void send_notification_to_device(void *data, void *user_data)
 {
@@ -1197,6 +1030,32 @@ static void send_notification_to_devices(struct btd_gatt_database *database,
 	queue_foreach(database->device_states, send_notification_to_device,
 								&notify);
 }
+
+#ifdef __TIZEN_PATCH__
+static void send_unicast_notification_to_device(struct btd_gatt_database *database,
+					uint16_t handle, const uint8_t *value,
+					uint16_t len, uint16_t ccc_handle,
+					bool indicate, bdaddr_t *unicast_addr)
+{
+	struct notify notify;
+	struct device_state *dev_state;
+
+	memset(&notify, 0, sizeof(notify));
+
+	notify.database = database;
+	notify.handle = handle;
+	notify.ccc_handle = ccc_handle;
+	notify.value = value;
+	notify.len = len;
+	notify.indicate = indicate;
+
+	 /* Find and return a device state. */
+	dev_state = find_device_state_from_address(database, unicast_addr);
+
+	if (dev_state)
+		send_notification_to_device(dev_state, &notify);
+}
+#endif
 
 static void send_service_changed(struct btd_gatt_database *database,
 					struct gatt_db_attribute *attrib)
@@ -2088,7 +1947,6 @@ static void property_changed_cb(GDBusProxy *proxy, const char *name,
 	uint8_t *value = NULL;
 	int len = 0;
 #ifdef __TIZEN_PATCH__
-	bool enable = FALSE;
 	const bdaddr_t *unicast_addr = NULL;
 #endif
 
@@ -2110,20 +1968,6 @@ static void property_changed_cb(GDBusProxy *proxy, const char *name,
 		/* Truncate the value if it's too large */
 		len = MIN(BT_ATT_MAX_VALUE_LEN, len);
 		value = len ? value : NULL;
-	} else if (strcmp(name, "Notifying") == 0) {
-		gboolean notify_indicate = FALSE;
-
-		if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_BOOLEAN) {
-			DBG("Malformed \"Notifying\" property received");
-			return;
-		}
-
-		dbus_message_iter_get_basic(iter, &notify_indicate);
-
-		DBG("Set Notification %d", notify_indicate);
-		/* Set notification/indication */
-		set_ccc_notify_indicate(chrc->ccc, notify_indicate);
-		return;
 	} else if (strcmp(name, "Unicast") == 0) {
 		const char *address = NULL;
 		if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_STRING) {
@@ -2141,32 +1985,23 @@ static void property_changed_cb(GDBusProxy *proxy, const char *name,
 	} else
 		return;
 
-	enable = get_ccc_notify_indicate(chrc->ccc);
+	unicast_addr = get_ccc_unicast_address(chrc->ccc);
 
-	if (enable) {
-
-		unicast_addr = get_ccc_unicast_address(chrc->ccc);
-
-		if (unicast_addr && bacmp(unicast_addr, BDADDR_ANY)) {
-			send_unicast_notification_indication_to_device(proxy,
-					chrc->service->database,
-					gatt_db_attribute_get_handle(chrc->attrib),
-					value, len,
-					gatt_db_attribute_get_handle(chrc->ccc),
-					chrc->props & BT_GATT_CHRC_PROP_INDICATE,
-					unicast_addr);
-			/* reset the unicast address */
-			set_ccc_unicast_address(chrc->ccc, NULL);
-		} else
-			send_notification_indication_to_devices(proxy,
-					chrc->service->database,
+	if (unicast_addr && bacmp(unicast_addr, BDADDR_ANY)) {
+		send_unicast_notification_to_device(chrc->service->database,
+				gatt_db_attribute_get_handle(chrc->attrib),
+				value, len,
+				gatt_db_attribute_get_handle(chrc->ccc),
+				chrc->props & BT_GATT_CHRC_PROP_INDICATE,
+				unicast_addr);
+		/* reset the unicast address */
+		set_ccc_unicast_address(chrc->ccc, NULL);
+	} else
+		send_notification_to_devices(chrc->service->database,
 					gatt_db_attribute_get_handle(chrc->attrib),
 					value, len,
 					gatt_db_attribute_get_handle(chrc->ccc),
 					chrc->props & BT_GATT_CHRC_PROP_INDICATE);
-
-		set_ccc_notify_indicate(chrc->ccc, FALSE);
-	}
 #else
 	if (strcmp(name, "Value"))
 		return;
