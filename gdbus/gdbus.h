@@ -271,6 +271,12 @@ gboolean g_dbus_emit_signal_valist(DBusConnection *connection,
 				const char *path, const char *interface,
 				const char *name, int type, va_list args);
 
+#ifdef GATT_NO_RELAY
+gboolean g_dbus_emit_signal_to_dest(DBusConnection *connection,
+				const char *dest, const char *path,
+				const char *interface, const char *name, int type, ...);
+#endif
+
 guint g_dbus_add_service_watch(DBusConnection *connection, const char *name,
 				GDBusWatchFunction connect,
 				GDBusWatchFunction disconnect,

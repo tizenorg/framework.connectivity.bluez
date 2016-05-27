@@ -90,6 +90,7 @@ struct gatt_db_attribute {
 	uint16_t value_len;
 	uint8_t *value;
 #ifdef __TIZEN_PATCH__
+	bool notify_indicate;
 	bdaddr_t unicast_addr;
 #endif
 
@@ -1726,6 +1727,21 @@ bool gatt_db_attribute_reset(struct gatt_db_attribute *attrib)
 }
 
 #ifdef __TIZEN_PATCH__
+void set_ccc_notify_indicate(struct gatt_db_attribute *ccc,
+							bool enable)
+{
+	if (ccc)
+		ccc->notify_indicate = enable;
+}
+
+bool get_ccc_notify_indicate(const struct gatt_db_attribute *ccc)
+{
+	if (ccc)
+		return ccc->notify_indicate;
+
+	return false;
+}
+
 void set_ccc_unicast_address(const struct gatt_db_attribute *ccc,
 							const char *address)
 {

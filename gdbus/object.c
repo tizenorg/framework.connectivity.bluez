@@ -1673,6 +1673,65 @@ gboolean g_dbus_emit_signal(DBusConnection *connection,
 	return result;
 }
 
+#ifdef GATT_NO_RELAY
+static gboolean g_dbus_emit_signal_valist_to_dest(DBusConnection *connection,
+				const char *dest, const char *path, const char *interface,
+				const char *name, int type, va_list args)
+{
+	DBusMessage *signal;
+	dbus_bool_t ret;
+	const GDBusArgInfo *args_info;
+
+	if (!check_signal(connection, path, interface, name, &args_info))
+		return FALSE;
+
+	signal = dbus_message_new_signal(path, interface, name);
+	if (signal == NULL) {
+		error("Unable to allocate new %s.%s signal", interface,  name);
+		return FALSE;
+	}
+
+	ret = dbus_message_append_args_valist(signal, type, args);
+	if (!ret)
+		goto fail;
+
+	if (g_dbus_args_have_signature(args_info, signal) == FALSE) {
+		error("%s.%s: got unexpected signature '%s'", interface, name,
+					dbus_message_get_signature(signal));
+		ret = FALSE;
+		goto fail;
+	}
+
+	ret = dbus_message_set_destination(signal, dest);
+	if (!ret)
+		error("Fail to set destination");
+
+	return g_dbus_send_message(connection, signal);
+
+fail:
+	dbus_message_unref(signal);
+
+	return ret;
+}
+
+gboolean g_dbus_emit_signal_to_dest(DBusConnection *connection,
+				const char *dest, const char *path,
+				const char *interface, const char *name, int type, ...)
+{
+	va_list args;
+	gboolean result;
+
+	va_start(args, type);
+
+	result = g_dbus_emit_signal_valist_to_dest(connection, dest, path,
+						interface, name, type, args);
+
+	va_end(args);
+
+	return result;
+}
+#endif
+
 gboolean g_dbus_emit_signal_valist(DBusConnection *connection,
 				const char *path, const char *interface,
 				const char *name, int type, va_list args)
